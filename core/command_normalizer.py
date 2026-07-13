@@ -27,6 +27,7 @@ VOCABULARIO = [
     "margen", "ganancia", "reporte", "descripcion", "cotizacion",
     "caja", "turno", "efectivo", "tarjeta", "denominacion", "denominaciones", "cambio",
     "billete", "billetes", "moneda", "monedas", "carrito", "ticket", "sencillo",
+    "descuento", "descuentos", "temporada", "porciento",
     # electrodomesticos y repuestos comunes en la tienda
     "licuadora", "licuadoras", "refrigerador", "refrigeradores", "cuchilla", "cuchillas",
     "empaque", "empaques", "adaptador", "adaptadores", "regulador", "reguladores",

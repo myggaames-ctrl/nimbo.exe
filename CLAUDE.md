@@ -129,7 +129,35 @@ Usuario escribe mensaje
   automaticamente (database.aronium.marcar_cotizaciones_vencidas(), se corre de forma lazy
   cada vez que se consultan) y aparecen en /api/recordatorios ("vence hoy" / "vencio").
   Widget en el dashboard (contadores Pendientes/Enviadas/Aceptadas de la semana + lista de
-  activas con dias restantes) via /api/cotizaciones/resumen.
+  activas con dias restantes) via /api/cotizaciones/resumen. Si aplica un descuento (ver
+  Descuentos abajo) se muestra en el resumen del chat, en el PDF (subtotal + descuento +
+  total) y se guarda como texto en Cotizacion.Notas.
+- Descuentos: tabla Descuento en nimbo.db (database.aronium.init_descuentos/crear_descuento/
+  get_descuentos/get_descuento_por_id/buscar_descuentos/desactivar_descuento). 4 tipos:
+  cliente (ClienteId), temporada (FechaInicio/FechaFin), producto (ProductoId, referencia
+  al Product.Id de Aronium igual que el resto del sistema), monto (MontoMinimo, "compras
+  mayores a"). Cada descuento define Porcentaje o MontoFijo (uno de los dos).
+  database.aronium.calcular_descuento(cliente_id, productos, total, fecha=None) evalua
+  todos los descuentos activos y devuelve el mejor (mayor monto en quetzales) - los
+  descuentos NO se acumulan, se aplica solo uno. Para tipo "producto" la base del calculo
+  es la suma de los subtotales de los items del carrito que coincidan con ese ProductoId,
+  no el total completo; para cliente/temporada/monto la base es el total completo. Se
+  aplica automaticamente (sin que el usuario tenga que pedirlo) en los 3 lugares donde se
+  cierra una venta: paso venta_waiting_pago del flujo de venta simple en core/nimbo.py,
+  database.aronium.cobrar_carrito() (caja) y _finalizar_cotizacion() en core/nimbo.py
+  (cotizaciones). El descuento aplicado se muestra en la respuesta del chat, se anota en
+  Venta.Descripcion / Cotizacion.Notas (no hay columnas de descuento en esas tablas) y en
+  Caja tambien aparece en el ticket (services/ticket.py, lineas Subtotal/Descuento antes
+  del Total) y en el PDF de cotizacion (services/pdf_cotizacion.py).
+  Detector core/detectors/descuento_detector.py + herramienta tools/descuento_tool.py.
+  Comandos de chat: "descuento 10% para Juan Perez" (tipo cliente, busca el cliente por
+  nombre con buscar_cliente_completo), "descuento 15% del 1 al 15 de diciembre" (tipo
+  temporada, si no se da anio usa el actual o el siguiente si esa fecha ya paso este anio),
+  "descuento 5% en cuchillas" (tipo producto, busca con get_products igual que el resto del
+  inventario), "descuento 10% en compras mayores a Q500" (tipo monto), "ver descuentos"
+  (lista los activos), "eliminar descuento X" (X puede ser el Id numerico o parte del
+  nombre; si el nombre matchea mas de un descuento activo, pide especificar el Id).
+  Admin-only (categoria "descuento" no esta en CATEGORIAS_EMPLEADO de core/action_engine.py).
 - Caja Registradora: panel "Caja" en el menu lateral (empleado y admin), pantalla tablet
   (botones grandes) en templates/index.html. Solo puede haber un turno (CajaTurno) ABIERTO
   a la vez en toda la tienda. Denominaciones fijas: Q200, Q100, Q50, Q20, Q10, Q5, Q1
@@ -187,7 +215,7 @@ Cliente, OrdenServicio, HistorialOrden, Kardex, StockMinimo, ProductoFoto, Produ
 Venta, ResumenTrimestral, PagoFijo, RecordatorioPersonal, ChatHistorial,
 Gasto, ResumenContable, Proveedor, ContactoProveedor, ProductoProveedor,
 OrdenCompra, ItemOrdenCompra, HistorialPrecio, Usuario, PasswordResetToken, Configuracion,
-Cotizacion, CajaTurno, MovimientoCaja, ItemCarrito
+Cotizacion, CajaTurno, MovimientoCaja, ItemCarrito, Descuento
 
 ## Variables de entorno (.env)
 GEMINI_API_KEY, FB_PAGE_TOKEN, FB_PAGE_ID, WA_TOKEN, WA_PHONE_ID, IG_ACCOUNT_ID,

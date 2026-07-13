@@ -285,28 +285,41 @@ def _finalizar_cotizacion(context: dict):
     """Registra la cotizacion, genera el PDF y arma los links de descarga/WhatsApp."""
     import urllib.parse
     from datetime import datetime
-    from database.aronium import crear_cotizacion
+    from database.aronium import crear_cotizacion, calcular_descuento
     from services.pdf_cotizacion import generar_pdf_cotizacion
 
     items = context.get("cot_items", [])
-    total = round(sum(i["subtotal"] for i in items), 2)
+    subtotal = round(sum(i["subtotal"] for i in items), 2)
     cliente_id = context.get("cot_cliente_id")
     cliente_nombre = context.get("cot_cliente_nombre", "")
     cliente_tel = context.get("cot_cliente_tel", "")
 
-    numero, fecha_vencimiento = crear_cotizacion(cliente_id, cliente_nombre, cliente_tel, items, total)
+    descuento = calcular_descuento(
+        cliente_id=cliente_id,
+        productos=[{"producto_id": i["producto_id"], "subtotal": i["subtotal"]} for i in items],
+        total=subtotal
+    )
+    total = round(subtotal - descuento["monto_descuento"], 2) if descuento else subtotal
+
+    notas = f"Descuento {descuento['nombre']}: -Q{descuento['monto_descuento']}" if descuento else ""
+    numero, fecha_vencimiento = crear_cotizacion(cliente_id, cliente_nombre, cliente_tel, items, total, notas=notas)
 
     generar_pdf_cotizacion({
         "numero": numero,
         "cliente_nombre": cliente_nombre,
         "cliente_tel": cliente_tel,
         "items": items,
+        "subtotal": subtotal,
+        "descuento": descuento,
         "total": total,
         "fecha_creada": datetime.now().strftime("%Y-%m-%d"),
         "fecha_vencimiento": fecha_vencimiento
     })
 
-    resp = f"Cotizacion {numero} generada para {cliente_nombre} por Q{total}, valida hasta {fecha_vencimiento[:10]}.\n"
+    resp = f"Cotizacion {numero} generada para {cliente_nombre} por Q{total}"
+    if descuento:
+        resp += f" (subtotal Q{subtotal}, descuento {descuento['nombre']} -Q{descuento['monto_descuento']})"
+    resp += f", valida hasta {fecha_vencimiento[:10]}.\n"
     resp += f'<a href="/static/cotizaciones/{numero}.pdf" target="_blank" style="color:var(--accent)">📄 Descargar PDF</a>'
 
     if cliente_tel:
@@ -620,8 +633,20 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         cliente_nombre = context.get("venta_cliente_nombre", "Consumidor Final")
         cliente_tel = context.get("venta_cliente_tel", "")
 
-        from database.aronium import nimbo_connect
+        from database.aronium import nimbo_connect, calcular_descuento
         from datetime import datetime
+
+        descuento = calcular_descuento(
+            cliente_id=cliente_id,
+            productos=[{"producto_id": ctx.get("producto_id"), "subtotal": ctx["total"]}],
+            total=ctx["total"]
+        )
+        total_final = round(ctx["total"] - descuento["monto_descuento"], 2) if descuento else ctx["total"]
+
+        descripcion = f"{ctx['cantidad']}x {ctx['producto']} a Q{ctx['precio_unit']}"
+        if descuento:
+            descripcion += f" | Descuento {descuento['nombre']}: -Q{descuento['monto_descuento']}"
+
         conn = nimbo_connect()
         cur = conn.cursor()
         mes = datetime.now().month
@@ -629,7 +654,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         anio = datetime.now().year
         cur.execute(
             "INSERT INTO Venta (ClienteId, Descripcion, Total, Mes, Trimestre, Anio) VALUES (?,?,?,?,?,?)",
-            (cliente_id, f"{ctx['cantidad']}x {ctx['producto']} a Q{ctx['precio_unit']}", ctx['total'], mes, trimestre, anio)
+            (cliente_id, descripcion, total_final, mes, trimestre, anio)
         )
         venta_id = cur.lastrowid
         if cliente_id:
@@ -637,14 +662,19 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         conn.commit()
         conn.close()
 
+        resumen = f"Venta #{venta_id} registrada. {ctx['cantidad']}x {ctx['producto']} = Q{ctx['total']}."
+        if descuento:
+            resumen += f" Descuento {descuento['nombre']} ({descuento['tipo']}): -Q{descuento['monto_descuento']}. Total: Q{total_final}."
+        resumen += f" Pago: {pago}. Cliente: {cliente_nombre}."
+
         factura_opts = ""
         if cliente_tel:
             factura_opts = f"\nFactura para {cliente_nombre}. Como enviarla? (whatsapp, imprimir, ninguna)"
             context = {"step": "venta_waiting_factura", "venta_id": venta_id, "cliente_tel": cliente_tel, "cliente_nombre": cliente_nombre, "venta_ctx": ctx, "pago": pago}
-            return f"Venta #{venta_id} registrada. {ctx['cantidad']}x {ctx['producto']} = Q{ctx['total']}. Pago: {pago}. Cliente: {cliente_nombre}.{factura_opts}", context
-        
+            return resumen + factura_opts, context
+
         context = {}
-        return f"Venta #{venta_id} registrada. {ctx['cantidad']}x {ctx['producto']} = Q{ctx['total']}. Pago: {pago}. Cliente: {cliente_nombre}.", context
+        return resumen, context
 
     if step == "venta_waiting_factura":
         opcion = message.strip().lower()

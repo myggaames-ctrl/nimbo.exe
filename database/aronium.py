@@ -781,6 +781,150 @@ def get_resumen_cotizaciones():
     }
 
 
+# ── DESCUENTOS ────────────────────────────────────────
+
+def init_descuentos():
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS Descuento (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            Nombre TEXT,
+            Tipo TEXT,
+            Porcentaje NUMERIC,
+            MontoFijo NUMERIC,
+            ClienteId INTEGER,
+            ProductoId INTEGER,
+            FechaInicio TEXT,
+            FechaFin TEXT,
+            MontoMinimo NUMERIC,
+            Activo INTEGER DEFAULT 1,
+            FechaCreado DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (ClienteId) REFERENCES Cliente(Id)
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def crear_descuento(nombre, tipo, porcentaje=None, monto_fijo=None, cliente_id=None,
+                     producto_id=None, fecha_inicio=None, fecha_fin=None, monto_minimo=None):
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""INSERT INTO Descuento
+        (Nombre, Tipo, Porcentaje, MontoFijo, ClienteId, ProductoId, FechaInicio, FechaFin, MontoMinimo)
+        VALUES (?,?,?,?,?,?,?,?,?)""",
+        (nombre, tipo, porcentaje, monto_fijo, cliente_id, producto_id, fecha_inicio, fecha_fin, monto_minimo))
+    conn.commit()
+    descuento_id = cur.lastrowid
+    conn.close()
+    return descuento_id
+
+
+def get_descuentos(activo=True, tipo=None):
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    query = "SELECT * FROM Descuento WHERE Activo=?"
+    params = [1 if activo else 0]
+    if tipo:
+        query += " AND Tipo=?"
+        params.append(tipo)
+    query += " ORDER BY FechaCreado DESC"
+    cur.execute(query, params)
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+def get_descuento_por_id(descuento_id):
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM Descuento WHERE Id=?", (descuento_id,))
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def buscar_descuentos(query):
+    """Busca descuentos activos por nombre (usado por 'eliminar descuento X' cuando X
+    no es un Id numerico)."""
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM Descuento WHERE Activo=1 AND Nombre LIKE ?", (f"%{query}%",))
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+def desactivar_descuento(descuento_id):
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("UPDATE Descuento SET Activo=0 WHERE Id=?", (descuento_id,))
+    conn.commit()
+    conn.close()
+
+
+def _monto_descuento(d, base):
+    if base <= 0:
+        return 0
+    if d.get("Porcentaje"):
+        return round(base * float(d["Porcentaje"]) / 100, 2)
+    if d.get("MontoFijo"):
+        return round(min(float(d["MontoFijo"]), base), 2)
+    return 0
+
+
+def calcular_descuento(cliente_id=None, productos=None, total=0, fecha=None):
+    """Calcula el mejor descuento aplicable a una venta/cotizacion. No se acumulan
+    varios descuentos: si mas de uno aplica (ej. el cliente tiene descuento fijo Y la
+    compra supera el monto minimo de otro descuento), se usa el que le convenga mas al
+    cliente (mayor monto en quetzales).
+    productos: lista de dicts {producto_id, subtotal}, usada solo para descuentos tipo
+    'producto' (la base de ese descuento es la suma de los subtotales de los items que
+    coincidan con ese producto, no el total completo del carrito).
+    Retorna un dict con el descuento a aplicar, o None si no aplica ninguno."""
+    fecha = fecha or datetime.now().date()
+    productos = productos or []
+    candidatos = []
+    for d in get_descuentos(activo=True):
+        tipo = d["Tipo"]
+        base = None
+        if tipo == "cliente" and cliente_id and d["ClienteId"] == cliente_id:
+            base = total
+        elif tipo == "temporada" and d["FechaInicio"] and d["FechaFin"]:
+            try:
+                fi = datetime.strptime(d["FechaInicio"][:10], "%Y-%m-%d").date()
+                ff = datetime.strptime(d["FechaFin"][:10], "%Y-%m-%d").date()
+            except (TypeError, ValueError):
+                continue
+            if fi <= fecha <= ff:
+                base = total
+        elif tipo == "producto" and d["ProductoId"]:
+            base = sum(p["subtotal"] for p in productos if p.get("producto_id") == d["ProductoId"])
+        elif tipo == "monto" and d["MontoMinimo"] is not None and total >= d["MontoMinimo"]:
+            base = total
+        if base is None or base <= 0:
+            continue
+        monto = _monto_descuento(d, base)
+        if monto <= 0:
+            continue
+        candidatos.append((monto, d, base))
+
+    if not candidatos:
+        return None
+    candidatos.sort(key=lambda x: x[0], reverse=True)
+    monto, d, base = candidatos[0]
+    return {
+        "descuento_id": d["Id"],
+        "nombre": d["Nombre"],
+        "tipo": d["Tipo"],
+        "porcentaje": d["Porcentaje"],
+        "monto_fijo": d["MontoFijo"],
+        "base": round(base, 2),
+        "monto_descuento": monto
+    }
+
+
 # ── CAJA REGISTRADORA ─────────────────────────────────
 
 DENOMINACIONES = [200, 100, 50, 20, 10, 5, 1]
@@ -1114,7 +1258,13 @@ def cobrar_carrito(turno_id, metodo_pago, cliente_id=None, monto_efectivo=None, 
     if not items:
         return {"error": "El carrito esta vacio."}
 
-    total = round(sum(i["Total"] for i in items), 2)
+    subtotal = round(sum(i["Total"] for i in items), 2)
+    descuento = calcular_descuento(
+        cliente_id=cliente_id,
+        productos=[{"producto_id": i["ProductoId"], "subtotal": i["Total"]} for i in items],
+        total=subtotal
+    )
+    total = round(subtotal - descuento["monto_descuento"], 2) if descuento else subtotal
     metodo_pago = (metodo_pago or "").lower()
 
     if metodo_pago == "efectivo":
@@ -1144,6 +1294,8 @@ def cobrar_carrito(turno_id, metodo_pago, cliente_id=None, monto_efectivo=None, 
         remove_stock(item["ProductoId"], item["Cantidad"], razon="Venta en caja")
 
     descripcion = ", ".join([f"{i['Cantidad']}x {i['ProductoNombre']}" for i in items])
+    if descuento:
+        descripcion += f" | Descuento {descuento['nombre']}: -Q{descuento['monto_descuento']}"
     now = datetime.now()
     mes, anio = now.month, now.year
     trimestre = (mes - 1) // 3 + 1
@@ -1188,6 +1340,8 @@ def cobrar_carrito(turno_id, metodo_pago, cliente_id=None, monto_efectivo=None, 
     return {
         "venta_id": venta_id,
         "items": items,
+        "subtotal": subtotal,
+        "descuento": descuento,
         "total": total,
         "metodo_pago": metodo_pago,
         "monto_efectivo": monto_efectivo,

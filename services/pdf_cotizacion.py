@@ -77,6 +77,13 @@ def generar_pdf_cotizacion(cotizacion):
             f"Q{i['subtotal']:.2f}",
         ])
     total = cotizacion.get("total", 0)
+    descuento = cotizacion.get("descuento")
+    filas_pie = 1
+    if descuento:
+        subtotal = cotizacion.get("subtotal", total)
+        tabla_items.append(["", "", "Subtotal", f"Q{subtotal:.2f}"])
+        tabla_items.append(["", "", f"Descuento ({descuento['nombre']})", f"-Q{descuento['monto_descuento']:.2f}"])
+        filas_pie = 3
     tabla_items.append(["", "", "Total", f"Q{total:.2f}"])
 
     items_table = Table(tabla_items, colWidths=[80 * mm, 25 * mm, 30 * mm, 30 * mm])
@@ -84,10 +91,10 @@ def generar_pdf_cotizacion(cotizacion):
         ("BACKGROUND", (0, 0), (-1, 0), ACCENT),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTNAME", (2, -1), (-1, -1), "Helvetica-Bold"),
+        ("FONTNAME", (2, -filas_pie), (-1, -1), "Helvetica-Bold"),
         ("ALIGN", (1, 0), (-1, -1), "CENTER"),
-        ("GRID", (0, 0), (-1, -2), 0.5, colors.lightgrey),
-        ("LINEABOVE", (0, -1), (-1, -1), 1, colors.black),
+        ("GRID", (0, 0), (-1, -1 - filas_pie), 0.5, colors.lightgrey),
+        ("LINEABOVE", (0, -filas_pie), (-1, -filas_pie), 1, colors.black),
         ("FONTSIZE", (0, 0), (-1, -1), 10),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
         ("TOPPADDING", (0, 0), (-1, -1), 5),
