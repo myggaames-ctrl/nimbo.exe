@@ -209,6 +209,11 @@ def _intentar_detectar(message: str, role: str, context: dict, contexto_historia
             context = {"step": "cotizacion_waiting_cliente", "cot_items": []}
             return "Para que cliente es la cotizacion?", context
 
+        if str(result).startswith("COMBO_INICIO:"):
+            nombre_combo = str(result).replace("COMBO_INICIO:", "").strip()
+            context = {"step": "combo_crear_waiting_producto", "combo_nombre": nombre_combo, "combo_items": []}
+            return f"Creando combo '{nombre_combo}'. Que producto quieres agregar? (o 'listo' para terminar)", context
+
         if str(result) == "CAJA_ABRIR_INICIO":
             from database.aronium import DENOMINACIONES, get_ultimo_cierre_denominaciones, get_fondo_sugerido
             sugerido = get_ultimo_cierre_denominaciones()
@@ -914,6 +919,96 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         context.pop("cot_pendiente", None)
         context["step"] = "cotizacion_waiting_producto"
         return f"Agregado: {cantidad}x {p['nombre']} = Q{subtotal}. Otro producto? (nombre o 'listo' para terminar)", context
+
+    # Flujo de creacion manual de un combo (crear combo X). Igual que las
+    # cotizaciones: agrega productos en loop hasta 'listo', luego sugiere un
+    # precio con descuento (DESCUENTO_COMBO_SUGERIDO, ver database.aronium) que
+    # el admin puede aceptar o reemplazar por un monto propio.
+    if step == "combo_crear_waiting_producto":
+        msg = message.strip().lower()
+        if msg in ["listo", "ya", "no mas", "no más", "terminar", "fin"]:
+            items = context.get("combo_items", [])
+            if not items:
+                return "Agrega al menos un producto antes de terminar.", context
+            from database.aronium import DESCUENTO_COMBO_SUGERIDO
+            suma = round(sum(i["precio_unit"] * i["cantidad"] for i in items), 2)
+            precio_sugerido = round(suma - suma * DESCUENTO_COMBO_SUGERIDO, 2)
+            context["combo_suma"] = suma
+            context["combo_precio_sugerido"] = precio_sugerido
+            context["step"] = "combo_crear_waiting_precio"
+            return (f"Precio normal por separado: Q{suma}. Precio sugerido con "
+                    f"{int(DESCUENTO_COMBO_SUGERIDO * 100)}% de descuento: Q{precio_sugerido}. "
+                    f"Usar este precio? (si, o escribe otro monto)"), context
+        from database.aronium import get_products
+        productos = get_products(search=message.strip())
+        if not productos:
+            return f"No encontre '{message.strip()}' en inventario. Intenta con otro nombre, o escribe 'listo' para terminar.", context
+        if len(productos) > 1:
+            context["combo_opciones"] = [{"id": p["Id"], "nombre": p["Name"], "precio": p["Price"]} for p in productos[:5]]
+            context["step"] = "combo_crear_waiting_seleccion"
+            lista = "\n".join([f"{i+1}. {p['nombre']} - Q{p['precio']}" for i, p in enumerate(context["combo_opciones"])])
+            return f"Varios productos similares:\n{lista}\n\nEscribe el numero:", context
+        p = productos[0]
+        context["combo_pendiente"] = {"id": p["Id"], "nombre": p["Name"], "precio": p["Price"]}
+        context["step"] = "combo_crear_waiting_cantidad"
+        return f"Cuantas unidades de {p['Name']}?", context
+
+    if step == "combo_crear_waiting_seleccion":
+        try:
+            idx = int(message.strip()) - 1
+            opciones = context.get("combo_opciones", [])
+            if 0 <= idx < len(opciones):
+                context["combo_pendiente"] = opciones[idx]
+                context["step"] = "combo_crear_waiting_cantidad"
+                return f"Cuantas unidades de {opciones[idx]['nombre']}?", context
+        except:
+            pass
+        return "Por favor escribe el numero del producto:", context
+
+    if step == "combo_crear_waiting_cantidad":
+        try:
+            cantidad = float(message.strip())
+            if cantidad <= 0:
+                raise ValueError()
+        except:
+            return "Escribe solo la cantidad en numeros. Ejemplo: 1", context
+        p = context.get("combo_pendiente", {})
+        items = context.get("combo_items", [])
+        items.append({"producto_id": p["id"], "nombre": p["nombre"], "cantidad": cantidad, "precio_unit": p["precio"]})
+        context["combo_items"] = items
+        context.pop("combo_pendiente", None)
+        context["step"] = "combo_crear_waiting_producto"
+        return f"Agregado: {cantidad}x {p['nombre']}. Otro producto? (nombre o 'listo' para terminar)", context
+
+    if step == "combo_crear_waiting_precio":
+        from database.aronium import crear_combo
+        respuesta = message.strip().lower()
+        precio_sugerido = context.get("combo_precio_sugerido", 0)
+        if respuesta in ["si", "si.", "sí", "s", "ok", "dale", "yes", "de una"]:
+            precio_final = precio_sugerido
+        else:
+            try:
+                precio_final = round(float(respuesta.replace("q", "").replace(",", "").strip()), 2)
+                if precio_final <= 0:
+                    raise ValueError()
+            except:
+                return "Escribe 'si' para usar el precio sugerido, o el monto que quieras usar. Ejemplo: 150", context
+
+        nombre = context.get("combo_nombre", "Combo")
+        items = context.get("combo_items", [])
+        descripcion = "Incluye: " + ", ".join(f"{i['cantidad']}x {i['nombre']}" for i in items)
+        combo_id = crear_combo(nombre, descripcion, precio_final, [
+            {"producto_id": i["producto_id"], "producto_nombre": i["nombre"], "cantidad": i["cantidad"]}
+            for i in items
+        ])
+        suma = context.get("combo_suma", 0)
+        context = {}
+        resp = f"Combo '{nombre}' creado (#{combo_id}). {descripcion}. Precio: Q{precio_final}"
+        ahorro = round(suma - precio_final, 2)
+        if ahorro > 0:
+            resp += f" (ahorro de Q{ahorro} vs Q{suma} por separado)"
+        resp += f". Para venderlo: 'vender combo {nombre}'"
+        return resp, context
 
     # Confirmacion del fondo sugerido (igual al cierre del turno anterior)
     if step == "caja_abrir_confirmar_sugerido":

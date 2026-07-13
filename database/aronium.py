@@ -1103,6 +1103,144 @@ def get_garantias_por_vencer(dias=30):
     return rows
 
 
+# ── COMBOS ────────────────────────────────────────────
+
+DESCUENTO_COMBO_SUGERIDO = 0.08
+
+
+def init_combos():
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS ProductoCombo (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            Nombre TEXT,
+            Descripcion TEXT,
+            PrecioCombo NUMERIC DEFAULT 0,
+            Activo INTEGER DEFAULT 1,
+            FechaCreado DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS ItemCombo (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ComboId INTEGER,
+            ProductoId INTEGER,
+            ProductoNombre TEXT,
+            Cantidad NUMERIC DEFAULT 1,
+            FOREIGN KEY (ComboId) REFERENCES ProductoCombo(Id)
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def crear_combo(nombre, descripcion, precio_combo, items):
+    """items: lista de dicts {producto_id, producto_nombre, cantidad}."""
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("INSERT INTO ProductoCombo (Nombre, Descripcion, PrecioCombo) VALUES (?,?,?)",
+        (nombre, descripcion, precio_combo))
+    combo_id = cur.lastrowid
+    for item in items:
+        cur.execute("INSERT INTO ItemCombo (ComboId, ProductoId, ProductoNombre, Cantidad) VALUES (?,?,?,?)",
+            (combo_id, item["producto_id"], item["producto_nombre"], item["cantidad"]))
+    conn.commit()
+    conn.close()
+    return combo_id
+
+
+def _combos_con_items(cur, combos):
+    for c in combos:
+        cur.execute("SELECT * FROM ItemCombo WHERE ComboId=?", (c["Id"],))
+        c["items"] = [dict(r) for r in cur.fetchall()]
+    return combos
+
+
+def get_combos(activo=True):
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM ProductoCombo WHERE Activo=? ORDER BY FechaCreado DESC", (1 if activo else 0,))
+    combos = _combos_con_items(cur, [dict(r) for r in cur.fetchall()])
+    conn.close()
+    return combos
+
+
+def get_combo_por_id(combo_id):
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM ProductoCombo WHERE Id=?", (combo_id,))
+    row = cur.fetchone()
+    if not row:
+        conn.close()
+        return None
+    combo = _combos_con_items(cur, [dict(row)])[0]
+    conn.close()
+    return combo
+
+
+def buscar_combos(query):
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM ProductoCombo WHERE Activo=1 AND Nombre LIKE ?", (f"%{query}%",))
+    combos = _combos_con_items(cur, [dict(r) for r in cur.fetchall()])
+    conn.close()
+    return combos
+
+
+def desactivar_combo(combo_id):
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("UPDATE ProductoCombo SET Activo=0 WHERE Id=?", (combo_id,))
+    conn.commit()
+    conn.close()
+
+
+def vender_combo(combo_id, cliente_id=None, cliente_nombre="Consumidor Final", cliente_telefono=""):
+    """Vende un combo completo: verifica stock de todos los productos antes de
+    descontar ninguno, descuenta stock de cada uno, registra una sola Venta por el
+    PrecioCombo (ya con el descuento del combo incluido) y genera la garantia de
+    cada producto (igual que una venta normal)."""
+    combo = get_combo_por_id(combo_id)
+    if not combo:
+        return {"error": "Combo no encontrado."}
+    if not combo["Activo"]:
+        return {"error": f"El combo '{combo['Nombre']}' esta desactivado."}
+    items = combo["items"]
+    if not items:
+        return {"error": f"El combo '{combo['Nombre']}' no tiene productos configurados."}
+
+    for item in items:
+        producto = get_product_by_id(item["ProductoId"])
+        stock = producto["Stock"] if producto else 0
+        if stock < item["Cantidad"]:
+            return {"error": (f"Stock insuficiente de {item['ProductoNombre']} "
+                               f"({int(stock)} disponibles, se necesitan {item['Cantidad']}) para vender el combo.")}
+
+    for item in items:
+        remove_stock(item["ProductoId"], item["Cantidad"], razon=f"Venta combo {combo['Nombre']}")
+
+    descripcion = f"Combo {combo['Nombre']}: " + ", ".join(f"{i['Cantidad']}x {i['ProductoNombre']}" for i in items)
+    total = combo["PrecioCombo"]
+    venta_id = registrar_venta_cliente(cliente_id, descripcion, total)
+
+    garantias = [
+        generar_garantia_venta(
+            venta_id, item["ProductoId"], item["ProductoNombre"],
+            cliente_id=cliente_id, cliente_nombre=cliente_nombre, cliente_telefono=cliente_telefono
+        )
+        for item in items
+    ]
+
+    return {
+        "venta_id": venta_id,
+        "combo": combo,
+        "items": items,
+        "total": total,
+        "garantias": garantias
+    }
+
+
 # ── CAJA REGISTRADORA ─────────────────────────────────
 
 DENOMINACIONES = [200, 100, 50, 20, 10, 5, 1]

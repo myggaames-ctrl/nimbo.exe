@@ -17,9 +17,9 @@ def _sin_acentos(texto: str) -> str:
 VOCABULARIO = [
     # verbos / acciones
     "busca", "buscar", "agrega", "agregar", "quita", "quitar", "elimina", "eliminar",
-    "cambia", "cambiar", "crear", "registra", "registrar", "vende", "vendi", "vendio",
+    "cambia", "cambiar", "crear", "registra", "registrar", "vende", "vendi", "vendio", "vender",
     "cotiza", "cotizar", "genera", "generar", "actualiza", "actualizar", "muestra",
-    "mostrar", "listar", "abrir", "cerrar", "retirar", "cobrar",
+    "mostrar", "listar", "abrir", "cerrar", "retirar", "cobrar", "sugerir", "sugiere",
     # sustantivos generales del negocio
     "producto", "productos", "inventario", "precio", "costo", "cliente", "clientes",
     "venta", "ventas", "factura", "gasto", "gastos", "balance", "proveedor", "proveedores",
@@ -28,7 +28,7 @@ VOCABULARIO = [
     "caja", "turno", "efectivo", "tarjeta", "denominacion", "denominaciones", "cambio",
     "billete", "billetes", "moneda", "monedas", "carrito", "ticket", "sencillo",
     "descuento", "descuentos", "temporada", "porciento",
-    "nuestra", "nuestro", "propia", "propio",
+    "nuestra", "nuestro", "propia", "propio", "combo", "combos", "kit", "kits",
     # electrodomesticos y repuestos comunes en la tienda
     "licuadora", "licuadoras", "refrigerador", "refrigeradores", "cuchilla", "cuchillas",
     "empaque", "empaques", "adaptador", "adaptadores", "regulador", "reguladores",

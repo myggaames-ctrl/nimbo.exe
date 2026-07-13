@@ -240,13 +240,49 @@ Usuario escribe mensaje
     "garantias por vencer" (proximos 30 dias, distinto del recordatorio automatico de 7
     dias). Admin-only (categoria "garantia" no esta en CATEGORIAS_EMPLEADO de
     core/action_engine.py).
+- Combos/Kits: 2 tablas en nimbo.db. ProductoCombo (Nombre/Descripcion/PrecioCombo/Activo)
+  + ItemCombo (ComboId, ProductoId de Aronium, ProductoNombre, Cantidad - N filas por
+  combo). database.aronium.DESCUENTO_COMBO_SUGERIDO = 0.08 (8%) es el descuento por
+  defecto que se sugiere sobre la suma de precios individuales, tanto en la creacion
+  manual como en las sugerencias con Gemini.
+  - "crear combo Kit Licuadora" inicia un flujo conversacional en core/nimbo.py (steps
+    combo_crear_waiting_producto/seleccion/cantidad, igual que las cotizaciones: agrega
+    productos + cantidad en loop hasta 'listo') y al terminar sugiere el precio con 8% de
+    descuento (step combo_crear_waiting_precio, el admin puede aceptar con "si" o escribir
+    su propio monto) antes de guardar el combo (database.aronium.crear_combo).
+  - "ver combos" lista los combos activos con su precio y detalle de productos
+    (tools/combo_tool.py, database.aronium.get_combos()).
+  - "vender combo Kit Licuadora" es una venta directa de una sola vez (a diferencia de
+    "crear combo", no es un flujo de varios pasos) - database.aronium.vender_combo()
+    busca el combo por nombre (buscar_combos, fuzzy LIKE), verifica stock de todos sus
+    productos antes de descontar ninguno, descuenta el stock de cada uno, registra una
+    sola Venta por el PrecioCombo (ya con el descuento incluido, via
+    registrar_venta_cliente) y genera la garantia de cada producto (generar_garantia_venta,
+    igual que cualquier otra venta). Vende a "Consumidor Final" sin pedir cliente ni
+    metodo de pago (mantiene el comando de un solo paso); para atribuir la venta a un
+    cliente especifico o cobrar por caja, hay que vender los productos del combo por
+    separado con descuento manual en vez de usar este comando.
+  - "sugerir combos" (database.aronium via tools/combo_tool.py sugerir_combos_tool):
+    manda el inventario actual con stock > 0 (nombre, precio, stock) a Gemini pidiendole
+    exactamente 3 combos logicos en JSON estricto (nombre/descripcion/productos, usando
+    los nombres exactos del inventario). Gemini solo decide QUE productos van juntos
+    (criterio de negocio); Python hace el match contra el inventario real (get_products,
+    mismo fuzzy fallback que el resto del sistema) y calcula el precio con el 8% de
+    descuento de forma determinista, sin confiar en la aritmetica de Gemini (mismo patron
+    que contabilidad.sugerencias_precios). Si un producto sugerido no matchea con nada
+    real se descarta esa entrada; si un combo se queda con menos de 2 productos reales se
+    omite. Requiere GEMINI_API_KEY; sin esa variable devuelve un mensaje explicando que
+    Gemini no esta configurado, sin crear nada.
+  - Detector core/detectors/combo_detector.py + herramienta tools/combo_tool.py.
+    Admin-only (categoria "combo" no esta en CATEGORIAS_EMPLEADO de core/action_engine.py).
 
 ## Tablas nimbo.db
 Cliente, OrdenServicio, HistorialOrden, Kardex, StockMinimo, ProductoFoto, ProductoInfo,
 Venta, ResumenTrimestral, PagoFijo, RecordatorioPersonal, ChatHistorial,
 Gasto, ResumenContable, Proveedor, ContactoProveedor, ProductoProveedor,
 OrdenCompra, ItemOrdenCompra, HistorialPrecio, Usuario, PasswordResetToken, Configuracion,
-Cotizacion, CajaTurno, MovimientoCaja, ItemCarrito, Descuento, GarantiaProducto, GarantiaVenta
+Cotizacion, CajaTurno, MovimientoCaja, ItemCarrito, Descuento, GarantiaProducto, GarantiaVenta,
+ProductoCombo, ItemCombo
 
 ## Variables de entorno (.env)
 GEMINI_API_KEY, FB_PAGE_TOKEN, FB_PAGE_ID, WA_TOKEN, WA_PHONE_ID, IG_ACCOUNT_ID,
