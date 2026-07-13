@@ -393,6 +393,15 @@ def get_historial_orden(numero):
 
 # ── CLIENTES NIMBO ────────────────────────────────────
 
+def get_cliente_por_id(cliente_id):
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM Cliente WHERE Id=?", (cliente_id,))
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
 def crear_cliente_completo(nombre, telefono="", email="", nit="", direccion="", notas=""):
     conn = nimbo_connect()
     cur = conn.cursor()
@@ -449,9 +458,11 @@ def registrar_venta_cliente(cliente_id, descripcion, total):
         "INSERT INTO Venta (ClienteId, Descripcion, Total, Mes, Trimestre, Anio) VALUES (?,?,?,?,?,?)",
         (cliente_id, descripcion, total, mes, trimestre, anio)
     )
+    venta_id = cur.lastrowid
     cur.execute("UPDATE Cliente SET UltimaCompra=? WHERE Id=?", (now.isoformat(), cliente_id))
     conn.commit()
     conn.close()
+    return venta_id
 
 def get_historial_cliente(cliente_id, meses=12):
     conn = nimbo_connect()
@@ -925,6 +936,173 @@ def calcular_descuento(cliente_id=None, productos=None, total=0, fecha=None):
     }
 
 
+# ── GARANTIAS ─────────────────────────────────────────
+
+DIAS_GARANTIA_PROPIA_DEFAULT = 30
+
+
+def init_garantias():
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS GarantiaProducto (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ProductoId INTEGER UNIQUE,
+            ProductoNombre TEXT,
+            DiasFabrica INTEGER DEFAULT 0,
+            DiasPropia INTEGER DEFAULT 30,
+            Notas TEXT,
+            FechaActualizado DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS GarantiaVenta (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            NumeroGarantia TEXT UNIQUE,
+            VentaId INTEGER,
+            ClienteId INTEGER,
+            ClienteNombre TEXT,
+            ClienteTelefono TEXT,
+            ProductoNombre TEXT,
+            ProductoId INTEGER,
+            FechaVenta DATETIME,
+            FechaVencimientoFabrica DATETIME,
+            FechaVencimientoPropias DATETIME,
+            Estado TEXT DEFAULT 'VIGENTE',
+            Notas TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def set_garantia_producto(producto_id, producto_nombre, dias_fabrica=None, dias_propia=None, notas=None):
+    """Configura (crea o actualiza) la garantia de un producto. Los campos que
+    llegan en None no se tocan si ya existia una configuracion previa, para poder
+    ajustar solo fabrica o solo propia sin pisar el otro valor con un default."""
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM GarantiaProducto WHERE ProductoId=?", (producto_id,))
+    existente = cur.fetchone()
+    if existente:
+        nuevo_fabrica = dias_fabrica if dias_fabrica is not None else existente["DiasFabrica"]
+        nuevo_propia = dias_propia if dias_propia is not None else existente["DiasPropia"]
+        nuevas_notas = notas if notas is not None else existente["Notas"]
+        cur.execute("""UPDATE GarantiaProducto SET DiasFabrica=?, DiasPropia=?, Notas=?,
+            FechaActualizado=CURRENT_TIMESTAMP WHERE ProductoId=?""",
+            (nuevo_fabrica, nuevo_propia, nuevas_notas, producto_id))
+    else:
+        cur.execute("""INSERT INTO GarantiaProducto (ProductoId, ProductoNombre, DiasFabrica, DiasPropia, Notas)
+            VALUES (?,?,?,?,?)""",
+            (producto_id, producto_nombre,
+             dias_fabrica if dias_fabrica is not None else 0,
+             dias_propia if dias_propia is not None else DIAS_GARANTIA_PROPIA_DEFAULT,
+             notas))
+    conn.commit()
+    conn.close()
+
+
+def get_garantia_producto(producto_id):
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM GarantiaProducto WHERE ProductoId=?", (producto_id,))
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def generar_garantia_venta(venta_id, producto_id, producto_nombre, cliente_id=None,
+                            cliente_nombre="Consumidor Final", cliente_telefono="", fecha_venta=None):
+    """Genera la garantia de un producto vendido (una por cada linea de producto de
+    la venta, sin importar la cantidad). Si el producto no tiene GarantiaProducto
+    configurada usa 30 dias propios por defecto y 0 de fabrica (sin garantia de
+    fabrica), tal como se pide en la integracion con ventas."""
+    from datetime import timedelta
+    fecha_venta = fecha_venta or datetime.now()
+    config = get_garantia_producto(producto_id)
+    dias_fabrica = config["DiasFabrica"] if config else 0
+    dias_propia = config["DiasPropia"] if config else DIAS_GARANTIA_PROPIA_DEFAULT
+
+    vencimiento_fabrica = (fecha_venta + timedelta(days=dias_fabrica)).strftime("%Y-%m-%d") if dias_fabrica else None
+    vencimiento_propia = (fecha_venta + timedelta(days=dias_propia)).strftime("%Y-%m-%d")
+
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) as total FROM GarantiaVenta")
+    total = cur.fetchone()["total"] + 1
+    numero = f"GAR-{total:04d}"
+    cur.execute("""INSERT INTO GarantiaVenta
+        (NumeroGarantia, VentaId, ClienteId, ClienteNombre, ClienteTelefono,
+         ProductoNombre, ProductoId, FechaVenta, FechaVencimientoFabrica, FechaVencimientoPropias)
+        VALUES (?,?,?,?,?,?,?,?,?,?)""",
+        (numero, venta_id, cliente_id, cliente_nombre, cliente_telefono,
+         producto_nombre, producto_id, fecha_venta.strftime("%Y-%m-%d %H:%M:%S"),
+         vencimiento_fabrica, vencimiento_propia))
+    conn.commit()
+    conn.close()
+    return {
+        "numero": numero,
+        "dias_fabrica": dias_fabrica,
+        "dias_propia": dias_propia,
+        "vencimiento_fabrica": vencimiento_fabrica,
+        "vencimiento_propia": vencimiento_propia
+    }
+
+
+def marcar_garantias_vencidas():
+    """Una garantia solo pasa a VENCIDA cuando ya vencieron tanto la de fabrica (si
+    aplica) como la propia - mientras cualquiera de las dos siga vigente, el
+    producto sigue cubierto. Nunca toca una garantia ya RECLAMADA."""
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""UPDATE GarantiaVenta SET Estado='VENCIDA'
+        WHERE Estado='VIGENTE'
+        AND date(FechaVencimientoPropias) < date('now')
+        AND (FechaVencimientoFabrica IS NULL OR date(FechaVencimientoFabrica) < date('now'))""")
+    conn.commit()
+    conn.close()
+
+
+def get_garantia_por_numero(numero):
+    marcar_garantias_vencidas()
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM GarantiaVenta WHERE NumeroGarantia=?", (numero,))
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_garantias_cliente(query):
+    marcar_garantias_vencidas()
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""SELECT * FROM GarantiaVenta
+        WHERE ClienteNombre LIKE ? OR ClienteTelefono LIKE ?
+        ORDER BY FechaVenta DESC""", (f"%{query}%", f"%{query}%"))
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+def get_garantias_por_vencer(dias=30):
+    """Garantias VIGENTE cuya cobertura (la fecha mas lejana entre fabrica y
+    propia, que es la que de verdad sigue cubriendo al cliente) vence dentro de
+    los proximos `dias` dias."""
+    marcar_garantias_vencidas()
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""SELECT * FROM (
+            SELECT *, MAX(IFNULL(FechaVencimientoFabrica, FechaVencimientoPropias), FechaVencimientoPropias) as VenceEfectivo
+            FROM GarantiaVenta WHERE Estado='VIGENTE'
+        )
+        WHERE date(VenceEfectivo) BETWEEN date('now') AND date('now', '+' || ? || ' days')
+        ORDER BY VenceEfectivo ASC""", (dias,))
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
 # ── CAJA REGISTRADORA ─────────────────────────────────
 
 DENOMINACIONES = [200, 100, 50, 20, 10, 5, 1]
@@ -1337,6 +1515,23 @@ def cobrar_carrito(turno_id, metodo_pago, cliente_id=None, monto_efectivo=None, 
 
     vaciar_carrito(turno_id)
 
+    cliente_nombre_garantia = "Consumidor Final"
+    cliente_telefono_garantia = ""
+    if cliente_id:
+        cliente_row = get_cliente_por_id(cliente_id)
+        if cliente_row:
+            cliente_nombre_garantia = cliente_row["Nombre"]
+            cliente_telefono_garantia = cliente_row.get("Telefono") or ""
+
+    garantias = [
+        generar_garantia_venta(
+            venta_id, item["ProductoId"], item["ProductoNombre"],
+            cliente_id=cliente_id, cliente_nombre=cliente_nombre_garantia,
+            cliente_telefono=cliente_telefono_garantia, fecha_venta=now
+        )
+        for item in items
+    ]
+
     return {
         "venta_id": venta_id,
         "items": items,
@@ -1347,6 +1542,7 @@ def cobrar_carrito(turno_id, metodo_pago, cliente_id=None, monto_efectivo=None, 
         "monto_efectivo": monto_efectivo,
         "monto_tarjeta": monto_tarjeta,
         "cambio": cambio,
+        "garantias": garantias,
         "fecha": now.strftime("%Y-%m-%d %H:%M:%S")
     }
 
@@ -1749,6 +1945,15 @@ def get_recordatorios():
             "tipo": "cotizacion",
             "mensaje": mensaje,
             "urgencia": "alta"
+        })
+
+    # Garantias que vencen en los proximos 7 dias
+    garantias_por_vencer = get_garantias_por_vencer(dias=7)
+    for g in garantias_por_vencer:
+        recordatorios.append({
+            "tipo": "garantia",
+            "mensaje": f"{g['NumeroGarantia']} de {g['ClienteNombre']} ({g['ProductoNombre']}) vence pronto",
+            "urgencia": "media"
         })
 
     conn.close()

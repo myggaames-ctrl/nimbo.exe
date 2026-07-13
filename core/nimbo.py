@@ -281,11 +281,13 @@ def _intentar_detectar(message: str, role: str, context: dict, contexto_historia
     return None
 
 
-def _registrar_venta_chat(cliente_id, descripcion, total):
-    """Inserta la Venta del flujo de venta simple del chat (un solo producto) y
-    actualiza la ultima compra del cliente. Usado tanto por el pago de un solo
-    metodo como por el pago mixto (efectivo + tarjeta)."""
-    from database.aronium import nimbo_connect
+def _registrar_venta_chat(cliente_id, descripcion, total, producto_id=None, producto_nombre="",
+                           cliente_nombre="Consumidor Final", cliente_tel=""):
+    """Inserta la Venta del flujo de venta simple del chat (un solo producto),
+    actualiza la ultima compra del cliente y genera la garantia del producto
+    (ver database.aronium.generar_garantia_venta). Usado tanto por el pago de un
+    solo metodo como por el pago mixto (efectivo + tarjeta)."""
+    from database.aronium import nimbo_connect, generar_garantia_venta
     from datetime import datetime
     conn = nimbo_connect()
     cur = conn.cursor()
@@ -302,7 +304,15 @@ def _registrar_venta_chat(cliente_id, descripcion, total):
         cur.execute("UPDATE Cliente SET UltimaCompra=? WHERE Id=?", (now.isoformat(), cliente_id))
     conn.commit()
     conn.close()
-    return venta_id
+
+    garantia = None
+    if producto_id is not None:
+        garantia = generar_garantia_venta(
+            venta_id, producto_id, producto_nombre,
+            cliente_id=cliente_id, cliente_nombre=cliente_nombre,
+            cliente_telefono=cliente_tel, fecha_venta=now
+        )
+    return venta_id, garantia
 
 
 def _finalizar_cotizacion(context: dict):
@@ -682,17 +692,23 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         if descuento:
             descripcion += f" | Descuento {descuento['nombre']}: -Q{descuento['monto_descuento']}"
 
-        venta_id = _registrar_venta_chat(cliente_id, descripcion, total_final)
+        venta_id, garantia = _registrar_venta_chat(
+            cliente_id, descripcion, total_final,
+            producto_id=ctx.get("producto_id"), producto_nombre=ctx.get("producto", ""),
+            cliente_nombre=cliente_nombre, cliente_tel=cliente_tel
+        )
 
         resumen = f"Venta #{venta_id} registrada. {ctx['cantidad']}x {ctx['producto']} = Q{ctx['total']}."
         if descuento:
             resumen += f" Descuento {descuento['nombre']} ({descuento['tipo']}): -Q{descuento['monto_descuento']}. Total: Q{total_final}."
         resumen += f" Pago: {pago}. Cliente: {cliente_nombre}."
+        if garantia:
+            resumen += f" Garantia {garantia['numero']} hasta {garantia['vencimiento_propia']}."
 
         factura_opts = ""
         if cliente_tel:
             factura_opts = f"\nFactura para {cliente_nombre}. Como enviarla? (whatsapp, imprimir, ninguna)"
-            context = {"step": "venta_waiting_factura", "venta_id": venta_id, "cliente_tel": cliente_tel, "cliente_nombre": cliente_nombre, "venta_ctx": ctx, "pago": pago}
+            context = {"step": "venta_waiting_factura", "venta_id": venta_id, "cliente_tel": cliente_tel, "cliente_nombre": cliente_nombre, "venta_ctx": ctx, "pago": pago, "venta_garantia": garantia}
             return resumen + factura_opts, context
 
         context = {}
@@ -744,17 +760,23 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
             descripcion += f" | Descuento {descuento['nombre']}: -Q{descuento['monto_descuento']}"
         descripcion += f" | Efectivo: Q{monto_efectivo} + Tarjeta: Q{monto_tarjeta}"
 
-        venta_id = _registrar_venta_chat(cliente_id, descripcion, total_final)
+        venta_id, garantia = _registrar_venta_chat(
+            cliente_id, descripcion, total_final,
+            producto_id=ctx.get("producto_id"), producto_nombre=ctx.get("producto", ""),
+            cliente_nombre=cliente_nombre, cliente_tel=cliente_tel
+        )
 
         resumen = f"Venta #{venta_id} registrada. Efectivo Q{monto_efectivo} + Tarjeta Q{monto_tarjeta}."
         if descuento:
             resumen += f" Descuento {descuento['nombre']} ({descuento['tipo']}): -Q{descuento['monto_descuento']}."
         resumen += f" Comision POS: Q{comision_pos} (solo sobre tarjeta). Cliente: {cliente_nombre}."
+        if garantia:
+            resumen += f" Garantia {garantia['numero']} hasta {garantia['vencimiento_propia']}."
 
         factura_opts = ""
         if cliente_tel:
             factura_opts = f"\nFactura para {cliente_nombre}. Como enviarla? (whatsapp, imprimir, ninguna)"
-            context = {"step": "venta_waiting_factura", "venta_id": venta_id, "cliente_tel": cliente_tel, "cliente_nombre": cliente_nombre, "venta_ctx": ctx, "pago": "mixto"}
+            context = {"step": "venta_waiting_factura", "venta_id": venta_id, "cliente_tel": cliente_tel, "cliente_nombre": cliente_nombre, "venta_ctx": ctx, "pago": "mixto", "venta_garantia": garantia}
             return resumen + factura_opts, context
 
         context = {}
@@ -767,11 +789,12 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         ctx = context.get("venta_ctx", {})
         venta_id = context.get("venta_id", "")
         pago = context.get("pago", "efectivo")
+        garantia = context.get("venta_garantia")
         context = {}
         if opcion in ["whatsapp", "wa", "wapp"]:
             from services.whatsapp import enviar_factura_whatsapp
             items = [f"{ctx['cantidad']}x {ctx['producto']} a Q{ctx['precio_unit']}"]
-            ok, msg = enviar_factura_whatsapp(cliente_tel, cliente_nombre, items, ctx['total'], pago)
+            ok, msg = enviar_factura_whatsapp(cliente_tel, cliente_nombre, items, ctx['total'], pago, garantia=garantia)
             if ok:
                 return f"Factura enviada por WhatsApp a {cliente_nombre} ({cliente_tel}).", context
             else:

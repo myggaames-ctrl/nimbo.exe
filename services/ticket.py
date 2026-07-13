@@ -8,7 +8,7 @@ ANCHO = 32
 
 def generar_texto_ticket(numero_venta, fecha, items, total, metodo_pago,
                           cliente_nombre="", efectivo_recibido=None, cambio=None, cajero="",
-                          subtotal=None, descuento=None):
+                          subtotal=None, descuento=None, garantias=None):
     linea = "-" * ANCHO
     out = []
     out.append("MI COCINA ELECTRODOMESTICOS".center(ANCHO))
@@ -26,8 +26,8 @@ def generar_texto_ticket(numero_venta, fecha, items, total, metodo_pago,
         out.append(nombre)
         cantidad = i.get("cantidad", 0)
         precio_unit = i.get("precio_unit", 0)
-        subtotal = i.get("subtotal", 0)
-        out.append(f"  {cantidad} x Q{precio_unit:.2f} = Q{subtotal:.2f}")
+        subtotal_item = i.get("subtotal", 0)
+        out.append(f"  {cantidad} x Q{precio_unit:.2f} = Q{subtotal_item:.2f}")
     out.append(linea)
     if descuento:
         if subtotal is not None:
@@ -39,6 +39,11 @@ def generar_texto_ticket(numero_venta, fecha, items, total, metodo_pago,
         out.append(f"Recibido: Q{efectivo_recibido:.2f}")
     if cambio is not None and cambio > 0:
         out.append(f"Cambio: Q{cambio:.2f}")
+    if garantias:
+        out.append(linea)
+        out.append("GARANTIAS")
+        for g in garantias:
+            out.append(f"{g['numero']} (hasta {g['vencimiento_propia']})")
     out.append(linea)
     out.append("Gracias por su compra!".center(ANCHO))
     return "\n".join(out)

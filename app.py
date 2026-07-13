@@ -59,6 +59,9 @@ init_caja()
 from database.aronium import init_descuentos
 init_descuentos()
 
+from database.aronium import init_garantias
+init_garantias()
+
 # Instalaciones que ya tenian usuarios antes de que existiera el wizard de
 # onboarding (o que lo completaron con el /setup viejo de un solo paso) se
 # marcan como completas automaticamente, para no forzar el wizard nuevo.
@@ -1330,7 +1333,8 @@ def caja_cobrar():
         resultado["metodo_pago"], cliente_nombre=data.get("cliente_nombre", ""),
         efectivo_recibido=resultado["monto_efectivo"] if resultado["metodo_pago"] == "efectivo" else None,
         cambio=resultado["cambio"], cajero=current_user.nombre,
-        subtotal=resultado["subtotal"], descuento=resultado["descuento"]
+        subtotal=resultado["subtotal"], descuento=resultado["descuento"],
+        garantias=resultado["garantias"]
     )
     return jsonify(resultado)
 

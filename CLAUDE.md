@@ -209,13 +209,44 @@ Usuario escribe mensaje
     descontado NO se revierten automaticamente (se avisa en la respuesta); un turno ANULADO
     tampoco cuenta para el fondo sugerido del siguiente turno (get_ultimo_cierre_denominaciones
     solo mira turnos CERRADO).
+- Garantias: 2 tablas en nimbo.db. GarantiaProducto (1 fila por Product.Id de Aronium)
+  define los dias de cobertura de cada producto - DiasFabrica (garantia del fabricante,
+  0 = no aplica) y DiasPropia (garantia que da Mi Cocina, default 30). GarantiaVenta
+  (GAR-XXXX) es una garantia real generada por una venta concreta - guarda copia del
+  cliente/producto (ClienteNombre/ClienteTelefono/ProductoNombre denormalizados, igual
+  que Cotizacion) y las 2 fechas de vencimiento ya calculadas (FechaVencimientoFabrica/
+  FechaVencimientoPropias). Estado (VIGENTE/VENCIDA/RECLAMADA): database.aronium.
+  marcar_garantias_vencidas() (lazy, igual que las cotizaciones) solo marca VENCIDA
+  cuando YA pasaron AMBAS fechas - si cualquiera de las dos sigue vigente, el producto
+  sigue cubierto. RECLAMADA no se toca automaticamente (no hay comando de chat para
+  marcarla todavia, queda para una integracion futura con Servicio Tecnico).
+  - Integracion con ventas: database.aronium.generar_garantia_venta() se llama
+    automaticamente (una vez por cada linea de producto distinta) desde los 3 lugares
+    donde se cierra una venta - paso venta_waiting_pago/venta_waiting_pago_mixto_tarjeta
+    en core/nimbo.py (via el helper _registrar_venta_chat), database.aronium.
+    cobrar_carrito() (caja) y tools/cotizacion_tool.py aceptar_cotizacion_tool() (cuando
+    se acepta una cotizacion). Si el producto no tiene GarantiaProducto configurada usa
+    30 dias propios y 0 de fabrica por defecto. El numero de garantia se muestra en la
+    respuesta del chat, en el ticket de caja (services/ticket.py, seccion GARANTIAS antes
+    del pie) y en el mensaje de factura por WhatsApp (services/whatsapp.py
+    enviar_factura_whatsapp, parametro garantia).
+  - Recordatorios: get_recordatorios() (database/aronium.py) agrega un recordatorio por
+    cada garantia que vence en los proximos 7 dias (get_garantias_por_vencer(dias=7)).
+  - Detector core/detectors/garantia_detector.py + herramienta tools/garantia_tool.py.
+    Comandos de chat: "garantia de cuchilla es 30 dias" (configura solo DiasPropia, sin
+    tocar DiasFabrica), "garantia de licuadora oster es 365 dias fabrica y 180 dias
+    nuestra" (configura ambos dias), "ver garantia GAR-0001" (estado + fechas), "garantias
+    de Juan Perez" (todas las de un cliente, busca por ClienteNombre/ClienteTelefono),
+    "garantias por vencer" (proximos 30 dias, distinto del recordatorio automatico de 7
+    dias). Admin-only (categoria "garantia" no esta en CATEGORIAS_EMPLEADO de
+    core/action_engine.py).
 
 ## Tablas nimbo.db
 Cliente, OrdenServicio, HistorialOrden, Kardex, StockMinimo, ProductoFoto, ProductoInfo,
 Venta, ResumenTrimestral, PagoFijo, RecordatorioPersonal, ChatHistorial,
 Gasto, ResumenContable, Proveedor, ContactoProveedor, ProductoProveedor,
 OrdenCompra, ItemOrdenCompra, HistorialPrecio, Usuario, PasswordResetToken, Configuracion,
-Cotizacion, CajaTurno, MovimientoCaja, ItemCarrito, Descuento
+Cotizacion, CajaTurno, MovimientoCaja, ItemCarrito, Descuento, GarantiaProducto, GarantiaVenta
 
 ## Variables de entorno (.env)
 GEMINI_API_KEY, FB_PAGE_TOKEN, FB_PAGE_ID, WA_TOKEN, WA_PHONE_ID, IG_ACCOUNT_ID,
@@ -227,15 +258,16 @@ MAIL_SERVER, MAIL_PORT, MAIL_USERNAME, MAIL_PASSWORD, ADMIN_EMAIL
 - Gemini Vertex: us-east5
 
 ## Pendientes
-1. Garantias de productos
-2. Instagram API (esperando aprobacion Meta)
-3. TikTok API (en revision)
-4. Deudas/pagos a plazos
-5. Metas semanales
-6. Nimbo accesible desde telefono (afecta a Cotizaciones: el link del PDF en el mensaje
+1. Instagram API (esperando aprobacion Meta)
+2. TikTok API (en revision)
+3. Deudas/pagos a plazos
+4. Metas semanales
+5. Nimbo accesible desde telefono (afecta a Cotizaciones: el link del PDF en el mensaje
    de WhatsApp solo abre en la red local hasta que el dashboard sea accesible publicamente)
-7. App movil
-8. Mejorar OpenClaw vs Gemini deteccion
+6. App movil
+7. Mejorar OpenClaw vs Gemini deteccion
+8. Comando de chat para marcar una garantia como RECLAMADA (integracion futura con
+   Servicio Tecnico)
 
 FLUJO EN TIENDA (pendiente):
 - Calculo automatico de comision POS solo cuando paga con tarjeta (Caja ya distingue

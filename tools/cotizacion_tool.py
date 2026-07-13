@@ -5,7 +5,8 @@ import json
 from core.tool_registry import register
 from database.aronium import (
     get_cotizacion, get_cotizaciones, actualizar_estado_cotizacion,
-    marcar_cotizacion_enviada, remove_stock, registrar_venta_cliente, get_product_by_id
+    marcar_cotizacion_enviada, remove_stock, registrar_venta_cliente, get_product_by_id,
+    generar_garantia_venta
 )
 
 ESTADOS = {
@@ -102,11 +103,25 @@ def aceptar_cotizacion_tool(data):
         remove_stock(item["producto_id"], item["cantidad"], razon=f"Venta por cotizacion {numero}")
 
     descripcion = f"Cotizacion {numero}: " + ", ".join([f"{i['cantidad']}x {i['nombre']}" for i in items])
-    registrar_venta_cliente(c["ClienteId"], descripcion, c["Total"])
+    venta_id = registrar_venta_cliente(c["ClienteId"], descripcion, c["Total"])
+
+    garantias = [
+        generar_garantia_venta(
+            venta_id, item["producto_id"], item["nombre"],
+            cliente_id=c["ClienteId"], cliente_nombre=c["ClienteNombre"],
+            cliente_telefono=c.get("ClienteTelefono") or ""
+        )
+        for item in items
+    ]
 
     actualizar_estado_cotizacion(numero, "ACEPTADA")
 
-    return f"Cotizacion {numero} aceptada. Venta registrada por Q{c['Total']} y stock descontado."
+    resp = f"Cotizacion {numero} aceptada. Venta registrada por Q{c['Total']} y stock descontado."
+    if garantias:
+        resp += "\nGarantias generadas: " + ", ".join(
+            f"{g['numero']} ({p['nombre']}, hasta {g['vencimiento_propia']})" for g, p in zip(garantias, items)
+        )
+    return resp
 
 register("cotizacion.aceptar", aceptar_cotizacion_tool)
 

@@ -38,13 +38,15 @@ def enviar_whatsapp(telefono, mensaje):
     except Exception as e:
         return False, str(e)
 
-def enviar_factura_whatsapp(telefono, cliente, items, total, metodo_pago):
+def enviar_factura_whatsapp(telefono, cliente, items, total, metodo_pago, garantia=None):
     mensaje = f"Hola {cliente}, gracias por su compra en Mi Cocina Electrodomesticos.\n\n"
     mensaje += "Detalle de su compra:\n"
     for item in items:
         mensaje += f"- {item}\n"
     mensaje += f"\nTotal: Q{total}"
     mensaje += f"\nMetodo de pago: {metodo_pago}"
+    if garantia:
+        mensaje += f"\nGarantia: {garantia['numero']} (valida hasta {garantia['vencimiento_propia']})"
     mensaje += "\n\nGracias por preferirnos. Mi Cocina Electrodomesticos Guatemala."
     return enviar_whatsapp(telefono, mensaje)
 
