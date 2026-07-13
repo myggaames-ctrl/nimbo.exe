@@ -209,6 +209,16 @@ def _intentar_detectar(message: str, role: str, context: dict, contexto_historia
             context = {"step": "cotizacion_waiting_cliente", "cot_items": []}
             return "Para que cliente es la cotizacion?", context
 
+        if str(result) == "CAJA_ABRIR_INICIO":
+            from database.aronium import DENOMINACIONES
+            context = {"step": "caja_abrir_denom", "caja_idx": 0, "caja_fondo": {}}
+            return f"Abriendo turno de caja. Fondo inicial: cuantos billetes/monedas de Q{DENOMINACIONES[0]} hay?", context
+
+        if str(result) == "CAJA_CERRAR_INICIO":
+            from database.aronium import DENOMINACIONES
+            context = {"step": "caja_cerrar_denom", "caja_idx": 0, "caja_conteo": {}}
+            return f"Cerrando turno de caja. Conteo fisico: cuantos billetes/monedas de Q{DENOMINACIONES[0]} contaste?", context
+
         if "No encontre producto" in str(result):
             m = re.search(r"agrega[r]?\s+(\d+)\s+(.+)", message.lower())
             if not m:
@@ -734,6 +744,66 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         context.pop("cot_pendiente", None)
         context["step"] = "cotizacion_waiting_producto"
         return f"Agregado: {cantidad}x {p['nombre']} = Q{subtotal}. Otro producto? (nombre o 'listo' para terminar)", context
+
+    # Flujo de apertura de turno de caja (fondo inicial por denominacion)
+    if step == "caja_abrir_denom":
+        from database.aronium import DENOMINACIONES, abrir_turno
+        try:
+            cantidad = int(message.strip())
+            if cantidad < 0:
+                raise ValueError()
+        except:
+            return "Escribe solo un numero (puede ser 0). Ejemplo: 5", context
+        idx = context.get("caja_idx", 0)
+        denom = DENOMINACIONES[idx]
+        fondo = context.get("caja_fondo", {})
+        fondo[str(denom)] = cantidad
+        context["caja_fondo"] = fondo
+        idx += 1
+        if idx < len(DENOMINACIONES):
+            context["caja_idx"] = idx
+            return f"Cuantos billetes/monedas de Q{DENOMINACIONES[idx]} hay?", context
+        from flask_login import current_user
+        turno_id, total = abrir_turno(int(current_user.id), current_user.nombre, fondo)
+        context = {}
+        detalle = ", ".join([f"{v}xQ{k}" for k, v in fondo.items() if int(v) > 0])
+        return f"Turno de caja abierto (#{turno_id}). Fondo inicial: Q{total} ({detalle}).", context
+
+    # Flujo de cierre de turno de caja (conteo fisico por denominacion)
+    if step == "caja_cerrar_denom":
+        from database.aronium import DENOMINACIONES, cerrar_turno, get_turno_abierto
+        try:
+            cantidad = int(message.strip())
+            if cantidad < 0:
+                raise ValueError()
+        except:
+            return "Escribe solo un numero (puede ser 0). Ejemplo: 5", context
+        idx = context.get("caja_idx", 0)
+        denom = DENOMINACIONES[idx]
+        conteo = context.get("caja_conteo", {})
+        conteo[str(denom)] = cantidad
+        context["caja_conteo"] = conteo
+        idx += 1
+        if idx < len(DENOMINACIONES):
+            context["caja_idx"] = idx
+            return f"Cuantos billetes/monedas de Q{DENOMINACIONES[idx]} contaste?", context
+        turno = get_turno_abierto()
+        context = {}
+        if not turno:
+            return "No encontre el turno abierto.", context
+        resultado = cerrar_turno(turno["Id"], conteo)
+        diferencia = resultado["Diferencia"]
+        if diferencia == 0:
+            msg_dif = "Cuadra exacto, sin diferencias."
+        elif diferencia > 0:
+            msg_dif = f"Sobran Q{diferencia} respecto a lo esperado."
+        else:
+            msg_dif = f"Faltan Q{abs(diferencia)} respecto a lo esperado."
+        resp = f"Turno #{turno['Id']} cerrado.\n"
+        resp += f"Esperado: Q{resultado['EfectivoEsperado']} | Contado: Q{resultado['EfectivoContado']}\n"
+        resp += f"{msg_dif}\n"
+        resp += f"Ventas del turno: Q{resultado['TotalVentas']} (Efectivo Q{resultado['TotalEfectivo']}, Tarjeta Q{resultado['TotalTarjeta']}, Mixto Q{resultado['TotalMixto']})"
+        return resp, context
 
     # Si hay un flujo activo de creacion de producto
     if step == "waiting_price":

@@ -96,6 +96,21 @@ def get_product_by_code(code):
     conn.close()
     return dict(row) if row else None
 
+def get_product_by_id(product_id):
+    conn = connect()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT p.Id, p.Name, p.Code, p.Price, p.Cost,
+               IFNULL(SUM(s.Quantity),0) AS Stock
+        FROM Product p
+        LEFT JOIN Stock s ON p.Id = s.ProductId
+        WHERE p.Id = ?
+        GROUP BY p.Id LIMIT 1
+    """, (product_id,))
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
 def get_low_stock(min_stock=5):
     conn = connect()
     cur = conn.cursor()
@@ -764,6 +779,335 @@ def get_resumen_cotizaciones():
         "aceptadas_semana": aceptadas_semana,
         "activas": activas
     }
+
+
+# ── CAJA REGISTRADORA ─────────────────────────────────
+
+DENOMINACIONES = [200, 100, 50, 20, 10, 5, 1]
+
+
+def _total_denominaciones(denoms):
+    return sum(int(v) * int(d) for d, v in (denoms or {}).items())
+
+
+def _calcular_cambio_denominaciones(monto, disponible):
+    """Desglose codicioso (billete mas grande primero) usando solo lo disponible.
+    Retorna dict de denominaciones a entregar, o {} si monto no es entero o no alcanza."""
+    monto = round(monto, 2)
+    if monto <= 0:
+        return {}
+    if monto != int(monto):
+        return {}
+    restante = int(monto)
+    resultado = {}
+    for d in DENOMINACIONES:
+        disp = int(disponible.get(str(d), 0))
+        usar = min(disp, restante // d)
+        if usar > 0:
+            resultado[str(d)] = usar
+            restante -= usar * d
+    if restante != 0:
+        return {}
+    return resultado
+
+
+def init_caja():
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS CajaTurno (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            EmpleadoId INTEGER,
+            EmpleadoNombre TEXT,
+            FechaApertura DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FechaCierre DATETIME,
+            FondoInicial TEXT,
+            EfectivoEsperado NUMERIC DEFAULT 0,
+            EfectivoContado NUMERIC,
+            TotalVentas NUMERIC DEFAULT 0,
+            TotalEfectivo NUMERIC DEFAULT 0,
+            TotalTarjeta NUMERIC DEFAULT 0,
+            TotalMixto NUMERIC DEFAULT 0,
+            Diferencia NUMERIC,
+            Estado TEXT DEFAULT 'ABIERTO'
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS MovimientoCaja (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            TurnoId INTEGER,
+            Tipo TEXT,
+            Monto NUMERIC DEFAULT 0,
+            Descripcion TEXT,
+            Denominaciones TEXT,
+            Fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
+            VentaId INTEGER,
+            FOREIGN KEY (TurnoId) REFERENCES CajaTurno(Id)
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS ItemCarrito (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            TurnoId INTEGER,
+            ProductoId INTEGER,
+            ProductoNombre TEXT,
+            Cantidad NUMERIC,
+            PrecioUnit NUMERIC,
+            Total NUMERIC,
+            FOREIGN KEY (TurnoId) REFERENCES CajaTurno(Id)
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def get_turno_abierto():
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM CajaTurno WHERE Estado='ABIERTO' ORDER BY Id DESC LIMIT 1")
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_turno(turno_id):
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM CajaTurno WHERE Id=?", (turno_id,))
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def abrir_turno(empleado_id, empleado_nombre, fondo_inicial):
+    import json
+    total = _total_denominaciones(fondo_inicial)
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""INSERT INTO CajaTurno
+        (EmpleadoId, EmpleadoNombre, FondoInicial, EfectivoEsperado, Estado)
+        VALUES (?,?,?,?, 'ABIERTO')""",
+        (empleado_id, empleado_nombre, json.dumps(fondo_inicial), total))
+    turno_id = cur.lastrowid
+    cur.execute("""INSERT INTO MovimientoCaja (TurnoId, Tipo, Monto, Descripcion, Denominaciones)
+        VALUES (?, 'FONDO', ?, 'Fondo inicial de caja', ?)""",
+        (turno_id, total, json.dumps(fondo_inicial)))
+    conn.commit()
+    conn.close()
+    return turno_id, total
+
+
+def cerrar_turno(turno_id, conteo_fisico):
+    import json
+    turno = get_turno(turno_id)
+    if not turno:
+        return None
+    contado = _total_denominaciones(conteo_fisico)
+    diferencia = round(contado - turno["EfectivoEsperado"], 2)
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""UPDATE CajaTurno SET EfectivoContado=?, Diferencia=?, Estado='CERRADO',
+        FechaCierre=CURRENT_TIMESTAMP WHERE Id=?""", (contado, diferencia, turno_id))
+    cur.execute("""INSERT INTO MovimientoCaja (TurnoId, Tipo, Monto, Descripcion, Denominaciones)
+        VALUES (?, 'AJUSTE', ?, 'Cierre de turno - conteo fisico', ?)""",
+        (turno_id, diferencia, json.dumps(conteo_fisico)))
+    conn.commit()
+    conn.close()
+    turno = get_turno(turno_id)
+    return turno
+
+
+def get_denominaciones_actuales(turno_id):
+    import json
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""SELECT Denominaciones FROM MovimientoCaja
+        WHERE TurnoId=? AND Tipo IN ('FONDO','VENTA','RETIRO') AND Denominaciones IS NOT NULL""", (turno_id,))
+    actuales = {str(d): 0 for d in DENOMINACIONES}
+    for row in cur.fetchall():
+        deltas = json.loads(row["Denominaciones"])
+        for k, v in deltas.items():
+            if k in actuales:
+                actuales[k] += int(v)
+    conn.close()
+    return actuales
+
+
+def sencillo_bajo(turno_id):
+    actuales = get_denominaciones_actuales(turno_id)
+    pequenas = sum(int(actuales.get(str(d), 0)) * d for d in [20, 10, 5, 1])
+    return pequenas < 200, pequenas
+
+
+def get_carrito(turno_id):
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM ItemCarrito WHERE TurnoId=? ORDER BY Id", (turno_id,))
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+def agregar_a_carrito(turno_id, producto_id, producto_nombre, cantidad, precio_unit):
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM ItemCarrito WHERE TurnoId=? AND ProductoId=?", (turno_id, producto_id))
+    existente = cur.fetchone()
+    if existente:
+        nueva_cantidad = existente["Cantidad"] + cantidad
+        nuevo_total = round(nueva_cantidad * precio_unit, 2)
+        cur.execute("UPDATE ItemCarrito SET Cantidad=?, Total=? WHERE Id=?",
+            (nueva_cantidad, nuevo_total, existente["Id"]))
+    else:
+        total = round(cantidad * precio_unit, 2)
+        cur.execute("""INSERT INTO ItemCarrito (TurnoId, ProductoId, ProductoNombre, Cantidad, PrecioUnit, Total)
+            VALUES (?,?,?,?,?,?)""", (turno_id, producto_id, producto_nombre, cantidad, precio_unit, total))
+    conn.commit()
+    conn.close()
+    return get_carrito(turno_id)
+
+
+def quitar_de_carrito(item_id):
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT TurnoId FROM ItemCarrito WHERE Id=?", (item_id,))
+    row = cur.fetchone()
+    turno_id = row["TurnoId"] if row else None
+    cur.execute("DELETE FROM ItemCarrito WHERE Id=?", (item_id,))
+    conn.commit()
+    conn.close()
+    return get_carrito(turno_id) if turno_id else []
+
+
+def vaciar_carrito(turno_id):
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM ItemCarrito WHERE TurnoId=?", (turno_id,))
+    conn.commit()
+    conn.close()
+
+
+def cobrar_carrito(turno_id, metodo_pago, cliente_id=None, monto_efectivo=None, monto_tarjeta=None, denominaciones_recibidas=None):
+    import json
+    items = get_carrito(turno_id)
+    if not items:
+        return {"error": "El carrito esta vacio."}
+
+    total = round(sum(i["Total"] for i in items), 2)
+    metodo_pago = (metodo_pago or "").lower()
+
+    if metodo_pago == "efectivo":
+        monto_efectivo = total if monto_efectivo is None else monto_efectivo
+        monto_tarjeta = 0
+        if monto_efectivo < total:
+            return {"error": f"El monto recibido (Q{monto_efectivo}) es menor al total (Q{total})."}
+    elif metodo_pago == "tarjeta":
+        monto_efectivo = 0
+        monto_tarjeta = total
+    elif metodo_pago == "mixto":
+        if monto_efectivo is None or monto_tarjeta is None:
+            return {"error": "Especifica el monto en efectivo y en tarjeta."}
+        if round(monto_efectivo + monto_tarjeta, 2) != total:
+            return {"error": f"Los montos de efectivo y tarjeta deben sumar el total (Q{total})."}
+    else:
+        return {"error": "Metodo de pago invalido. Usa efectivo, tarjeta o mixto."}
+
+    # Verificar stock de todos los productos antes de descontar nada
+    for item in items:
+        producto = get_product_by_id(item["ProductoId"])
+        stock = producto["Stock"] if producto else 0
+        if stock < item["Cantidad"]:
+            return {"error": f"Stock insuficiente de {item['ProductoNombre']} ({int(stock)} disponibles, se necesitan {item['Cantidad']})."}
+
+    for item in items:
+        remove_stock(item["ProductoId"], item["Cantidad"], razon="Venta en caja")
+
+    descripcion = ", ".join([f"{i['Cantidad']}x {i['ProductoNombre']}" for i in items])
+    now = datetime.now()
+    mes, anio = now.month, now.year
+    trimestre = (mes - 1) // 3 + 1
+
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("INSERT INTO Venta (ClienteId, Descripcion, Total, Mes, Trimestre, Anio) VALUES (?,?,?,?,?,?)",
+        (cliente_id, descripcion, total, mes, trimestre, anio))
+    venta_id = cur.lastrowid
+    if cliente_id:
+        cur.execute("UPDATE Cliente SET UltimaCompra=? WHERE Id=?", (now.isoformat(), cliente_id))
+
+    cambio = round(monto_efectivo - total, 2) if metodo_pago == "efectivo" else 0
+    efectivo_retenido = total if metodo_pago in ("efectivo", "mixto") else 0
+
+    denom_delta = None
+    if denominaciones_recibidas and efectivo_retenido > 0:
+        actuales = get_denominaciones_actuales(turno_id)
+        disponible_para_vuelto = {
+            str(d): int(actuales.get(str(d), 0)) + int(denominaciones_recibidas.get(str(d), 0))
+            for d in DENOMINACIONES
+        }
+        vuelto_denoms = _calcular_cambio_denominaciones(cambio, disponible_para_vuelto) if cambio > 0 else {}
+        denom_delta = {
+            str(d): int(denominaciones_recibidas.get(str(d), 0)) - int(vuelto_denoms.get(str(d), 0))
+            for d in DENOMINACIONES
+        }
+
+    cur.execute("""INSERT INTO MovimientoCaja (TurnoId, Tipo, Monto, Descripcion, Denominaciones, VentaId)
+        VALUES (?, 'VENTA', ?, ?, ?, ?)""",
+        (turno_id, efectivo_retenido, descripcion, json.dumps(denom_delta) if denom_delta else None, venta_id))
+
+    campo_total = {"efectivo": "TotalEfectivo", "tarjeta": "TotalTarjeta", "mixto": "TotalMixto"}[metodo_pago]
+    cur.execute(f"""UPDATE CajaTurno SET TotalVentas=TotalVentas+?, {campo_total}={campo_total}+?,
+        EfectivoEsperado=EfectivoEsperado+? WHERE Id=?""", (total, total, efectivo_retenido, turno_id))
+
+    conn.commit()
+    conn.close()
+
+    vaciar_carrito(turno_id)
+
+    return {
+        "venta_id": venta_id,
+        "items": items,
+        "total": total,
+        "metodo_pago": metodo_pago,
+        "monto_efectivo": monto_efectivo,
+        "monto_tarjeta": monto_tarjeta,
+        "cambio": cambio,
+        "fecha": now.strftime("%Y-%m-%d %H:%M:%S")
+    }
+
+
+def retirar_caja(turno_id, monto, descripcion="", denominaciones=None):
+    import json
+    turno = get_turno(turno_id)
+    if not turno:
+        return {"error": "No hay turno abierto."}
+    if monto <= 0:
+        return {"error": "El monto a retirar debe ser mayor a cero."}
+    if monto > turno["EfectivoEsperado"]:
+        return {"error": f"No hay suficiente efectivo esperado en caja (Q{turno['EfectivoEsperado']}) para retirar Q{monto}."}
+
+    denom_delta = {k: -int(v) for k, v in denominaciones.items()} if denominaciones else None
+
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""INSERT INTO MovimientoCaja (TurnoId, Tipo, Monto, Descripcion, Denominaciones)
+        VALUES (?, 'RETIRO', ?, ?, ?)""",
+        (turno_id, monto, descripcion or "Retiro de caja", json.dumps(denom_delta) if denom_delta else None))
+    cur.execute("UPDATE CajaTurno SET EfectivoEsperado=EfectivoEsperado-? WHERE Id=?", (monto, turno_id))
+    conn.commit()
+    conn.close()
+
+    bajo, pequenas = sencillo_bajo(turno_id)
+    return {"ok": True, "monto": monto, "sencillo_bajo": bajo, "denominaciones_pequenas": pequenas}
+
+
+def get_movimientos_caja(turno_id, limit=100):
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM MovimientoCaja WHERE TurnoId=? ORDER BY Id DESC LIMIT ?", (turno_id, limit))
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
 
 
 # ── INFORMACION DE PRODUCTOS ──────────────────────────

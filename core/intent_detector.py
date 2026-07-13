@@ -15,6 +15,7 @@ from core.detectors.reporte_detector import ReporteDetector
 from core.detectors.evento_detector import EventoDetector
 from core.detectors.contabilidad_detector import ContabilidadDetector
 from core.detectors.cotizacion_detector import CotizacionDetector
+from core.detectors.caja_detector import CajaDetector
 from core.command_normalizer import CommandNormalizer
 
 
@@ -26,6 +27,7 @@ class IntentDetector:
 
         self.detectors = [
 
+            CajaDetector(),
             CotizacionDetector(),
             VentaDetector(),
             ProveedorDetector(),

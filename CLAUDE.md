@@ -76,18 +76,20 @@ Usuario escribe mensaje
 - core/action_engine.py - Orquestador, aplica el gate de roles admin/empleado por categoria de intent
 - core/auth.py - Login, usuarios, roles, recuperacion de contrasena
 - core/configuracion.py - Configuracion del negocio (clave/valor)
-- core/detectors/ - inventory, service, cliente, venta, proveedor, contenido, reporte, evento, contabilidad, cotizacion
+- core/detectors/ - inventory, service, cliente, venta, proveedor, contenido, reporte, evento, contabilidad, cotizacion, caja
 - tools/ - mismo set de modulos, carga automatica via __init__.py
 - database/aronium.py - Todas las funciones de BD. get_products(search) intenta busqueda
   fuzzy con difflib.SequenceMatcher (contra el nombre completo y cada palabra del nombre)
   si la busqueda exacta (LIKE) no encuentra nada. services/inventory.py delega su search()
-  aqui para heredar el mismo fallback.
+  aqui para heredar el mismo fallback. get_product_by_id(id)/get_product_by_code(code) para
+  lookup exacto (usado por Caja y por cotizacion.aceptar en vez de la busqueda fuzzy).
 - services/whatsapp.py - WhatsApp Business API
 - services/social_media.py - Facebook/Instagram API
 - services/video_gen.py - Veo 3 video generation
 - services/mail_service.py - Envio de correo (Flask-Mail) + logging de errores SMTP
 - services/pdf_cotizacion.py - Genera el PDF de cotizaciones (reportlab), logo static/icon.png,
   guardado en static/cotizaciones/COT-XXXX.pdf (publico, sin login, para poder compartirse por WhatsApp)
+- services/ticket.py - Genera el texto plano del ticket de caja (32 columnas, formato thermal 58mm)
 - static/fotos/ - Fotos de productos
 - static/videos/ - Videos generados
 - templates/index.html - Frontend completo (dashboard, panel Usuarios solo admin)
@@ -128,13 +130,44 @@ Usuario escribe mensaje
   cada vez que se consultan) y aparecen en /api/recordatorios ("vence hoy" / "vencio").
   Widget en el dashboard (contadores Pendientes/Enviadas/Aceptadas de la semana + lista de
   activas con dias restantes) via /api/cotizaciones/resumen.
+- Caja Registradora: panel "Caja" en el menu lateral (empleado y admin), pantalla tablet
+  (botones grandes) en templates/index.html. Solo puede haber un turno (CajaTurno) ABIERTO
+  a la vez en toda la tienda. Denominaciones fijas: Q200, Q100, Q50, Q20, Q10, Q5, Q1
+  (database.aronium.DENOMINACIONES).
+  - "abrir caja"/"cerrar caja" por chat (flujo conversacional en core/nimbo.py, steps
+    caja_abrir_denom/caja_cerrar_denom, uno por denominacion) o desde la UI (modal con grid
+    de 7 inputs, mismo componente reusado para apertura/cierre/detalle de billetes al cobrar).
+  - Venta: buscar/escanear producto (input con Enter, /api/caja/carrito/agregar, matchea por
+    Code exacto primero y si no por nombre fuzzy) -> carrito (ItemCarrito, temporal por turno)
+    -> cobrar (/api/caja/cobrar) con Efectivo/Tarjeta/Mixto. Descuenta stock (remove_stock,
+    con verificacion de stock de todos los items antes de descontar ninguno) + registra Venta
+    + Kardex (via remove_stock) + genera el texto del ticket (services/ticket.py) en la misma
+    respuesta. Reimpresion simplificada (sin detalle por producto) via /api/caja/imprimir-ticket.
+  - Cambio: para Efectivo, "cuanto paga el cliente" es opcional (por defecto = total exacto);
+    el desglose de billetes recibidos es opcional/colapsable ("detalle de billetes") - si se
+    da, database.aronium._calcular_cambio_denominaciones() arma el vuelto en billetes
+    disponibles (greedy, mayor a menor) para el registro anti-fraude; si no se da, solo se
+    registra el monto total (sin desglose para ese movimiento).
+  - Cada movimiento de caja (MovimientoCaja: FONDO/VENTA/RETIRO/AJUSTE) puede guardar un JSON
+    de Denominaciones que representa el DELTA neto por denominacion (positivo = entra,
+    negativo = sale). database.aronium.get_denominaciones_actuales() sirve para saber el
+    desglose fisico actual del turno (suma de esos deltas) y detectar sencillo bajo
+    (denominaciones pequenas Q20/Q10/Q5/Q1 sumando menos de Q200).
+  - Retiro de caja: "retirar Q500 de caja [para/por motivo]" (chat) o boton "Retirar" en la
+    UI (oculto para empleado en el template), solo admin - gate doble: INTENTS_SOLO_ADMIN en
+    core/action_engine.py (chat) y current_user.is_admin en /api/caja/retirar (UI). Avisa si
+    el sencillo queda bajo despues del retiro.
+  - Cierre: conteo fisico por denominacion -> EfectivoContado, Diferencia = Contado-Esperado,
+    Estado=CERRADO. El conteo fisico completo tambien se guarda en un MovimientoCaja tipo
+    AJUSTE para auditoria. Un empleado no puede editar ventas ya cerradas (no existe endpoint
+    para eso).
 
 ## Tablas nimbo.db
 Cliente, OrdenServicio, HistorialOrden, Kardex, StockMinimo, ProductoFoto, ProductoInfo,
 Venta, ResumenTrimestral, PagoFijo, RecordatorioPersonal, ChatHistorial,
 Gasto, ResumenContable, Proveedor, ContactoProveedor, ProductoProveedor,
 OrdenCompra, ItemOrdenCompra, HistorialPrecio, Usuario, PasswordResetToken, Configuracion,
-Cotizacion
+Cotizacion, CajaTurno, MovimientoCaja, ItemCarrito
 
 ## Variables de entorno (.env)
 GEMINI_API_KEY, FB_PAGE_TOKEN, FB_PAGE_ID, WA_TOKEN, WA_PHONE_ID, IG_ACCOUNT_ID,
@@ -157,9 +190,14 @@ MAIL_SERVER, MAIL_PORT, MAIL_USERNAME, MAIL_PASSWORD, ADMIN_EMAIL
 8. Mejorar OpenClaw vs Gemini deteccion
 
 FLUJO EN TIENDA (pendiente):
-- Multiples metodos de pago en una venta (efectivo + tarjeta)
-- Calculo automatico de comision POS solo cuando paga con tarjeta
-- Recibo/factura imprimible al cerrar venta
+- Calculo automatico de comision POS solo cuando paga con tarjeta (Caja ya distingue
+  TotalEfectivo/TotalTarjeta/TotalMixto por turno, pero no resta la comision del POS)
+- Impresion fisica del ticket (Caja ya genera el texto completo del ticket -
+  services/ticket.py, /api/caja/cobrar y /api/caja/imprimir-ticket - falta conectarlo a una
+  impresora termica real)
+- Reimpresion de tickets antiguos con detalle por producto (hoy /api/caja/imprimir-ticket
+  solo reconstruye un ticket simplificado a partir de Venta.Descripcion, porque el detalle de
+  ItemCarrito se borra al cobrar; requeriria guardar un snapshot de items por venta)
 
 FLUJO EN LINEA (futuro):
 - Pagina web para clientes con chat de Nimbo

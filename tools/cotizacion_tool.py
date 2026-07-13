@@ -5,7 +5,7 @@ import json
 from core.tool_registry import register
 from database.aronium import (
     get_cotizacion, get_cotizaciones, actualizar_estado_cotizacion,
-    marcar_cotizacion_enviada, remove_stock, registrar_venta_cliente, get_products
+    marcar_cotizacion_enviada, remove_stock, registrar_venta_cliente, get_product_by_id
 )
 
 ESTADOS = {
@@ -92,8 +92,7 @@ def aceptar_cotizacion_tool(data):
 
     # Verificar stock de todos los productos antes de descontar nada
     for item in items:
-        productos = get_products(search=item["nombre"])
-        producto = next((p for p in productos if p["Id"] == item["producto_id"]), None)
+        producto = get_product_by_id(item["producto_id"])
         stock = producto["Stock"] if producto else 0
         if stock < item["cantidad"]:
             return (f"Stock insuficiente de {item['nombre']} para aceptar la cotizacion "

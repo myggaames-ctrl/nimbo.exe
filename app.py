@@ -53,6 +53,9 @@ init_configuracion()
 from database.aronium import init_cotizaciones
 init_cotizaciones()
 
+from database.aronium import init_caja
+init_caja()
+
 # Instalaciones que ya tenian usuarios antes de que existiera el wizard de
 # onboarding (o que lo completaron con el /setup viejo de un solo paso) se
 # marcan como completas automaticamente, para no forzar el wizard nuevo.
@@ -1136,6 +1139,224 @@ def get_recordatorios():
 def get_resumen_cotizaciones():
     from database.aronium import get_resumen_cotizaciones
     return jsonify(get_resumen_cotizaciones())
+
+
+# ── CAJA REGISTRADORA ──────────────────────────────────────
+
+def _requiere_turno_abierto():
+    from database.aronium import get_turno_abierto
+    turno = get_turno_abierto()
+    if not turno:
+        return None, (jsonify({"error": "No hay ningun turno de caja abierto."}), 400)
+    return turno, None
+
+
+@app.route("/api/caja/estado")
+@login_required
+def caja_estado():
+    from database.aronium import get_turno_abierto, get_denominaciones_actuales, sencillo_bajo, DENOMINACIONES
+    turno = get_turno_abierto()
+    if not turno:
+        return jsonify({"turno": None, "denominaciones": DENOMINACIONES})
+    bajo, pequenas = sencillo_bajo(turno["Id"])
+    return jsonify({
+        "turno": turno,
+        "denominaciones_actuales": get_denominaciones_actuales(turno["Id"]),
+        "denominaciones": DENOMINACIONES,
+        "sencillo_bajo": bajo,
+        "denominaciones_pequenas": pequenas
+    })
+
+
+@app.route("/api/caja/abrir", methods=["POST"])
+@login_required
+def caja_abrir():
+    from database.aronium import get_turno_abierto, abrir_turno
+    if get_turno_abierto():
+        return jsonify({"error": "Ya hay un turno de caja abierto."}), 400
+    data = request.json or {}
+    fondo_inicial = data.get("fondo_inicial", {})
+    turno_id, total = abrir_turno(int(current_user.id), current_user.nombre, fondo_inicial)
+    return jsonify({"ok": True, "turno_id": turno_id, "efectivo_esperado": total})
+
+
+@app.route("/api/caja/cerrar", methods=["POST"])
+@login_required
+def caja_cerrar():
+    from database.aronium import cerrar_turno
+    turno, error = _requiere_turno_abierto()
+    if error:
+        return error
+    data = request.json or {}
+    conteo_fisico = data.get("conteo_fisico", {})
+    resultado = cerrar_turno(turno["Id"], conteo_fisico)
+    return jsonify(resultado)
+
+
+@app.route("/api/caja/carrito")
+@login_required
+def caja_carrito():
+    from database.aronium import get_carrito
+    turno, error = _requiere_turno_abierto()
+    if error:
+        return error
+    items = get_carrito(turno["Id"])
+    total = round(sum(i["Total"] for i in items), 2)
+    return jsonify({"items": items, "total": total})
+
+
+@app.route("/api/caja/carrito/agregar", methods=["POST"])
+@login_required
+def caja_carrito_agregar():
+    from database.aronium import get_product_by_id, get_product_by_code, get_products, agregar_a_carrito
+    turno, error = _requiere_turno_abierto()
+    if error:
+        return error
+    data = request.json or {}
+    cantidad = data.get("cantidad", 1)
+    try:
+        cantidad = float(cantidad)
+    except (TypeError, ValueError):
+        return jsonify({"error": "Cantidad invalida"}), 400
+    if cantidad <= 0:
+        return jsonify({"error": "Cantidad invalida"}), 400
+
+    producto = None
+    if data.get("producto_id"):
+        producto = get_product_by_id(data["producto_id"])
+    elif data.get("query"):
+        query = data["query"].strip()
+        producto = get_product_by_code(query)
+        if not producto:
+            productos = get_products(search=query)
+            if len(productos) > 1:
+                return jsonify({"multiples": True, "productos": productos[:8]})
+            producto = productos[0] if productos else None
+
+    if not producto:
+        return jsonify({"error": "Producto no encontrado."}), 404
+    if producto["Stock"] < cantidad:
+        return jsonify({"error": f"Stock insuficiente de {producto['Name']} ({int(producto['Stock'])} disponibles)."}), 400
+
+    items = agregar_a_carrito(turno["Id"], producto["Id"], producto["Name"], cantidad, producto["Price"])
+    total = round(sum(i["Total"] for i in items), 2)
+    return jsonify({"items": items, "total": total})
+
+
+@app.route("/api/caja/carrito/quitar", methods=["POST"])
+@login_required
+def caja_carrito_quitar():
+    from database.aronium import quitar_de_carrito
+    data = request.json or {}
+    item_id = data.get("item_id")
+    if not item_id:
+        return jsonify({"error": "item_id requerido"}), 400
+    items = quitar_de_carrito(item_id)
+    total = round(sum(i["Total"] for i in items), 2)
+    return jsonify({"items": items, "total": total})
+
+
+@app.route("/api/caja/carrito/vaciar", methods=["POST"])
+@login_required
+def caja_carrito_vaciar():
+    from database.aronium import vaciar_carrito
+    turno, error = _requiere_turno_abierto()
+    if error:
+        return error
+    vaciar_carrito(turno["Id"])
+    return jsonify({"ok": True, "items": [], "total": 0})
+
+
+@app.route("/api/caja/cobrar", methods=["POST"])
+@login_required
+def caja_cobrar():
+    from database.aronium import cobrar_carrito
+    from services.ticket import generar_texto_ticket
+    turno, error = _requiere_turno_abierto()
+    if error:
+        return error
+    data = request.json or {}
+    resultado = cobrar_carrito(
+        turno["Id"],
+        data.get("metodo_pago"),
+        cliente_id=data.get("cliente_id"),
+        monto_efectivo=data.get("monto_efectivo"),
+        monto_tarjeta=data.get("monto_tarjeta"),
+        denominaciones_recibidas=data.get("denominaciones_recibidas")
+    )
+    if resultado.get("error"):
+        return jsonify(resultado), 400
+
+    ticket_items = [{
+        "nombre": i["ProductoNombre"], "cantidad": i["Cantidad"],
+        "precio_unit": i["PrecioUnit"], "subtotal": i["Total"]
+    } for i in resultado["items"]]
+    resultado["ticket"] = generar_texto_ticket(
+        resultado["venta_id"], resultado["fecha"], ticket_items, resultado["total"],
+        resultado["metodo_pago"], cliente_nombre=data.get("cliente_nombre", ""),
+        efectivo_recibido=resultado["monto_efectivo"] if resultado["metodo_pago"] == "efectivo" else None,
+        cambio=resultado["cambio"], cajero=current_user.nombre
+    )
+    return jsonify(resultado)
+
+
+@app.route("/api/caja/retirar", methods=["POST"])
+@login_required
+def caja_retirar():
+    if not current_user.is_admin:
+        return jsonify({"error": "Solo un administrador puede retirar efectivo de caja."}), 403
+    from database.aronium import retirar_caja
+    turno, error = _requiere_turno_abierto()
+    if error:
+        return error
+    data = request.json or {}
+    monto = data.get("monto", 0)
+    try:
+        monto = float(monto)
+    except (TypeError, ValueError):
+        return jsonify({"error": "Monto invalido"}), 400
+    resultado = retirar_caja(turno["Id"], monto, data.get("descripcion", ""), data.get("denominaciones"))
+    if resultado.get("error"):
+        return jsonify(resultado), 400
+    return jsonify(resultado)
+
+
+@app.route("/api/caja/movimientos")
+@login_required
+def caja_movimientos():
+    from database.aronium import get_movimientos_caja
+    turno, error = _requiere_turno_abierto()
+    if error:
+        return error
+    return jsonify(get_movimientos_caja(turno["Id"]))
+
+
+@app.route("/api/caja/imprimir-ticket", methods=["POST"])
+@login_required
+def caja_imprimir_ticket():
+    from database.aronium import nimbo_connect
+    from services.ticket import generar_texto_ticket
+    data = request.json or {}
+    venta_id = data.get("venta_id")
+    if not venta_id:
+        return jsonify({"error": "venta_id requerido"}), 400
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""SELECT v.*, c.Nombre as ClienteNombre FROM Venta v
+        LEFT JOIN Cliente c ON v.ClienteId=c.Id WHERE v.Id=?""", (venta_id,))
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return jsonify({"error": "Venta no encontrada"}), 404
+    venta = dict(row)
+    # Reimpresion: no se conserva el detalle por producto de ventas ya cerradas,
+    # se reconstruye un ticket simplificado a partir de la descripcion guardada.
+    items = [{"nombre": venta["Descripcion"], "cantidad": 1, "precio_unit": venta["Total"], "subtotal": venta["Total"]}]
+    ticket = generar_texto_ticket(
+        venta_id, venta["Fecha"], items, venta["Total"], "(reimpresion)",
+        cliente_nombre=venta.get("ClienteNombre") or ""
+    )
+    return jsonify({"ticket": ticket})
 
 
 @app.route("/api/chat/historial")

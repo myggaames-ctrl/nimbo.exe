@@ -19,12 +19,14 @@ VOCABULARIO = [
     "busca", "buscar", "agrega", "agregar", "quita", "quitar", "elimina", "eliminar",
     "cambia", "cambiar", "crear", "registra", "registrar", "vende", "vendi", "vendio",
     "cotiza", "cotizar", "genera", "generar", "actualiza", "actualizar", "muestra",
-    "mostrar", "listar",
+    "mostrar", "listar", "abrir", "cerrar", "retirar", "cobrar",
     # sustantivos generales del negocio
     "producto", "productos", "inventario", "precio", "costo", "cliente", "clientes",
     "venta", "ventas", "factura", "gasto", "gastos", "balance", "proveedor", "proveedores",
     "orden", "ordenes", "servicio", "reparacion", "garantia", "stock", "existencias",
     "margen", "ganancia", "reporte", "descripcion", "cotizacion",
+    "caja", "turno", "efectivo", "tarjeta", "denominacion", "denominaciones", "cambio",
+    "billete", "billetes", "moneda", "monedas", "carrito", "ticket", "sencillo",
     # electrodomesticos y repuestos comunes en la tienda
     "licuadora", "licuadoras", "refrigerador", "refrigeradores", "cuchilla", "cuchillas",
     "empaque", "empaques", "adaptador", "adaptadores", "regulador", "reguladores",

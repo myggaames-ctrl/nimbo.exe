@@ -467,6 +467,84 @@
   .mt-2 { margin-top: 8px; }
   .w-full { width: 100%; }
   .text-muted { color: var(--muted); font-size: 12px; }
+
+  /* ── CAJA ─────────────────────────────────── */
+  .btn-caja {
+    padding: 18px 12px;
+    border-radius: 12px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    transition: all 0.15s;
+    font-family: inherit;
+  }
+  .btn-caja-efectivo { background: var(--green); color: white; }
+  .btn-caja-tarjeta { background: var(--blue); color: white; }
+  .btn-caja-mixto { background: var(--accent); color: white; }
+  .btn-caja:active { transform: scale(0.97); }
+  .caja-search {
+    font-size: 18px;
+    padding: 16px;
+    border-radius: 10px;
+  }
+  .caja-total {
+    font-size: 34px;
+    font-weight: 700;
+    color: var(--accent);
+    text-align: right;
+  }
+  .denom-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+    gap: 10px;
+    margin: 12px 0;
+  }
+  .denom-item {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px;
+    text-align: center;
+  }
+  .denom-item label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 6px; }
+  .denom-item input {
+    width: 100%;
+    text-align: center;
+    font-size: 18px;
+    padding: 8px 4px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+  }
+  .carrito-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 4px;
+    border-bottom: 1px solid var(--border);
+    font-size: 14px;
+  }
+  .carrito-qty-btn {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    font-size: 16px;
+    cursor: pointer;
+  }
+  #caja-ticket-box {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12.5px;
+    white-space: pre-wrap;
+  }
 </style>
 </head>
 <body>
@@ -493,6 +571,9 @@
     </button>
     <button class="nav-item" onclick="showPanel('analytics')">
       <span class="icon">◉</span> Análisis
+    </button>
+    <button class="nav-item" onclick="showPanel('caja')">
+      <span class="icon">▣</span> Caja
     </button>
 
     {% if rol == 'admin' %}
@@ -805,6 +886,148 @@
       </div>
     </div>
 
+    <!-- ══ CAJA REGISTRADORA ══ -->
+    <div class="panel" id="panel-caja">
+
+      <div class="card" id="caja-sin-turno">
+        <div class="card-title">Caja cerrada</div>
+        <p class="text-muted mb-4">No hay ningun turno de caja abierto. Abre un turno registrando el fondo inicial por denominacion.</p>
+        <button class="btn btn-caja btn-caja-efectivo" onclick="abrirModalAperturaCaja()">▶ Abrir turno de caja</button>
+      </div>
+
+      <div id="caja-con-turno" style="display:none">
+        <div class="card" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+          <div>
+            <div class="card-title" style="margin-bottom:2px">Turno abierto — <span id="caja-empleado"></span></div>
+            <div class="text-muted">Efectivo esperado: <b id="caja-efectivo-esperado" style="color:var(--text)">Q0</b></div>
+            <div id="caja-sencillo-bajo" style="display:none;color:var(--red);font-size:12.5px;margin-top:4px">⚠️ Sencillo bajo</div>
+          </div>
+          <div class="flex gap-2">
+            {% if rol == 'admin' %}
+            <button class="btn btn-ghost" onclick="abrirModalRetiro()">💵 Retirar</button>
+            {% endif %}
+            <button class="btn btn-ghost" onclick="abrirModalCierreCaja()">■ Cerrar turno</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <input class="input caja-search" id="caja-buscar-producto" placeholder="🔍 Escanear codigo de barras o buscar producto..." autocomplete="off">
+          <div id="caja-resultados-busqueda" style="margin-top:10px"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Carrito</div>
+          <div id="caja-carrito-body"><div class="text-muted">Carrito vacio.</div></div>
+          <div class="caja-total" id="caja-carrito-total">Q0.00</div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Cobrar</div>
+          <div class="denom-grid" style="grid-template-columns:repeat(3,1fr)">
+            <button class="btn-caja btn-caja-efectivo" onclick="abrirModalCobro('efectivo')">💵 Efectivo</button>
+            <button class="btn-caja btn-caja-tarjeta" onclick="abrirModalCobro('tarjeta')">💳 Tarjeta</button>
+            <button class="btn-caja btn-caja-mixto" onclick="abrirModalCobro('mixto')">🔀 Mixto</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ MODAL APERTURA DE CAJA ══ -->
+    <div class="modal-overlay" id="modal-apertura-caja" style="display:none">
+      <div class="modal-box" style="max-width:520px">
+        <div class="card-title">Abrir turno — fondo inicial</div>
+        <p class="text-muted mb-2">Cuenta cuantos billetes/monedas de cada denominacion hay en la caja.</p>
+        <div class="denom-grid" id="denom-apertura"></div>
+        <div class="caja-total" id="denom-apertura-total">Q0.00</div>
+        <div class="flex gap-2" style="margin-top:8px">
+          <button class="btn btn-primary" onclick="confirmarAperturaCaja()">Abrir turno</button>
+          <button class="btn btn-ghost" onclick="cerrarModal('modal-apertura-caja')">Cancelar</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ MODAL CIERRE DE CAJA ══ -->
+    <div class="modal-overlay" id="modal-cierre-caja" style="display:none">
+      <div class="modal-box" style="max-width:520px">
+        <div class="card-title">Cerrar turno — conteo fisico</div>
+        <p class="text-muted mb-2">Cuenta fisicamente cada denominacion antes de cerrar.</p>
+        <div class="denom-grid" id="denom-cierre"></div>
+        <div class="caja-total" id="denom-cierre-total">Q0.00</div>
+        <div class="flex gap-2" style="margin-top:8px">
+          <button class="btn btn-primary" onclick="confirmarCierreCaja()">Cerrar turno</button>
+          <button class="btn btn-ghost" onclick="cerrarModal('modal-cierre-caja')">Cancelar</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ MODAL RETIRO DE CAJA ══ -->
+    <div class="modal-overlay" id="modal-retiro-caja" style="display:none">
+      <div class="modal-box">
+        <div class="card-title">Retirar efectivo de caja</div>
+        <div class="input-group">
+          <label class="input-label">Monto a retirar (Q)</label>
+          <input class="input" id="retiro-monto" type="number" min="0" step="0.01" placeholder="500">
+        </div>
+        <div class="input-group">
+          <label class="input-label">Motivo (opcional)</label>
+          <input class="input" id="retiro-descripcion" placeholder="Deposito al banco">
+        </div>
+        <div id="retiro-error" class="error-box" style="display:none"></div>
+        <div class="flex gap-2" style="margin-top:8px">
+          <button class="btn btn-primary" onclick="confirmarRetiroCaja()">Retirar</button>
+          <button class="btn btn-ghost" onclick="cerrarModal('modal-retiro-caja')">Cancelar</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ MODAL COBRO ══ -->
+    <div class="modal-overlay" id="modal-cobro" style="display:none">
+      <div class="modal-box" style="max-width:520px">
+        <div class="card-title" id="cobro-titulo">Cobrar</div>
+        <div class="caja-total" id="cobro-total">Q0.00</div>
+
+        <div id="cobro-efectivo-box" style="display:none">
+          <div class="input-group">
+            <label class="input-label">Cliente paga con (Q)</label>
+            <input class="input caja-search" id="cobro-monto-recibido" type="number" min="0" step="0.01">
+          </div>
+          <div class="text-muted" id="cobro-cambio">Cambio: Q0.00</div>
+          <button class="btn btn-ghost btn-sm mt-2" onclick="toggleDetalleBilletes()">🧾 Detalle de billetes (opcional)</button>
+          <div class="denom-grid" id="denom-cobro" style="display:none"></div>
+        </div>
+
+        <div id="cobro-mixto-box" style="display:none">
+          <div class="gen-grid">
+            <div class="input-group">
+              <label class="input-label">Efectivo (Q)</label>
+              <input class="input" id="cobro-mixto-efectivo" type="number" min="0" step="0.01">
+            </div>
+            <div class="input-group">
+              <label class="input-label">Tarjeta (Q)</label>
+              <input class="input" id="cobro-mixto-tarjeta" type="number" min="0" step="0.01">
+            </div>
+          </div>
+        </div>
+
+        <div id="cobro-error" class="error-box" style="display:none"></div>
+        <div class="flex gap-2" style="margin-top:8px">
+          <button class="btn btn-primary" onclick="confirmarCobro()">✓ Confirmar cobro</button>
+          <button class="btn btn-ghost" onclick="cerrarModal('modal-cobro')">Cancelar</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ MODAL TICKET ══ -->
+    <div class="modal-overlay" id="modal-ticket" style="display:none">
+      <div class="modal-box">
+        <div class="card-title">Venta registrada</div>
+        <div id="caja-ticket-box"></div>
+        <div class="flex gap-2" style="margin-top:12px">
+          <button class="btn btn-primary w-full" onclick="cerrarModal('modal-ticket')">Nueva venta</button>
+        </div>
+      </div>
+    </div>
+
     <!-- ══ SQL CONSOLE ══ -->
     <div class="panel" id="panel-sql">
       <div class="card">
@@ -934,7 +1157,8 @@ const titles = {
   kardex: ['Kardex', 'Historial de entradas y salidas'],
   historial: ['Historial de Chat', 'Conversaciones guardadas'],
   graficas: ['Gráficas', 'Análisis visual del negocio'],
-  usuarios: ['Usuarios', 'Cuentas de acceso al sistema']
+  usuarios: ['Usuarios', 'Cuentas de acceso al sistema'],
+  caja: ['Caja', 'Punto de venta y turno de caja']
 };
 
 function showPanel(id) {
@@ -951,6 +1175,7 @@ function showPanel(id) {
   if (id === 'graficas') loadGraficas();
   if (id === 'dashboard') loadStats();
   if (id === 'usuarios') loadUsuarios();
+  if (id === 'caja') loadCajaEstado();
 }
 
 // ── CLOCK ──────────────────────────────────────────────
@@ -1833,6 +2058,310 @@ async function loadGraficas() {
       options: { responsive: true, indexAxis: 'y', plugins: { legend: { labels: { color: '#e8e8f0' } } }, scales: { x: { ticks: { color: '#6b6b80' } }, y: { ticks: { color: '#6b6b80' } } } }
     });
   }
+}
+
+// ── CAJA ───────────────────────────────────────────────
+
+let CAJA_DENOMS = [200, 100, 50, 20, 10, 5, 1];
+let cajaTurnoAbierto = null;
+let cajaCarritoActual = [];
+let cajaMetodoPago = null;
+
+function renderDenomGrid(containerId, denoms) {
+  const el = document.getElementById(containerId);
+  el.innerHTML = denoms.map(d => `
+    <div class="denom-item">
+      <label>Q${d}</label>
+      <input type="number" min="0" step="1" value="0" data-denom="${d}" oninput="actualizarTotalDenom('${containerId}')">
+    </div>
+  `).join('');
+  actualizarTotalDenom(containerId);
+}
+
+function leerDenomGrid(containerId) {
+  const el = document.getElementById(containerId);
+  const valores = {};
+  el.querySelectorAll('input[data-denom]').forEach(inp => {
+    valores[inp.dataset.denom] = parseInt(inp.value) || 0;
+  });
+  return valores;
+}
+
+function totalDenomGrid(containerId) {
+  const valores = leerDenomGrid(containerId);
+  return Object.entries(valores).reduce((sum, [d, c]) => sum + (parseInt(d) * c), 0);
+}
+
+function actualizarTotalDenom(containerId) {
+  const total = totalDenomGrid(containerId);
+  const totalEl = document.getElementById(containerId + '-total');
+  if (totalEl) totalEl.textContent = `Q${total.toFixed(2)}`;
+  if (containerId === 'denom-cobro') actualizarCambioEfectivo();
+}
+
+function cerrarModal(id) {
+  document.getElementById(id).style.display = 'none';
+}
+
+async function loadCajaEstado() {
+  try {
+    const r = await fetch('/api/caja/estado');
+    const d = await r.json();
+    CAJA_DENOMS = d.denominaciones || CAJA_DENOMS;
+    cajaTurnoAbierto = d.turno;
+    if (!d.turno) {
+      document.getElementById('caja-sin-turno').style.display = 'block';
+      document.getElementById('caja-con-turno').style.display = 'none';
+      return;
+    }
+    document.getElementById('caja-sin-turno').style.display = 'none';
+    document.getElementById('caja-con-turno').style.display = 'block';
+    document.getElementById('caja-empleado').textContent = d.turno.EmpleadoNombre;
+    document.getElementById('caja-efectivo-esperado').textContent = `Q${Number(d.turno.EfectivoEsperado).toFixed(2)}`;
+    const bajoEl = document.getElementById('caja-sencillo-bajo');
+    if (d.sencillo_bajo) {
+      bajoEl.style.display = 'block';
+      bajoEl.textContent = `⚠️ Sencillo bajo: solo Q${d.denominaciones_pequenas} en denominaciones pequeñas`;
+    } else {
+      bajoEl.style.display = 'none';
+    }
+    loadCajaCarrito();
+  } catch(e) {}
+}
+
+async function loadCajaCarrito() {
+  try {
+    const r = await fetch('/api/caja/carrito');
+    const d = await r.json();
+    cajaCarritoActual = d.items || [];
+    renderCajaCarrito();
+  } catch(e) {}
+}
+
+function renderCajaCarrito() {
+  const body = document.getElementById('caja-carrito-body');
+  if (!cajaCarritoActual.length) {
+    body.innerHTML = '<div class="text-muted">Carrito vacío.</div>';
+  } else {
+    body.innerHTML = cajaCarritoActual.map(i => `
+      <div class="carrito-row">
+        <div>
+          <div>${i.ProductoNombre}</div>
+          <div class="text-muted">Q${Number(i.PrecioUnit).toFixed(2)} c/u</div>
+        </div>
+        <div class="flex gap-2" style="align-items:center">
+          <span>${i.Cantidad} × = Q${Number(i.Total).toFixed(2)}</span>
+          <button class="carrito-qty-btn" onclick="quitarDeCarrito(${i.Id})">✕</button>
+        </div>
+      </div>
+    `).join('');
+  }
+  const total = cajaCarritoActual.reduce((s, i) => s + Number(i.Total), 0);
+  document.getElementById('caja-carrito-total').textContent = `Q${total.toFixed(2)}`;
+}
+
+async function quitarDeCarrito(itemId) {
+  const r = await fetch('/api/caja/carrito/quitar', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({item_id: itemId})
+  });
+  const d = await r.json();
+  cajaCarritoActual = d.items || [];
+  renderCajaCarrito();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const buscador = document.getElementById('caja-buscar-producto');
+  if (buscador) {
+    buscador.addEventListener('keydown', async (e) => {
+      if (e.key !== 'Enter') return;
+      const query = buscador.value.trim();
+      if (!query) return;
+      const r = await fetch('/api/caja/carrito/agregar', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({query, cantidad: 1})
+      });
+      const d = await r.json();
+      const resultados = document.getElementById('caja-resultados-busqueda');
+      if (d.error) {
+        resultados.innerHTML = `<div class="error-box">${d.error}</div>`;
+        return;
+      }
+      if (d.multiples) {
+        resultados.innerHTML = d.productos.map(p => `
+          <button class="btn btn-ghost w-full mb-2" onclick="agregarProductoPorId(${p.Id})">
+            ${p.Name} — Q${Number(p.Price).toFixed(2)} (${Math.trunc(p.Stock)} en stock)
+          </button>
+        `).join('');
+        return;
+      }
+      resultados.innerHTML = '';
+      buscador.value = '';
+      cajaCarritoActual = d.items || [];
+      renderCajaCarrito();
+    });
+  }
+});
+
+async function agregarProductoPorId(productoId) {
+  const r = await fetch('/api/caja/carrito/agregar', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({producto_id: productoId, cantidad: 1})
+  });
+  const d = await r.json();
+  if (d.error) { alert(d.error); return; }
+  document.getElementById('caja-resultados-busqueda').innerHTML = '';
+  document.getElementById('caja-buscar-producto').value = '';
+  cajaCarritoActual = d.items || [];
+  renderCajaCarrito();
+}
+
+// -- Apertura de turno --
+function abrirModalAperturaCaja() {
+  renderDenomGrid('denom-apertura', CAJA_DENOMS);
+  document.getElementById('modal-apertura-caja').style.display = 'flex';
+}
+
+async function confirmarAperturaCaja() {
+  const fondo_inicial = leerDenomGrid('denom-apertura');
+  const r = await fetch('/api/caja/abrir', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({fondo_inicial})
+  });
+  const d = await r.json();
+  if (d.error) { alert(d.error); return; }
+  cerrarModal('modal-apertura-caja');
+  loadCajaEstado();
+}
+
+// -- Cierre de turno --
+function abrirModalCierreCaja() {
+  renderDenomGrid('denom-cierre', CAJA_DENOMS);
+  document.getElementById('modal-cierre-caja').style.display = 'flex';
+}
+
+async function confirmarCierreCaja() {
+  const conteo_fisico = leerDenomGrid('denom-cierre');
+  const r = await fetch('/api/caja/cerrar', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({conteo_fisico})
+  });
+  const d = await r.json();
+  if (d.error) { alert(d.error); return; }
+  cerrarModal('modal-cierre-caja');
+  const dif = Number(d.Diferencia);
+  const msg = dif === 0 ? 'Cuadra exacto, sin diferencias.'
+    : dif > 0 ? `Sobran Q${dif.toFixed(2)} respecto a lo esperado.`
+    : `Faltan Q${Math.abs(dif).toFixed(2)} respecto a lo esperado.`;
+  alert(`Turno #${d.Id} cerrado.\nEsperado: Q${Number(d.EfectivoEsperado).toFixed(2)} | Contado: Q${Number(d.EfectivoContado).toFixed(2)}\n${msg}`);
+  loadCajaEstado();
+}
+
+// -- Retiro de caja --
+function abrirModalRetiro() {
+  document.getElementById('retiro-monto').value = '';
+  document.getElementById('retiro-descripcion').value = '';
+  document.getElementById('retiro-error').style.display = 'none';
+  document.getElementById('modal-retiro-caja').style.display = 'flex';
+}
+
+async function confirmarRetiroCaja() {
+  const errorBox = document.getElementById('retiro-error');
+  errorBox.style.display = 'none';
+  const monto = parseFloat(document.getElementById('retiro-monto').value);
+  const descripcion = document.getElementById('retiro-descripcion').value.trim();
+  if (!monto || monto <= 0) {
+    errorBox.textContent = 'Escribe un monto valido.';
+    errorBox.style.display = 'block';
+    return;
+  }
+  const r = await fetch('/api/caja/retirar', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({monto, descripcion})
+  });
+  const d = await r.json();
+  if (d.error) {
+    errorBox.textContent = d.error;
+    errorBox.style.display = 'block';
+    return;
+  }
+  cerrarModal('modal-retiro-caja');
+  if (d.sencillo_bajo) {
+    alert(`Retiro registrado. Atencion: el sencillo esta bajo (Q${d.denominaciones_pequenas} en denominaciones pequeñas).`);
+  }
+  loadCajaEstado();
+}
+
+// -- Cobro --
+function abrirModalCobro(metodo) {
+  if (!cajaCarritoActual.length) { alert('El carrito esta vacio.'); return; }
+  cajaMetodoPago = metodo;
+  const total = cajaCarritoActual.reduce((s, i) => s + Number(i.Total), 0);
+  document.getElementById('cobro-total').textContent = `Q${total.toFixed(2)}`;
+  document.getElementById('cobro-titulo').textContent =
+    metodo === 'efectivo' ? 'Cobrar en efectivo' : metodo === 'tarjeta' ? 'Cobrar con tarjeta' : 'Cobro mixto';
+  document.getElementById('cobro-efectivo-box').style.display = metodo === 'efectivo' ? 'block' : 'none';
+  document.getElementById('cobro-mixto-box').style.display = metodo === 'mixto' ? 'block' : 'none';
+  document.getElementById('cobro-error').style.display = 'none';
+  if (metodo === 'efectivo') {
+    document.getElementById('cobro-monto-recibido').value = total.toFixed(2);
+    document.getElementById('denom-cobro').style.display = 'none';
+    renderDenomGrid('denom-cobro', CAJA_DENOMS);
+    actualizarCambioEfectivo();
+  }
+  if (metodo === 'mixto') {
+    document.getElementById('cobro-mixto-efectivo').value = '';
+    document.getElementById('cobro-mixto-tarjeta').value = '';
+  }
+  document.getElementById('modal-cobro').style.display = 'flex';
+}
+
+function toggleDetalleBilletes() {
+  const el = document.getElementById('denom-cobro');
+  el.style.display = el.style.display === 'none' ? 'grid' : 'none';
+}
+
+function actualizarCambioEfectivo() {
+  const total = cajaCarritoActual.reduce((s, i) => s + Number(i.Total), 0);
+  const recibido = parseFloat(document.getElementById('cobro-monto-recibido').value) || 0;
+  const cambio = Math.max(0, recibido - total);
+  document.getElementById('cobro-cambio').textContent = `Cambio: Q${cambio.toFixed(2)}`;
+}
+document.addEventListener('input', (e) => {
+  if (e.target && e.target.id === 'cobro-monto-recibido') actualizarCambioEfectivo();
+});
+
+async function confirmarCobro() {
+  const errorBox = document.getElementById('cobro-error');
+  errorBox.style.display = 'none';
+  const total = cajaCarritoActual.reduce((s, i) => s + Number(i.Total), 0);
+  const body = {metodo_pago: cajaMetodoPago};
+
+  if (cajaMetodoPago === 'efectivo') {
+    body.monto_efectivo = parseFloat(document.getElementById('cobro-monto-recibido').value) || 0;
+    const denomVisible = document.getElementById('denom-cobro').style.display !== 'none';
+    if (denomVisible) body.denominaciones_recibidas = leerDenomGrid('denom-cobro');
+  } else if (cajaMetodoPago === 'mixto') {
+    body.monto_efectivo = parseFloat(document.getElementById('cobro-mixto-efectivo').value) || 0;
+    body.monto_tarjeta = parseFloat(document.getElementById('cobro-mixto-tarjeta').value) || 0;
+  }
+
+  const r = await fetch('/api/caja/cobrar', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body)
+  });
+  const d = await r.json();
+  if (d.error) {
+    errorBox.textContent = d.error;
+    errorBox.style.display = 'block';
+    return;
+  }
+  cerrarModal('modal-cobro');
+  document.getElementById('caja-ticket-box').textContent = d.ticket || '';
+  document.getElementById('modal-ticket').style.display = 'flex';
+  cajaCarritoActual = [];
+  renderCajaCarrito();
+  loadCajaEstado();
 }
 
 // ── INIT ───────────────────────────────────────────────
