@@ -3,6 +3,7 @@ Generacion de codigos de barras (EAN-13), QR y etiquetas PDF de productos
 Nimbo AI
 """
 import os
+import re
 import socket
 import tempfile
 from datetime import datetime
@@ -42,14 +43,22 @@ def _truncar(texto, largo=26):
     return texto[:largo - 1].rstrip() + "…"
 
 
-def _generar_imagen_barcode(codigo_ean, tmp_dir):
-    """codigo_ean: EAN-13 completo (13 digitos). python-barcode recalcula el digito
-    verificador el mismo a partir de los primeros 12, con el algoritmo estandar EAN-13
-    (el mismo que usa database.aronium._digito_verificador_ean13), asi que el resultado
-    coincide con el codigo ya asignado al producto."""
-    ean = barcode.get('ean13', codigo_ean[:12], writer=ImageWriter())
-    ruta_base = os.path.join(tmp_dir, f"barcode_{codigo_ean}")
-    return ean.save(ruta_base, options={"write_text": False, "quiet_zone": 1.0, "module_height": 9.0})
+def _generar_imagen_barcode(codigo, tmp_dir):
+    """codigo puede ser un EAN-13 generado por nosotros (13 digitos, ver
+    database.aronium.generar_ean13) o un Code de Aronium ya existente antes de esta
+    funcionalidad, que no necesariamente es un EAN-13 valido (ej. "01293428", 8 digitos,
+    o alfanumerico tipo "LIC001"). Si son 13 digitos numericos se dibuja como EAN-13
+    (python-barcode recalcula el digito verificador con el mismo algoritmo estandar que
+    database.aronium._digito_verificador_ean13, asi que coincide); cualquier otro formato
+    se dibuja como Code128, que acepta cualquier texto/longitud sin lanzar error."""
+    if codigo.isdigit() and len(codigo) == 13:
+        bc = barcode.get('ean13', codigo[:12], writer=ImageWriter())
+    else:
+        bc = barcode.get('code128', codigo, writer=ImageWriter())
+
+    nombre_archivo = re.sub(r"[^A-Za-z0-9_-]", "_", codigo)
+    ruta_base = os.path.join(tmp_dir, f"barcode_{nombre_archivo}")
+    return bc.save(ruta_base, options={"write_text": False, "quiet_zone": 1.0, "module_height": 9.0})
 
 
 def _generar_imagen_qr(url, codigo_ean, tmp_dir):
@@ -108,7 +117,7 @@ def generar_etiquetas_pdf(productos, nombre_archivo):
 
 
 def generar_etiqueta_producto_pdf(nombre, precio, codigo):
-    nombre_archivo = f"ETQ-{codigo}.pdf"
+    nombre_archivo = f"ETQ-{re.sub(r'[^A-Za-z0-9_-]', '_', codigo)}.pdf"
     return generar_etiquetas_pdf([{"nombre": nombre, "precio": precio, "codigo": codigo}], nombre_archivo)
 
 

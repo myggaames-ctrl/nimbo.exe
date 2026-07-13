@@ -439,6 +439,15 @@ Usuario escribe mensaje
     fijo 5x3cm (50mm x 30mm, estandar de impresora de etiquetas continua) - nombre truncado,
     precio, imagen de codigo de barras (python-barcode + ImageWriter, sin texto para ahorrar
     espacio) y un QR (libreria qrcode) que apunta a http://[IP_LOCAL]:5000/producto/[codigo].
+    "etiqueta de X" reusa el Code que el producto ya tenga en Aronium si existe (no lo
+    pisa con un EAN-13 nuevo, ver _asegurar_codigo en tools/codigo_barras_tool.py) - como
+    muchos productos ya traian codigos manuales de Aronium que no son EAN-13 valido (ej.
+    "01293428", 8 digitos, o alfanumericos como "LIC001"), _generar_imagen_barcode dibuja
+    EAN-13 solo si el codigo son exactamente 13 digitos numericos; cualquier otro formato
+    lo dibuja como Code128 (acepta cualquier texto/longitud) para no reventar con
+    NumberOfDigitsError. El nombre de archivo del PDF sanitiza el codigo (solo
+    alfanumerico/guiones) porque un Code de Aronium puede traer espacios u otros
+    caracteres no aptos para un path.
     get_local_ip() detecta la IP local via un socket UDP a 8.8.8.8 (no envia datos, solo lee
     la IP de salida); en este entorno WSL2 devuelve la IP interna de WSL2, no la IP LAN de
     Windows, asi que el QR solo sera alcanzable desde un telefono si hay mirrored networking
