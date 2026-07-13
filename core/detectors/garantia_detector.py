@@ -37,9 +37,12 @@ class GarantiaDetector:
     ]
 
     # Catch-all: se revisa al final para no comerse los patrones de configuracion
-    # de arriba (esos tambien empiezan con "garantia de ...").
+    # de arriba (esos tambien empiezan con "garantia de ..."). El lookahead negativo
+    # excluye "garantia de reparacion OS-XXXX", que es de core/detectors/
+    # service_detector.py (garantia de una reparacion de Servicio Tecnico, no de
+    # un cliente).
     PATTERNS_CLIENTE = [
-        r"^garantias?\s+de\s+(.+)$",
+        r"^garantias?\s+de\s+(?!reparacion\b)(.+)$",
     ]
 
     def detect(self, text: str):

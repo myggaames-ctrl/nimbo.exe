@@ -1007,9 +1007,19 @@ def init_garantias():
             FechaVencimientoFabrica DATETIME,
             FechaVencimientoPropias DATETIME,
             Estado TEXT DEFAULT 'VIGENTE',
-            Notas TEXT
+            Notas TEXT,
+            Tipo TEXT DEFAULT 'producto',
+            OrdenServicioId INTEGER
         )
     """)
+    # Migracion: GarantiaVenta ya existia antes de agregar Tipo/OrdenServicioId
+    # (garantias de reparacion de Servicio Tecnico) - CREATE TABLE IF NOT EXISTS no
+    # modifica una tabla que ya existe, hay que agregar las columnas aparte.
+    for columna, definicion in [("Tipo", "TEXT DEFAULT 'producto'"), ("OrdenServicioId", "INTEGER")]:
+        try:
+            cur.execute(f"ALTER TABLE GarantiaVenta ADD COLUMN {columna} {definicion}")
+        except sqlite3.OperationalError:
+            pass
     conn.commit()
     conn.close()
 
@@ -1066,13 +1076,13 @@ def generar_garantia_venta(venta_id, producto_id, producto_nombre, cliente_id=No
 
     conn = nimbo_connect()
     cur = conn.cursor()
-    cur.execute("SELECT COUNT(*) as total FROM GarantiaVenta")
+    cur.execute("SELECT COUNT(*) as total FROM GarantiaVenta WHERE Tipo='producto'")
     total = cur.fetchone()["total"] + 1
     numero = f"GAR-{total:04d}"
     cur.execute("""INSERT INTO GarantiaVenta
-        (NumeroGarantia, VentaId, ClienteId, ClienteNombre, ClienteTelefono,
+        (NumeroGarantia, Tipo, VentaId, ClienteId, ClienteNombre, ClienteTelefono,
          ProductoNombre, ProductoId, FechaVenta, FechaVencimientoFabrica, FechaVencimientoPropias)
-        VALUES (?,?,?,?,?,?,?,?,?,?)""",
+        VALUES (?,'producto',?,?,?,?,?,?,?,?,?)""",
         (numero, venta_id, cliente_id, cliente_nombre, cliente_telefono,
          producto_nombre, producto_id, fecha_venta.strftime("%Y-%m-%d %H:%M:%S"),
          vencimiento_fabrica, vencimiento_propia))
@@ -1085,6 +1095,91 @@ def generar_garantia_venta(venta_id, producto_id, producto_nombre, cliente_id=No
         "vencimiento_fabrica": vencimiento_fabrica,
         "vencimiento_propia": vencimiento_propia
     }
+
+
+DIAS_GARANTIA_REPARACION_DEFAULT = 30
+
+
+def generar_garantia_reparacion(orden, dias=None):
+    """Genera la garantia de una reparacion de Servicio Tecnico al marcarla como
+    ENTREGADO. Usa la misma tabla GarantiaVenta que las garantias de producto,
+    distinguida por Tipo='reparacion' y numerada aparte (GARR-XXXX en vez de
+    GAR-XXXX, cada una con su propia secuencia). No hay VentaId (no es una venta
+    de producto) pero si OrdenServicioId para vincularla con la orden. `orden` es
+    el dict que devuelve get_orden() (incluye Id, Equipo, Marca, ClienteId,
+    ClienteNombre, ClienteTelefono)."""
+    from datetime import timedelta
+    dias = dias if dias is not None else DIAS_GARANTIA_REPARACION_DEFAULT
+    fecha_entrega = datetime.now()
+    vencimiento = (fecha_entrega + timedelta(days=dias)).strftime("%Y-%m-%d")
+    equipo = f"{orden['Equipo']} {orden['Marca']}".strip()
+
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) as total FROM GarantiaVenta WHERE Tipo='reparacion'")
+    total = cur.fetchone()["total"] + 1
+    numero = f"GARR-{total:04d}"
+    cur.execute("""INSERT INTO GarantiaVenta
+        (NumeroGarantia, Tipo, OrdenServicioId, ClienteId, ClienteNombre, ClienteTelefono,
+         ProductoNombre, FechaVenta, FechaVencimientoPropias)
+        VALUES (?,'reparacion',?,?,?,?,?,?,?)""",
+        (numero, orden["Id"], orden.get("ClienteId"), orden.get("ClienteNombre"),
+         orden.get("ClienteTelefono"), equipo, fecha_entrega.strftime("%Y-%m-%d %H:%M:%S"), vencimiento))
+    conn.commit()
+    conn.close()
+    return {"numero": numero, "dias": dias, "fecha_vencimiento": vencimiento}
+
+
+def get_garantia_reparacion_por_orden(orden_id):
+    marcar_garantias_vencidas()
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""SELECT * FROM GarantiaVenta WHERE Tipo='reparacion' AND OrdenServicioId=?
+        ORDER BY Id DESC LIMIT 1""", (orden_id,))
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def reclamar_garantia_reparacion(orden_id, numero_orden_original):
+    """Reclama la garantia de una reparacion: si sigue VIGENTE la marca RECLAMADA
+    (nunca se vuelve a tocar automaticamente, ver marcar_garantias_vencidas) y crea
+    una OrdenServicio nueva sin costo para la misma reparacion (mismo cliente y
+    equipo), anotando en Observaciones la garantia y orden originales."""
+    garantia = get_garantia_reparacion_por_orden(orden_id)
+    if not garantia:
+        return {"error": f"La orden {numero_orden_original} no tiene una garantia de reparacion registrada."}
+    if garantia["Estado"] == "RECLAMADA":
+        return {"error": f"La garantia {garantia['NumeroGarantia']} de esta reparacion ya fue reclamada antes."}
+    if garantia["Estado"] == "VENCIDA":
+        return {"error": (f"La garantia {garantia['NumeroGarantia']} vencio el "
+                           f"{str(garantia['FechaVencimientoPropias'])[:10]}. No se puede reclamar.")}
+
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("UPDATE GarantiaVenta SET Estado='RECLAMADA' WHERE Id=?", (garantia["Id"],))
+    cur.execute("SELECT * FROM OrdenServicio WHERE Id=?", (orden_id,))
+    row = cur.fetchone()
+    conn.commit()
+    conn.close()
+    orden_original = dict(row) if row else None
+
+    numero_nueva = None
+    if orden_original:
+        problema = f"Reclamo de garantia {garantia['NumeroGarantia']} de la orden {numero_orden_original}"
+        numero_nueva = crear_orden(
+            orden_original["ClienteId"], orden_original["Equipo"], orden_original["Marca"],
+            orden_original["Modelo"], problema, serie=orden_original.get("Serie") or ""
+        )
+        conn = nimbo_connect()
+        cur = conn.cursor()
+        cur.execute("UPDATE OrdenServicio SET Observaciones=? WHERE NumeroOrden=?",
+            (f"Reparacion sin costo por garantia {garantia['NumeroGarantia']} (orden original {numero_orden_original})",
+             numero_nueva))
+        conn.commit()
+        conn.close()
+
+    return {"garantia": garantia, "numero_nueva_orden": numero_nueva}
 
 
 def marcar_garantias_vencidas():

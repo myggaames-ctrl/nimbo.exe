@@ -50,11 +50,13 @@ def enviar_factura_whatsapp(telefono, cliente, items, total, metodo_pago, garant
     mensaje += "\n\nGracias por preferirnos. Mi Cocina Electrodomesticos Guatemala."
     return enviar_whatsapp(telefono, mensaje)
 
-def enviar_notificacion_orden(telefono, cliente, numero_orden, equipo, estado):
+def enviar_notificacion_orden(telefono, cliente, numero_orden, equipo, estado, garantia=None):
     mensajes = {
         "LISTO": f"Hola {cliente}, su {equipo} ya esta listo para recoger en Mi Cocina Electrodomesticos. Orden: {numero_orden}. Gracias.",
         "PRESUPUESTO": f"Hola {cliente}, le informamos que ya tenemos el presupuesto de reparacion de su {equipo}. Orden: {numero_orden}. Nos comunicaremos pronto.",
         "ENTREGADO": f"Hola {cliente}, confirmamos la entrega de su {equipo}. Orden: {numero_orden}. Gracias por confiar en Mi Cocina."
     }
     mensaje = mensajes.get(estado, f"Hola {cliente}, actualizacion de su orden {numero_orden}: {estado}")
+    if estado == "ENTREGADO" and garantia:
+        mensaje += f"\n\nSu reparacion tiene garantia {garantia['numero']} valida hasta {garantia['fecha_vencimiento']}."
     return enviar_whatsapp(telefono, mensaje)

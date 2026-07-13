@@ -189,6 +189,13 @@ def _intentar_detectar(message: str, role: str, context: dict, contexto_historia
             context = {"step": "service_waiting_cliente"}
             return "Nombre del cliente:", context
 
+        if str(result).startswith("ENTREGA_GARANTIA_INICIO:"):
+            numero_orden = str(result).replace("ENTREGA_GARANTIA_INICIO:", "").strip()
+            from database.aronium import DIAS_GARANTIA_REPARACION_DEFAULT
+            context = {"step": "servicio_waiting_dias_garantia", "servicio_numero_orden": numero_orden}
+            return (f"Cuantos dias de garantia tiene esta reparacion? "
+                    f"(por defecto {DIAS_GARANTIA_REPARACION_DEFAULT}, escribe el numero o 'default')"), context
+
         if str(result).startswith("COTIZACION_INICIO:"):
             cliente_nombre = str(result).replace("COTIZACION_INICIO:", "").strip()
             if cliente_nombre:
@@ -910,6 +917,50 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         numero = crear_orden(cliente_id, context["equipo"], marca, modelo, problema)
         ctx = {}
         return "Orden " + numero + " creada. Cliente: " + context["cliente_nombre"] + ". Equipo: " + context["equipo"] + " " + context["marca"] + ". Problema: " + problema, ctx
+
+    # Flujo de entrega con garantia de reparacion (arrancado por
+    # ENTREGA_GARANTIA_INICIO, ver tools/service_tool.py cambiar_estado_tool)
+    if step == "servicio_waiting_dias_garantia":
+        from database.aronium import (
+            get_orden, actualizar_estado_orden, generar_garantia_reparacion,
+            DIAS_GARANTIA_REPARACION_DEFAULT
+        )
+        numero = context.get("servicio_numero_orden", "")
+        txt = message.strip().lower()
+        if txt in ["", "default", "predeterminado", "normal", "estandar", "estándar"]:
+            dias = DIAS_GARANTIA_REPARACION_DEFAULT
+        else:
+            try:
+                dias = int(txt)
+                if dias < 0:
+                    raise ValueError()
+            except ValueError:
+                return (f"Escribe solo el numero de dias de garantia, o 'default' para usar "
+                        f"{DIAS_GARANTIA_REPARACION_DEFAULT} dias."), context
+
+        orden = get_orden(numero)
+        context = {}
+        if not orden:
+            return f"No encontre la orden {numero}.", context
+
+        actualizar_estado_orden(numero, "ENTREGADO")
+        garantia = generar_garantia_reparacion(orden, dias)
+
+        resp = (f"Orden {numero} entregada al cliente. Garantia de reparacion {garantia['numero']} "
+                f"valida hasta {garantia['fecha_vencimiento']} ({dias} dias).")
+
+        if orden.get("ClienteTelefono"):
+            from services.whatsapp import enviar_notificacion_orden
+            ok, msg = enviar_notificacion_orden(
+                orden["ClienteTelefono"], orden["ClienteNombre"], numero,
+                orden["Equipo"] + " " + orden["Marca"], "ENTREGADO", garantia=garantia
+            )
+            if ok:
+                resp += f" Mensaje de WhatsApp enviado a {orden['ClienteNombre']} ({orden['ClienteTelefono']})."
+            else:
+                resp += f" No se pudo enviar WhatsApp: {msg}. Avisa manualmente al {orden['ClienteTelefono']}."
+
+        return resp, context
 
     # Flujo de nueva cotizacion
     if step == "cotizacion_waiting_cliente":

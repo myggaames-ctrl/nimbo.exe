@@ -112,7 +112,33 @@ Usuario escribe mensaje
   items por venta, ver seccion Caja arriba) - el metodo de pago solo se detecta cuando fue un
   pago mixto (unico caso que deja un rastro reconocible en la Descripcion, ver core/nimbo.py);
   para efectivo/tarjeta/transferencia simple se muestra "no registrado".
-- Servicio Tecnico: OS-XXXX, flujo 7 estados, WhatsApp automatico
+- Servicio Tecnico: OS-XXXX, flujo 7 estados, WhatsApp automatico. Garantia de reparacion:
+  al marcar una orden como ENTREGADO (tools/service_tool.py cambiar_estado_tool), en vez de
+  actualizar el estado de una vez, retorna el marcador ENTREGA_GARANTIA_INICIO:OS-XXXX que
+  arranca el step servicio_waiting_dias_garantia en core/nimbo.py (pregunta "Cuantos dias de
+  garantia tiene esta reparacion?", default database.aronium.DIAS_GARANTIA_REPARACION_DEFAULT
+  = 30, acepta 'default' o un numero). Con la respuesta ya se marca ENTREGADO
+  (actualizar_estado_orden) y se genera la garantia (database.aronium.
+  generar_garantia_reparacion) - reutiliza la MISMA tabla GarantiaVenta de las garantias de
+  producto, distinguida por la columna Tipo ('producto' default o 'reparacion', agregada con
+  ALTER TABLE en init_garantias() porque la tabla ya existia de antes) y OrdenServicioId (para
+  vincularla a la orden; no tiene VentaId porque no es una venta de producto). Numeracion
+  aparte: GARR-XXXX en vez de GAR-XXXX (secuencia propia, WHERE Tipo='reparacion'). El mensaje
+  de WhatsApp de entrega (antes solo se enviaba para LISTO, nunca para ENTREGADO) ahora si se
+  manda en ENTREGADO e incluye "Su reparacion tiene garantia GARR-XXXX valida hasta [fecha]"
+  (services/whatsapp.py enviar_notificacion_orden, parametro garantia).
+  - "garantia de reparacion OS-0001" (service.ver_garantia_reparacion) muestra el estado y
+    vencimiento de la garantia de esa orden (database.aronium.get_garantia_reparacion_por_orden).
+  - "reclamacion garantia OS-0001" / "reclamar garantia OS-0001" (service.reclamar_garantia,
+    database.aronium.reclamar_garantia_reparacion): verifica que la garantia siga VIGENTE (si
+    esta VENCIDA o ya fue RECLAMADA antes, rechaza con el motivo), la marca RECLAMADA (unico
+    lugar del codebase que usa ese estado - antes quedaba sin comando de chat, ver seccion
+    Garantias) y crea una OrdenServicio nueva sin costo para el mismo cliente/equipo,
+    anotando en Observaciones la garantia y orden originales.
+  - Se aprovecho para cerrar una ambiguedad preexistente entre detectores: "garantia de
+    reparacion X" coincidia tambien con el catch-all "garantias de X" (busqueda de garantias
+    de un cliente) de core/detectors/garantia_detector.py, que se revisa antes que
+    ServiceDetector - se le agrego un lookahead negativo para excluir "reparacion".
 - Proveedores: contactos, pedidos sugeridos, ordenes compra, alertas precio. El historial de
   proveedor requiere la palabra "compras" ("historial de compras a/de X", "compras a X", "cuanto
   le compre a X") - antes ese calificador era opcional en core/detectors/proveedor_detector.py y
@@ -237,8 +263,10 @@ Usuario escribe mensaje
   FechaVencimientoPropias). Estado (VIGENTE/VENCIDA/RECLAMADA): database.aronium.
   marcar_garantias_vencidas() (lazy, igual que las cotizaciones) solo marca VENCIDA
   cuando YA pasaron AMBAS fechas - si cualquiera de las dos sigue vigente, el producto
-  sigue cubierto. RECLAMADA no se toca automaticamente (no hay comando de chat para
-  marcarla todavia, queda para una integracion futura con Servicio Tecnico).
+  sigue cubierto. RECLAMADA no se toca automaticamente; el unico lugar que la usa es
+  "reclamacion garantia OS-XXXX" para garantias de reparacion (ver seccion Servicio
+  Tecnico) - las garantias de producto no tienen todavia un comando de chat para
+  reclamarlas, se marcarian igual via database.aronium si hiciera falta.
   - Integracion con ventas: database.aronium.generar_garantia_venta() se llama
     automaticamente (una vez por cada linea de producto distinta) desde los 3 lugares
     donde se cierra una venta - paso venta_waiting_pago/venta_waiting_pago_mixto_tarjeta

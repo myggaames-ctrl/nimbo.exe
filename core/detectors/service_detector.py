@@ -35,6 +35,15 @@ class ServiceDetector:
         r"^como\s+(?:va|esta)\s+(?:la\s+)?(?:orden|os)[- ]?(\w+)$",
     ]
 
+    PATTERNS_VER_GARANTIA_REPARACION = [
+        r"^garantia\s+(?:de\s+)?reparacion\s+(?:de\s+)?(?:la\s+)?(?:orden\s+)?(?:os[- ]?)?(\w+)$",
+    ]
+
+    PATTERNS_RECLAMAR_GARANTIA = [
+        r"^reclamacion\s+(?:de\s+)?garantia\s+(?:de\s+)?(?:la\s+)?(?:orden\s+)?(?:os[- ]?)?(\w+)$",
+        r"^reclamar\s+garantia\s+(?:de\s+)?(?:la\s+)?(?:orden\s+)?(?:os[- ]?)?(\w+)$",
+    ]
+
     PATTERNS_CAMBIAR_ESTADO = [
         r"^(?:os[- ]?)?(\d+)\s+(?:esta|paso|cambio|quedo)\s+(.+)$",
         r"^(?:os[- ]?)?(\d+)\s+(.+)$",
@@ -54,6 +63,16 @@ class ServiceDetector:
 
     def detect(self, text: str):
         text = normalize(text)
+
+        for pattern in self.PATTERNS_RECLAMAR_GARANTIA:
+            match = re.search(pattern, text)
+            if match:
+                return {"intent": "service.reclamar_garantia", "numero": match.group(1).upper()}
+
+        for pattern in self.PATTERNS_VER_GARANTIA_REPARACION:
+            match = re.search(pattern, text)
+            if match:
+                return {"intent": "service.ver_garantia_reparacion", "numero": match.group(1).upper()}
 
         for pattern in self.PATTERNS_BUSCAR_ORDEN:
             match = re.search(pattern, text)
