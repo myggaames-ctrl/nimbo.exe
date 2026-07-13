@@ -903,6 +903,27 @@ def abrir_turno(empleado_id, empleado_nombre, fondo_inicial):
     return turno_id, total
 
 
+def abrir_turno_simple(empleado_id, empleado_nombre, monto_total):
+    """Igual que abrir_turno pero con el fondo inicial dado como un monto total, sin
+    desglose por denominacion (usado cuando el cierre anterior solo dejo un monto
+    sugerido, ver get_fondo_sugerido)."""
+    import json
+    monto_total = round(float(monto_total), 2)
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""INSERT INTO CajaTurno
+        (EmpleadoId, EmpleadoNombre, FondoInicial, EfectivoEsperado, Estado)
+        VALUES (?,?,?,?, 'ABIERTO')""",
+        (empleado_id, empleado_nombre, json.dumps({"total": monto_total}), monto_total))
+    turno_id = cur.lastrowid
+    cur.execute("""INSERT INTO MovimientoCaja (TurnoId, Tipo, Monto, Descripcion)
+        VALUES (?, 'FONDO', ?, 'Fondo inicial de caja')""",
+        (turno_id, monto_total))
+    conn.commit()
+    conn.close()
+    return turno_id, monto_total
+
+
 def get_ultimo_cierre_denominaciones():
     """Desglose de denominaciones que se conto fisicamente al cerrar el turno CERRADO
     mas reciente (turnos ANULADOS no cuentan, nunca llegan a un conteo real). Se usa
@@ -924,6 +945,30 @@ def get_ultimo_cierre_denominaciones():
     if not mov or not mov["Denominaciones"]:
         return None
     return json.loads(mov["Denominaciones"])
+
+
+def get_fondo_sugerido():
+    """Monto total sugerido como fondo inicial del siguiente turno (lo que quedo
+    contado en caja al cerrar el turno anterior, menos lo retirado a caja fuerte en
+    ese cierre). Se guarda en Configuracion al cerrar (ver cerrar_turno) porque, a
+    diferencia de get_ultimo_cierre_denominaciones, no depende de que se haya
+    contado por denominacion. Retorna None si todavia no se ha cerrado ningun turno."""
+    from core.configuracion import get_config
+    valor = get_config("caja_fondo_sugerido")
+    if valor is None:
+        return None
+    try:
+        return round(float(valor), 2)
+    except (TypeError, ValueError):
+        return None
+
+
+def get_caja_fuerte_acumulada():
+    """Total historico acumulado en la caja fuerte, sumado cada vez que un cierre de
+    turno incluye un retiro (ver cerrar_turno). Vive en Configuracion, no en CajaTurno,
+    porque es un saldo que persiste entre turnos."""
+    from core.configuracion import get_config
+    return round(float(get_config("caja_fuerte_acumulada", "0") or "0"), 2)
 
 
 def anular_turno(turno_id, motivo, anulado_por=""):
@@ -949,23 +994,47 @@ def anular_turno(turno_id, motivo, anulado_por=""):
     return resultado
 
 
-def cerrar_turno(turno_id, conteo_fisico):
+def cerrar_turno(turno_id, contado_total, retiro_caja_fuerte=0, conteo_fisico=None):
+    """Cierra el turno con el monto total contado en caja. El desglose por
+    denominacion (conteo_fisico) es opcional, solo para auditoria - ya no es
+    obligatorio contar billete por billete. Si retiro_caja_fuerte > 0 se separa de lo
+    contado, se registra como movimiento RETIRO y se suma al acumulado historico de
+    caja fuerte (Configuracion.caja_fuerte_acumulada). Lo que sobra
+    (contado - retiro) queda guardado como fondo sugerido para el siguiente turno
+    (Configuracion.caja_fondo_sugerido, ver get_fondo_sugerido)."""
     import json
+    from core.configuracion import get_config, set_config
     turno = get_turno(turno_id)
     if not turno:
         return None
-    contado = _total_denominaciones(conteo_fisico)
+    contado = round(float(contado_total), 2)
+    retiro = round(float(retiro_caja_fuerte or 0), 2)
     diferencia = round(contado - turno["EfectivoEsperado"], 2)
+
     conn = nimbo_connect()
     cur = conn.cursor()
     cur.execute("""UPDATE CajaTurno SET EfectivoContado=?, Diferencia=?, Estado='CERRADO',
         FechaCierre=CURRENT_TIMESTAMP WHERE Id=?""", (contado, diferencia, turno_id))
     cur.execute("""INSERT INTO MovimientoCaja (TurnoId, Tipo, Monto, Descripcion, Denominaciones)
         VALUES (?, 'AJUSTE', ?, 'Cierre de turno - conteo fisico', ?)""",
-        (turno_id, diferencia, json.dumps(conteo_fisico)))
+        (turno_id, diferencia, json.dumps(conteo_fisico) if conteo_fisico else None))
+    if retiro > 0:
+        cur.execute("""INSERT INTO MovimientoCaja (TurnoId, Tipo, Monto, Descripcion)
+            VALUES (?, 'RETIRO', ?, 'Retiro a caja fuerte (cierre de turno)')""",
+            (turno_id, retiro))
     conn.commit()
     conn.close()
+
+    fondo_manana = round(contado - retiro, 2)
+    set_config("caja_fondo_sugerido", str(fondo_manana))
+    acumulado = round(float(get_config("caja_fuerte_acumulada", "0") or "0") + retiro, 2)
+    if retiro > 0:
+        set_config("caja_fuerte_acumulada", str(acumulado))
+
     turno = get_turno(turno_id)
+    turno["RetiroCajaFuerte"] = retiro
+    turno["FondoSugerido"] = fondo_manana
+    turno["CajaFuerteAcumulada"] = acumulado
     return turno
 
 

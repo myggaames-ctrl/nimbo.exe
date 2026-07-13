@@ -889,6 +889,8 @@
     <!-- ══ CAJA REGISTRADORA ══ -->
     <div class="panel" id="panel-caja">
 
+      <div class="text-muted mb-2" id="caja-fuerte-info" style="display:none">🔒 Caja fuerte acumulada: <b id="caja-fuerte-monto">Q0.00</b></div>
+
       <div class="card" id="caja-sin-turno">
         <div class="card-title">Caja cerrada</div>
         <p class="text-muted mb-4">No hay ningun turno de caja abierto. Abre un turno registrando el fondo inicial por denominacion.</p>
@@ -951,10 +953,17 @@
     <!-- ══ MODAL CIERRE DE CAJA ══ -->
     <div class="modal-overlay" id="modal-cierre-caja" style="display:none">
       <div class="modal-box" style="max-width:520px">
-        <div class="card-title">Cerrar turno — conteo fisico</div>
-        <p class="text-muted mb-2">Cuenta fisicamente cada denominacion antes de cerrar.</p>
-        <div class="denom-grid" id="denom-cierre"></div>
-        <div class="caja-total" id="denom-cierre-total">Q0.00</div>
+        <div class="card-title">Cerrar turno</div>
+        <p class="text-muted mb-2">Segun los registros deberia haber <b id="cierre-esperado">Q0.00</b> en caja.</p>
+        <label class="text-muted">Cuanto hay realmente en caja?</label>
+        <input class="input caja-search" id="cierre-contado" type="number" min="0" step="0.01" oninput="actualizarCierrePreview()">
+        <div class="text-muted" id="cierre-diferencia" style="margin-top:6px"></div>
+        <button class="btn btn-ghost btn-sm mt-2" onclick="toggleDetalleBilletesCierre()">🧾 Detalle de billetes (opcional)</button>
+        <div class="denom-grid" id="denom-cierre" style="display:none"></div>
+        <label class="text-muted" style="margin-top:10px;display:block">Cuanto vas a retirar para la caja fuerte?</label>
+        <input class="input caja-search" id="cierre-retiro" type="number" min="0" step="0.01" value="0" oninput="actualizarCierrePreview()">
+        <div class="text-muted" id="cierre-fondo-manana" style="margin-top:6px"></div>
+        <div id="cierre-error" class="error-box" style="display:none"></div>
         <div class="flex gap-2" style="margin-top:8px">
           <button class="btn btn-primary" onclick="confirmarCierreCaja()">Cerrar turno</button>
           <button class="btn btn-ghost" onclick="cerrarModal('modal-cierre-caja')">Cancelar</button>
@@ -2111,6 +2120,13 @@ async function loadCajaEstado() {
     const d = await r.json();
     CAJA_DENOMS = d.denominaciones || CAJA_DENOMS;
     cajaTurnoAbierto = d.turno;
+    const cajaFuerteEl = document.getElementById('caja-fuerte-info');
+    if (d.caja_fuerte_acumulada) {
+      document.getElementById('caja-fuerte-monto').textContent = `Q${Number(d.caja_fuerte_acumulada).toFixed(2)}`;
+      cajaFuerteEl.style.display = 'block';
+    } else {
+      cajaFuerteEl.style.display = 'none';
+    }
     if (!d.turno) {
       document.getElementById('caja-sin-turno').style.display = 'block';
       document.getElementById('caja-con-turno').style.display = 'none';
@@ -2253,25 +2269,77 @@ async function confirmarAperturaCaja() {
 }
 
 // -- Cierre de turno --
+let cierreEsperadoActual = 0;
+
 function abrirModalCierreCaja() {
+  cierreEsperadoActual = cajaTurnoAbierto ? Number(cajaTurnoAbierto.EfectivoEsperado) : 0;
+  document.getElementById('cierre-esperado').textContent = `Q${cierreEsperadoActual.toFixed(2)}`;
+  document.getElementById('cierre-contado').value = '';
+  document.getElementById('cierre-retiro').value = 0;
+  document.getElementById('cierre-diferencia').textContent = '';
+  document.getElementById('cierre-fondo-manana').textContent = '';
+  document.getElementById('cierre-error').style.display = 'none';
+  document.getElementById('denom-cierre').style.display = 'none';
   renderDenomGrid('denom-cierre', CAJA_DENOMS);
   document.getElementById('modal-cierre-caja').style.display = 'flex';
 }
 
+function toggleDetalleBilletesCierre() {
+  const el = document.getElementById('denom-cierre');
+  el.style.display = el.style.display === 'none' ? 'grid' : 'none';
+}
+
+function actualizarCierrePreview() {
+  const contado = parseFloat(document.getElementById('cierre-contado').value) || 0;
+  const retiro = parseFloat(document.getElementById('cierre-retiro').value) || 0;
+  const dif = Math.round((contado - cierreEsperadoActual) * 100) / 100;
+  const difEl = document.getElementById('cierre-diferencia');
+  difEl.textContent = dif === 0 ? 'Cuadra exacto, sin diferencias.'
+    : dif > 0 ? `Sobran Q${dif.toFixed(2)} respecto a lo esperado.`
+    : `⚠️ Faltan Q${Math.abs(dif).toFixed(2)} respecto a lo esperado.`;
+  document.getElementById('cierre-fondo-manana').textContent = `Fondo para mañana: Q${Math.max(contado - retiro, 0).toFixed(2)}`;
+}
+
 async function confirmarCierreCaja() {
-  const conteo_fisico = leerDenomGrid('denom-cierre');
+  const errorBox = document.getElementById('cierre-error');
+  errorBox.style.display = 'none';
+  const contado_total = parseFloat(document.getElementById('cierre-contado').value);
+  const retiro_caja_fuerte = parseFloat(document.getElementById('cierre-retiro').value) || 0;
+  if (isNaN(contado_total) || contado_total < 0) {
+    errorBox.textContent = 'Escribe cuanto hay realmente en caja.';
+    errorBox.style.display = 'block';
+    return;
+  }
+  if (retiro_caja_fuerte > contado_total) {
+    errorBox.textContent = 'El retiro no puede ser mayor a lo contado.';
+    errorBox.style.display = 'block';
+    return;
+  }
+  const body = {contado_total, retiro_caja_fuerte};
+  if (document.getElementById('denom-cierre').style.display !== 'none') {
+    body.conteo_fisico = leerDenomGrid('denom-cierre');
+  }
   const r = await fetch('/api/caja/cerrar', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({conteo_fisico})
+    body: JSON.stringify(body)
   });
   const d = await r.json();
-  if (d.error) { alert(d.error); return; }
+  if (d.error) {
+    errorBox.textContent = d.error;
+    errorBox.style.display = 'block';
+    return;
+  }
   cerrarModal('modal-cierre-caja');
   const dif = Number(d.Diferencia);
-  const msg = dif === 0 ? 'Cuadra exacto, sin diferencias.'
+  const msgDif = dif === 0 ? 'Cuadra exacto, sin diferencias.'
     : dif > 0 ? `Sobran Q${dif.toFixed(2)} respecto a lo esperado.`
     : `Faltan Q${Math.abs(dif).toFixed(2)} respecto a lo esperado.`;
-  alert(`Turno #${d.Id} cerrado.\nEsperado: Q${Number(d.EfectivoEsperado).toFixed(2)} | Contado: Q${Number(d.EfectivoContado).toFixed(2)}\n${msg}`);
+  let msg = `Turno #${d.Id} cerrado.\nEsperado: Q${Number(d.EfectivoEsperado).toFixed(2)} | Contado: Q${Number(d.EfectivoContado).toFixed(2)}\n${msgDif}`;
+  if (Number(d.RetiroCajaFuerte) > 0) {
+    msg += `\nRetiro a caja fuerte: Q${Number(d.RetiroCajaFuerte).toFixed(2)} (acumulado: Q${Number(d.CajaFuerteAcumulada).toFixed(2)})`;
+  }
+  msg += `\nFondo para mañana: Q${Number(d.FondoSugerido).toFixed(2)}`;
+  alert(msg);
   loadCajaEstado();
 }
 

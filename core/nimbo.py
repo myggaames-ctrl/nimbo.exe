@@ -210,7 +210,7 @@ def _intentar_detectar(message: str, role: str, context: dict, contexto_historia
             return "Para que cliente es la cotizacion?", context
 
         if str(result) == "CAJA_ABRIR_INICIO":
-            from database.aronium import DENOMINACIONES, get_ultimo_cierre_denominaciones
+            from database.aronium import DENOMINACIONES, get_ultimo_cierre_denominaciones, get_fondo_sugerido
             sugerido = get_ultimo_cierre_denominaciones()
             if sugerido:
                 total = sum(int(k) * int(v) for k, v in sugerido.items())
@@ -218,13 +218,21 @@ def _intentar_detectar(message: str, role: str, context: dict, contexto_historia
                 context = {"step": "caja_abrir_confirmar_sugerido", "caja_fondo_sugerido": sugerido}
                 return (f"El cierre anterior quedo en Q{total} ({detalle}). "
                         f"Abrir el turno con este mismo fondo? (si / no, quiero contar de nuevo)"), context
+            total_sugerido = get_fondo_sugerido()
+            if total_sugerido is not None:
+                context = {"step": "caja_abrir_confirmar_sugerido_total", "caja_fondo_sugerido_total": total_sugerido}
+                return (f"El cierre anterior dejo Q{total_sugerido} como fondo para hoy. "
+                        f"Abrir el turno con Q{total_sugerido}? (si / no, quiero contar por denominacion)"), context
             context = {"step": "caja_abrir_denom", "caja_idx": 0, "caja_fondo": {}}
             return f"Abriendo turno de caja. Fondo inicial: cuantos billetes/monedas de Q{DENOMINACIONES[0]} hay?", context
 
         if str(result) == "CAJA_CERRAR_INICIO":
-            from database.aronium import DENOMINACIONES
-            context = {"step": "caja_cerrar_denom", "caja_idx": 0, "caja_conteo": {}}
-            return f"Cerrando turno de caja. Conteo fisico: cuantos billetes/monedas de Q{DENOMINACIONES[0]} contaste?", context
+            from database.aronium import get_turno_abierto
+            turno = get_turno_abierto()
+            esperado = turno["EfectivoEsperado"] if turno else 0
+            context = {"step": "caja_cerrar_total"}
+            return (f"Cerrando turno de caja. Segun mis registros deberia haber Q{esperado} en caja. "
+                     "Cuanto hay realmente? (el total nada mas, no hace falta contar billete por billete)"), context
 
         if str(result) == "CAJA_ANULAR_INICIO":
             context = {"step": "caja_anular_waiting_motivo"}
@@ -785,6 +793,20 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         context = {"step": "caja_abrir_denom", "caja_idx": 0, "caja_fondo": {}}
         return f"Cuantos billetes/monedas de Q{DENOMINACIONES[0]} hay?", context
 
+    # Confirmacion del fondo sugerido como monto total (sin desglose por denominacion)
+    if step == "caja_abrir_confirmar_sugerido_total":
+        resp = message.strip().lower()
+        if resp in ["si", "si.", "sí", "s", "ok", "dale", "yes", "de una"]:
+            from database.aronium import abrir_turno_simple
+            from flask_login import current_user
+            total = context.get("caja_fondo_sugerido_total", 0)
+            context = {}
+            turno_id, total = abrir_turno_simple(int(current_user.id), current_user.nombre, total)
+            return f"Turno de caja abierto (#{turno_id}). Fondo inicial: Q{total}.", context
+        from database.aronium import DENOMINACIONES
+        context = {"step": "caja_abrir_denom", "caja_idx": 0, "caja_fondo": {}}
+        return f"Cuantos billetes/monedas de Q{DENOMINACIONES[0]} hay?", context
+
     # Flujo de apertura de turno de caja (fondo inicial por denominacion)
     if step == "caja_abrir_denom":
         from database.aronium import DENOMINACIONES, abrir_turno
@@ -809,29 +831,48 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         detalle = ", ".join([f"{v}xQ{k}" for k, v in fondo.items() if int(v) > 0])
         return f"Turno de caja abierto (#{turno_id}). Fondo inicial: Q{total} ({detalle}).", context
 
-    # Flujo de cierre de turno de caja (conteo fisico por denominacion)
-    if step == "caja_cerrar_denom":
-        from database.aronium import DENOMINACIONES, cerrar_turno, get_turno_abierto
+    # Flujo de cierre de turno de caja: 1) cuanto hay realmente (total, sin desglose
+    # obligatorio) 2) cuanto se retira para la caja fuerte. El resto queda como fondo
+    # sugerido para el turno de manana (ver cerrar_turno/get_fondo_sugerido).
+    if step == "caja_cerrar_total":
+        from database.aronium import get_turno_abierto
         try:
-            cantidad = int(message.strip())
-            if cantidad < 0:
+            contado = round(float(message.strip().replace(",", "")), 2)
+            if contado < 0:
                 raise ValueError()
         except:
-            return "Escribe solo un numero (puede ser 0). Ejemplo: 5", context
-        idx = context.get("caja_idx", 0)
-        denom = DENOMINACIONES[idx]
-        conteo = context.get("caja_conteo", {})
-        conteo[str(denom)] = cantidad
-        context["caja_conteo"] = conteo
-        idx += 1
-        if idx < len(DENOMINACIONES):
-            context["caja_idx"] = idx
-            return f"Cuantos billetes/monedas de Q{DENOMINACIONES[idx]} contaste?", context
+            return "Escribe solo el monto total que hay en caja. Ejemplo: 850", context
         turno = get_turno_abierto()
-        context = {}
         if not turno:
+            context = {}
             return "No encontre el turno abierto.", context
-        resultado = cerrar_turno(turno["Id"], conteo)
+        diferencia = round(contado - turno["EfectivoEsperado"], 2)
+        if diferencia == 0:
+            msg_dif = "Cuadra exacto, sin diferencias."
+        elif diferencia > 0:
+            msg_dif = f"Sobran Q{diferencia} respecto a lo esperado."
+        else:
+            msg_dif = f"ALERTA: faltan Q{abs(diferencia)} respecto a lo esperado."
+        context = {"step": "caja_cerrar_retiro", "caja_contado": contado}
+        return f"{msg_dif}\nCuanto vas a retirar para la caja fuerte? (escribe 0 si no vas a retirar nada)", context
+
+    if step == "caja_cerrar_retiro":
+        from database.aronium import cerrar_turno, get_turno_abierto
+        try:
+            retiro = round(float(message.strip().replace(",", "")), 2)
+            if retiro < 0:
+                raise ValueError()
+        except:
+            return "Escribe solo el monto a retirar para la caja fuerte. Ejemplo: 500 (o 0 si no retiras nada)", context
+        contado = context.get("caja_contado", 0)
+        if retiro > contado:
+            return f"El retiro (Q{retiro}) no puede ser mayor a lo contado en caja (Q{contado}). Cuanto vas a retirar?", context
+        turno = get_turno_abierto()
+        if not turno:
+            context = {}
+            return "No encontre el turno abierto.", context
+        resultado = cerrar_turno(turno["Id"], contado, retiro)
+        context = {}
         diferencia = resultado["Diferencia"]
         if diferencia == 0:
             msg_dif = "Cuadra exacto, sin diferencias."
@@ -842,7 +883,10 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         resp = f"Turno #{turno['Id']} cerrado.\n"
         resp += f"Esperado: Q{resultado['EfectivoEsperado']} | Contado: Q{resultado['EfectivoContado']}\n"
         resp += f"{msg_dif}\n"
-        resp += f"Ventas del turno: Q{resultado['TotalVentas']} (Efectivo Q{resultado['TotalEfectivo']}, Tarjeta Q{resultado['TotalTarjeta']}, Mixto Q{resultado['TotalMixto']})"
+        resp += f"Ventas del turno: Q{resultado['TotalVentas']} (Efectivo Q{resultado['TotalEfectivo']}, Tarjeta Q{resultado['TotalTarjeta']}, Mixto Q{resultado['TotalMixto']})\n"
+        if retiro > 0:
+            resp += f"Retiro a caja fuerte: Q{retiro} (acumulado en caja fuerte: Q{resultado['CajaFuerteAcumulada']})\n"
+        resp += f"Fondo para manana: Q{resultado['FondoSugerido']}"
         return resp, context
 
     # Flujo de anulacion de turno (admin-only, ver INTENTS_SOLO_ADMIN en action_engine.py)

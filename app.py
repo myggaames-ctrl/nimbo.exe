@@ -1156,14 +1156,16 @@ def _requiere_turno_abierto():
 def caja_estado():
     from database.aronium import (
         get_turno_abierto, get_denominaciones_actuales, sencillo_bajo, DENOMINACIONES,
-        get_ultimo_cierre_denominaciones
+        get_ultimo_cierre_denominaciones, get_fondo_sugerido, get_caja_fuerte_acumulada
     )
     turno = get_turno_abierto()
     if not turno:
         return jsonify({
             "turno": None,
             "denominaciones": DENOMINACIONES,
-            "fondo_sugerido": get_ultimo_cierre_denominaciones()
+            "fondo_sugerido": get_ultimo_cierre_denominaciones(),
+            "fondo_sugerido_total": get_fondo_sugerido(),
+            "caja_fuerte_acumulada": get_caja_fuerte_acumulada()
         })
     bajo, pequenas = sencillo_bajo(turno["Id"])
     return jsonify({
@@ -1171,19 +1173,27 @@ def caja_estado():
         "denominaciones_actuales": get_denominaciones_actuales(turno["Id"]),
         "denominaciones": DENOMINACIONES,
         "sencillo_bajo": bajo,
-        "denominaciones_pequenas": pequenas
+        "denominaciones_pequenas": pequenas,
+        "caja_fuerte_acumulada": get_caja_fuerte_acumulada()
     })
 
 
 @app.route("/api/caja/abrir", methods=["POST"])
 @login_required
 def caja_abrir():
-    from database.aronium import get_turno_abierto, abrir_turno
+    from database.aronium import get_turno_abierto, abrir_turno, abrir_turno_simple
     if get_turno_abierto():
         return jsonify({"error": "Ya hay un turno de caja abierto."}), 400
     data = request.json or {}
-    fondo_inicial = data.get("fondo_inicial", {})
-    turno_id, total = abrir_turno(int(current_user.id), current_user.nombre, fondo_inicial)
+    if data.get("fondo_total") is not None:
+        try:
+            fondo_total = float(data.get("fondo_total"))
+        except (TypeError, ValueError):
+            return jsonify({"error": "Monto invalido"}), 400
+        turno_id, total = abrir_turno_simple(int(current_user.id), current_user.nombre, fondo_total)
+    else:
+        fondo_inicial = data.get("fondo_inicial", {})
+        turno_id, total = abrir_turno(int(current_user.id), current_user.nombre, fondo_inicial)
     return jsonify({"ok": True, "turno_id": turno_id, "efectivo_esperado": total})
 
 
@@ -1195,8 +1205,22 @@ def caja_cerrar():
     if error:
         return error
     data = request.json or {}
-    conteo_fisico = data.get("conteo_fisico", {})
-    resultado = cerrar_turno(turno["Id"], conteo_fisico)
+    try:
+        contado_total = float(data.get("contado_total"))
+        if contado_total < 0:
+            raise ValueError()
+    except (TypeError, ValueError):
+        return jsonify({"error": "Escribe el monto total contado en caja."}), 400
+    try:
+        retiro_caja_fuerte = float(data.get("retiro_caja_fuerte", 0) or 0)
+        if retiro_caja_fuerte < 0:
+            raise ValueError()
+    except (TypeError, ValueError):
+        return jsonify({"error": "Monto de retiro invalido."}), 400
+    if retiro_caja_fuerte > contado_total:
+        return jsonify({"error": "El retiro no puede ser mayor a lo contado en caja."}), 400
+    conteo_fisico = data.get("conteo_fisico") or None
+    resultado = cerrar_turno(turno["Id"], contado_total, retiro_caja_fuerte, conteo_fisico)
     return jsonify(resultado)
 
 
