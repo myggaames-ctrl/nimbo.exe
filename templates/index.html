@@ -210,6 +210,13 @@
     margin-bottom: 20px;
   }
 
+  .pipeline-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+
   .stat-card {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -430,6 +437,7 @@
   .badge-green { background: #0d2d1a; color: var(--green); }
   .badge-red { background: #2d0d0d; color: var(--red); }
   .badge-orange { background: #2d1a0d; color: var(--accent); }
+  .badge-blue { background: #0d1f2d; color: #4da6ff; }
 
   /* ── MODAL ───────────────────────────────── */
   .modal-overlay {
@@ -565,6 +573,7 @@
       <span class="icon">◈</span> Chat IA
     </button>
 
+    {% if rol != 'tecnico' %}
     <div class="nav-label">Negocio</div>
     <button class="nav-item active" onclick="showPanel('inventory')">
       <span class="icon">▦</span> Inventario
@@ -575,7 +584,8 @@
     <button class="nav-item" onclick="showPanel('caja')">
       <span class="icon">▣</span> Caja
     </button>
-    {% if rol == 'admin' %}
+    {% endif %}
+    {% if rol == 'admin' or rol == 'tecnico' %}
     <button class="nav-item" onclick="showPanel('servicio')">
       <span class="icon">🔧</span> Servicio Técnico
     </button>
@@ -599,12 +609,14 @@
     <button class="nav-item" onclick="showPanel('historial')">
       <span class="icon">💬</span> Historial
     </button>
-    {% else %}
+    {% elif rol == 'empleado' %}
     <div class="nav-label">Herramientas</div>
     {% endif %}
+    {% if rol != 'tecnico' %}
     <button class="nav-item" onclick="showPanel('kardex')">
       <span class="icon">≡</span> Kardex
     </button>
+    {% endif %}
     {% if rol == 'admin' %}
     <button class="nav-item" onclick="showPanel('sql')">
       <span class="icon">⌥</span> Consola SQL
@@ -702,9 +714,13 @@
           <div class="card-title">Accesos rápidos</div>
           <div style="display:flex;flex-direction:column;gap:8px">
             <button class="btn btn-ghost w-full" onclick="showPanel('chat')">💬 Abrir Chat IA</button>
+            {% if rol == 'tecnico' %}
+            <button class="btn btn-ghost w-full" onclick="showPanel('servicio')">🔧 Ver Servicio Técnico</button>
+            {% else %}
             <button class="btn btn-ghost w-full" onclick="showPanel('inventory')">📦 Ver Inventario</button>
             <button class="btn btn-ghost w-full" onclick="showPanel('content')">✨ Generar Contenido</button>
             <button class="btn btn-ghost w-full" onclick="showPanel('analytics')">📊 Análisis de Datos</button>
+            {% endif %}
           </div>
         </div>
         <div class="card">
@@ -1046,10 +1062,12 @@
 
     <!-- ══ SERVICIO TECNICO ══ -->
     <div class="panel" id="panel-servicio">
+      <div class="pipeline-grid" id="servicio-pipeline"></div>
+
       <div class="card" style="padding:0;overflow:hidden">
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Orden</th><th>Cliente</th><th>Equipo</th><th>Estado</th><th>Fotos</th><th>Acciones</th></tr></thead>
+            <thead><tr><th>Orden</th><th>Cliente</th><th>Equipo</th><th>Técnico</th><th>Estado</th><th>Fotos</th><th>Acciones</th></tr></thead>
             <tbody id="servicio-body"><tr><td class="text-muted" style="padding:20px">Cargando ordenes...</td></tr></tbody>
           </table>
         </div>
@@ -1107,7 +1125,12 @@
             <select class="input" id="usr-rol">
               <option value="empleado">Empleado</option>
               <option value="admin">Admin</option>
+              <option value="tecnico">Técnico</option>
             </select>
+          </div>
+          <div class="input-group">
+            <label class="input-label">Teléfono (WhatsApp, requerido para técnicos)</label>
+            <input class="input" id="usr-telefono" placeholder="Ej: 55551234">
           </div>
         </div>
         <button class="btn btn-primary" onclick="crearUsuario()">+ Crear usuario</button>
@@ -1116,7 +1139,7 @@
       <div class="card" style="padding:0;overflow:hidden">
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Nombre</th><th>Usuario</th><th>Rol</th><th>Estado</th><th>Acciones</th></tr></thead>
+            <thead><tr><th>Nombre</th><th>Usuario</th><th>Rol</th><th>Teléfono</th><th>Estado</th><th>Acciones</th></tr></thead>
             <tbody id="usuarios-body"><tr><td class="text-muted" style="padding:20px">Cargando usuarios...</td></tr></tbody>
           </table>
         </div>
@@ -1144,10 +1167,6 @@
       </div>
     </div>
     {% endif %}
-
-  <button class="nav-item" onclick="showPanel('inventory')">
-      <span class="icon">▦</span> Inventario
-    </button>
 
     <!-- ══ INVENTARIO ══ -->
     <div class="panel" id="panel-inventory">
@@ -1216,7 +1235,7 @@ function showPanel(id) {
   if (id === 'dashboard') loadStats();
   if (id === 'usuarios') loadUsuarios();
   if (id === 'caja') loadCajaEstado();
-  if (id === 'servicio') loadOrdenesServicio();
+  if (id === 'servicio') { loadOrdenesServicio(); loadPipelineServicio(); }
 }
 
 // ── CLOCK ──────────────────────────────────────────────
@@ -1531,8 +1550,31 @@ async function subirFoto(id, nombre) {
 // ── SERVICIO TECNICO ───────────────────────────────────
 const ESTADOS_SERVICIO = {
   RECEPCION: 'Recepción', REVISION: 'En revisión', PRESUPUESTO: 'Presupuesto enviado',
-  APROBADO: 'Aprobado', REPARACION: 'En reparación', LISTO: 'Listo para recoger', ENTREGADO: 'Entregado'
+  APROBADO: 'Aprobado', REPARACION: 'En reparación', LISTO: 'Listo para recoger', ENTREGADO: 'Entregado',
+  RECHAZADO: 'Rechazado'
 };
+const BADGE_SERVICIO = {
+  RECHAZADO: 'badge-red', ENTREGADO: 'badge-green', LISTO: 'badge-green', APROBADO: 'badge-green'
+};
+
+async function loadPipelineServicio() {
+  const el = document.getElementById('servicio-pipeline');
+  try {
+    const r = await fetch('/api/servicio/pipeline');
+    const d = await r.json();
+    el.innerHTML = d.pipeline.map(p => `
+      <div class="stat-card">
+        <div class="stat-label">${ESTADOS_SERVICIO[p.estado] || p.estado}</div>
+        <div class="stat-value stat-accent">${p.total}</div>
+      </div>`).join('') + (d.rechazado ? `
+      <div class="stat-card">
+        <div class="stat-label">Rechazado</div>
+        <div class="stat-value" style="color:var(--red)">${d.rechazado}</div>
+      </div>` : '');
+  } catch(e) {
+    el.innerHTML = '<div class="text-muted">No se pudo cargar el pipeline.</div>';
+  }
+}
 
 async function loadOrdenesServicio() {
   const body = document.getElementById('servicio-body');
@@ -1550,12 +1592,13 @@ async function loadOrdenesServicio() {
       <td>${o.NumeroOrden}</td>
       <td>${o.ClienteNombre || '—'}</td>
       <td>${o.Equipo || ''} ${o.Marca || ''}</td>
-      <td><span class="badge badge-orange">${ESTADOS_SERVICIO[o.Estado] || o.Estado}</span></td>
+      <td>${o.TecnicoNombre || '<span class="text-muted">Sin asignar</span>'}</td>
+      <td><span class="badge ${BADGE_SERVICIO[o.Estado] || 'badge-orange'}">${ESTADOS_SERVICIO[o.Estado] || o.Estado}</span></td>
       <td>${conteos[i].length ? `<button class="btn btn-ghost btn-sm" onclick="verFotosServicio('${o.NumeroOrden}')">🖼 ${conteos[i].length}</button>` : '<span class="text-muted">Sin fotos</span>'}</td>
       <td><button class="btn btn-ghost btn-sm" onclick="subirFotoServicio('${o.NumeroOrden}')">📷 Subir foto</button></td>
     </tr>`).join('');
   } catch(e) {
-    body.innerHTML = '<tr><td colspan="6" style="color:red">Error: ' + e.message + '</td></tr>';
+    body.innerHTML = '<tr><td colspan="7" style="color:red">Error: ' + e.message + '</td></tr>';
   }
 }
 
@@ -1879,10 +1922,12 @@ async function loadUsuarios() {
       body.innerHTML = '<tr><td colspan="5" class="text-muted" style="padding:20px">Sin usuarios.</td></tr>';
       return;
     }
+    const rolBadge = {admin: 'badge-orange', tecnico: 'badge-blue'};
     body.innerHTML = rows.map(u => `<tr>
       <td>${u.Nombre || '—'}</td>
       <td>${u.Username}</td>
-      <td><span class="badge ${u.Rol === 'admin' ? 'badge-orange' : 'badge-green'}">${u.Rol}</span></td>
+      <td><span class="badge ${rolBadge[u.Rol] || 'badge-green'}">${u.Rol}</span></td>
+      <td>${u.Telefono || '—'}</td>
       <td><span class="badge ${u.Activo ? 'badge-green' : 'badge-red'}">${u.Activo ? 'Activo' : 'Inactivo'}</span></td>
       <td>
         <button class="btn btn-ghost btn-sm" onclick="toggleUsuario(${u.Id})">${u.Activo ? '⏸ Desactivar' : '▶ Activar'}</button>
@@ -1890,7 +1935,7 @@ async function loadUsuarios() {
       </td>
     </tr>`).join('');
   } catch(e) {
-    document.getElementById('usuarios-body').innerHTML = '<tr><td colspan="5" style="color:red">Error: ' + e.message + '</td></tr>';
+    document.getElementById('usuarios-body').innerHTML = '<tr><td colspan="6" style="color:red">Error: ' + e.message + '</td></tr>';
   }
 }
 
@@ -1899,12 +1944,14 @@ async function crearUsuario() {
   const username = document.getElementById('usr-username').value.trim();
   const password = document.getElementById('usr-password').value;
   const rol = document.getElementById('usr-rol').value;
+  const telefono = document.getElementById('usr-telefono').value.trim();
   if (!username || !password) { alert('Usuario y contraseña son obligatorios.'); return; }
+  if (rol === 'tecnico' && !telefono) { alert('El teléfono es obligatorio para técnicos (Nimbo lo usa para avisarles por WhatsApp).'); return; }
   try {
     const r = await fetch('/api/usuarios', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({nombre, username, password, rol})
+      body: JSON.stringify({nombre, username, password, rol, telefono})
     });
     const d = await r.json();
     if (d.ok) {
@@ -1912,6 +1959,7 @@ async function crearUsuario() {
       document.getElementById('usr-username').value = '';
       document.getElementById('usr-password').value = '';
       document.getElementById('usr-rol').value = 'empleado';
+      document.getElementById('usr-telefono').value = '';
       loadUsuarios();
     } else {
       alert('Error: ' + d.error);

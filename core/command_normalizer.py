@@ -34,6 +34,9 @@ VOCABULARIO = [
     "trio", "trios", "cuarteto", "cuartetos", "vienen", "unidad", "unidades",
     "puntos", "punto", "disponibles", "nivel", "niveles", "bronce", "plata", "lealtad",
     "codigo", "codigos", "barras", "etiqueta", "etiquetas", "imprimir",
+    "mano", "obra", "presupuesto", "tecnico", "tecnicos", "informe", "informes",
+    "tarifa", "tarifas", "aprobo", "rechazo", "asigna", "asignada", "asignado",
+    "necesita", "revision",
     # electrodomesticos y repuestos comunes en la tienda
     "licuadora", "licuadoras", "refrigerador", "refrigeradores", "cuchilla", "cuchillas",
     "empaque", "empaques", "adaptador", "adaptadores", "regulador", "reguladores",

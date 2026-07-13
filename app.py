@@ -80,6 +80,15 @@ init_grupos_cliente()
 from database.aronium import init_fotos_servicio
 init_fotos_servicio()
 
+from database.aronium import init_servicio_tecnico_ext
+init_servicio_tecnico_ext()
+
+from database.aronium import init_informes_revision
+init_informes_revision()
+
+from database.aronium import init_tarifas_mano_obra
+init_tarifas_mano_obra()
+
 # Instalaciones que ya tenian usuarios antes de que existiera el wizard de
 # onboarding (o que lo completaron con el /setup viejo de un solo paso) se
 # marcan como completas automaticamente, para no forzar el wizard nuevo.
@@ -131,6 +140,16 @@ def admin_required(f):
     def wrapper(*args, **kwargs):
         if not current_user.is_admin:
             return jsonify({"error": "Acceso restringido a administrador"}), 403
+        return f(*args, **kwargs)
+    return wrapper
+
+
+def admin_o_tecnico_required(f):
+    @wraps(f)
+    @login_required
+    def wrapper(*args, **kwargs):
+        if not (current_user.is_admin or current_user.is_tecnico):
+            return jsonify({"error": "Acceso restringido a administrador o tecnico"}), 403
         return f(*args, **kwargs)
     return wrapper
 
@@ -404,7 +423,8 @@ def api_usuarios_create():
             data.get("username", ""),
             data.get("password", ""),
             data.get("nombre", ""),
-            data.get("rol", "empleado")
+            data.get("rol", "empleado"),
+            data.get("telefono", "")
         )
         return jsonify({"ok": True})
     except Exception as e:
@@ -1130,7 +1150,7 @@ def get_fotos_producto(producto_id):
 UPLOAD_FOLDER_SERVICIO = '/home/ictor_axtor/micocina-dashboard/static/fotos_servicio'
 
 @app.route("/api/servicio/fotos", methods=["POST"])
-@admin_required
+@admin_o_tecnico_required
 def subir_foto_servicio():
     from database.aronium import get_orden, agregar_foto_orden
 
@@ -1168,7 +1188,7 @@ def subir_foto_servicio():
 
 
 @app.route("/api/servicio/fotos/<numero_orden>")
-@admin_required
+@admin_o_tecnico_required
 def get_fotos_servicio(numero_orden):
     from database.aronium import get_fotos_orden
     numero_orden = numero_orden.strip().upper()
@@ -1178,11 +1198,18 @@ def get_fotos_servicio(numero_orden):
 
 
 @app.route("/api/servicio/ordenes")
-@admin_required
+@admin_o_tecnico_required
 def get_ordenes_servicio():
     from database.aronium import get_ordenes
     estado = request.args.get("estado")
     return jsonify(get_ordenes(estado=estado, limit=100))
+
+
+@app.route("/api/servicio/pipeline")
+@admin_o_tecnico_required
+def get_pipeline_servicio_route():
+    from database.aronium import get_pipeline_servicio
+    return jsonify(get_pipeline_servicio())
 
 
 @app.route("/producto/<codigo>")

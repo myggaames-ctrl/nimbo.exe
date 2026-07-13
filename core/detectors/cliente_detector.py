@@ -39,9 +39,13 @@ class ClienteDetector:
         r"^cliente\s+nuevo\s+(.+?)\s+(\d{7,})$",
     ]
 
+    # El lookahead negativo excluye "cliente aprobo/rechazo OS-XXXX" (PASO 5 de
+    # Servicio Tecnico, ver core/detectors/service_detector.py) - sin el, ClienteDetector
+    # se revisa antes que ServiceDetector en core/intent_detector.py y "cliente (.+)"
+    # interceptaria ese comando como una busqueda de cliente por nombre.
     PATTERNS_BUSCAR = [
         r"^busca[r]?\s+cliente\s+(.+)$",
-        r"^cliente\s+(.+)$",
+        r"^cliente\s+(?!aprobo\b|rechazo\b)(.+)$",
         r"^info\s+(?:de\s+)?(.+)$",
         r"^datos\s+(?:de\s+)?(.+)$",
     ]

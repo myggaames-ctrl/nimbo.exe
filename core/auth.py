@@ -10,7 +10,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 NIMBO_DB = '/home/ictor_axtor/micocina-dashboard/nimbo.db'
 
-ROLES = ("admin", "empleado")
+ROLES = ("admin", "empleado", "tecnico")
 RESET_TOKEN_TTL_MINUTOS = 60
 
 
@@ -27,10 +27,15 @@ class Usuario(UserMixin):
         self.nombre = row["Nombre"]
         self.rol = row["Rol"]
         self.activo = bool(row["Activo"])
+        self.telefono = row["Telefono"] if "Telefono" in row.keys() else ""
 
     @property
     def is_admin(self):
         return self.rol == "admin"
+
+    @property
+    def is_tecnico(self):
+        return self.rol == "tecnico"
 
     def get_id(self):
         return self.id
@@ -62,6 +67,12 @@ def init_usuarios():
             CreatedAt TEXT DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    # Migracion: Usuario ya existia antes de agregar Telefono (necesario para que
+    # Nimbo pueda avisar por WhatsApp a un tecnico cuando se le asigna una orden).
+    try:
+        cur.execute("ALTER TABLE Usuario ADD COLUMN Telefono TEXT")
+    except sqlite3.OperationalError:
+        pass
     conn.commit()
     conn.close()
 
@@ -100,13 +111,24 @@ def verify_login(username, password):
 def listar_usuarios():
     conn = _connect()
     cur = conn.cursor()
-    cur.execute("SELECT Id, Username, Nombre, Rol, Activo, CreatedAt FROM Usuario ORDER BY Id")
+    cur.execute("SELECT Id, Username, Nombre, Rol, Activo, Telefono, CreatedAt FROM Usuario ORDER BY Id")
     rows = [dict(r) for r in cur.fetchall()]
     conn.close()
     return rows
 
 
-def crear_usuario(username, password, nombre, rol):
+def listar_tecnicos():
+    """Tecnicos activos, para ofrecerlos al asignar una orden de servicio nueva
+    (ver step service_waiting_tecnico en core/nimbo.py)."""
+    conn = _connect()
+    cur = conn.cursor()
+    cur.execute("SELECT Id, Nombre, Username, Telefono FROM Usuario WHERE Rol='tecnico' AND Activo=1 ORDER BY Nombre")
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+def crear_usuario(username, password, nombre, rol, telefono=""):
     if rol not in ROLES:
         raise ValueError("Rol invalido")
     if not username or not password:
@@ -114,8 +136,8 @@ def crear_usuario(username, password, nombre, rol):
     conn = _connect()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO Usuario (Username, PasswordHash, Nombre, Rol, Activo) VALUES (?,?,?,?,1)",
-        (username.strip(), generate_password_hash(password), nombre, rol)
+        "INSERT INTO Usuario (Username, PasswordHash, Nombre, Rol, Activo, Telefono) VALUES (?,?,?,?,1,?)",
+        (username.strip(), generate_password_hash(password), nombre, rol, telefono.strip())
     )
     conn.commit()
     conn.close()

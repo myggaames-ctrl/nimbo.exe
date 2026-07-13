@@ -60,3 +60,37 @@ def enviar_notificacion_orden(telefono, cliente, numero_orden, equipo, estado, g
     if estado == "ENTREGADO" and garantia:
         mensaje += f"\n\nSu reparacion tiene garantia {garantia['numero']} valida hasta {garantia['fecha_vencimiento']}."
     return enviar_whatsapp(telefono, mensaje)
+
+
+def enviar_asignacion_tecnico_whatsapp(telefono_tecnico, tecnico_nombre, numero_orden, equipo, cliente_nombre, problema):
+    """Aviso al tecnico cuando se le asigna una orden nueva (PASO 2 del flujo de
+    servicio tecnico) - numero de orden, equipo, cliente y problema descrito."""
+    mensaje = (f"Hola {tecnico_nombre}, se te asigno la orden {numero_orden}.\n"
+               f"Equipo: {equipo}\nCliente: {cliente_nombre}\nProblema reportado: {problema}\n\n"
+               f"Puedes revisar el equipo y registrar tu informe con 'informe {numero_orden}: ...' en Nimbo.")
+    return enviar_whatsapp(telefono_tecnico, mensaje)
+
+
+def enviar_presupuesto_whatsapp(telefono, cliente, numero_orden, equipo, items, mano_obra, total):
+    """Presupuesto completo al cliente (PASO 4), con desglose de repuestos + mano de
+    obra. items: lista de dicts {nombre, cantidad, costo}."""
+    mensaje = f"Hola {cliente}, este es el presupuesto de revision de su {equipo} (orden {numero_orden}):\n\n"
+    for item in items:
+        subtotal = item["cantidad"] * item["costo"]
+        mensaje += f"- {item['nombre']} x{item['cantidad']}: Q{subtotal:.2f}\n"
+    mensaje += f"- Mano de obra: Q{mano_obra:.2f}\n\n"
+    mensaje += f"Total: Q{total:.2f}\n\n"
+    mensaje += "Responda indicando si aprueba o rechaza la reparacion. Gracias por su preferencia."
+    return enviar_whatsapp(telefono, mensaje)
+
+
+def enviar_aprobacion_tecnico_whatsapp(telefono_tecnico, tecnico_nombre, numero_orden, equipo):
+    mensaje = (f"Hola {tecnico_nombre}, el cliente APROBO la reparacion de la orden {numero_orden} ({equipo}). "
+               f"Puedes proceder con la reparacion.")
+    return enviar_whatsapp(telefono_tecnico, mensaje)
+
+
+def enviar_rechazo_cliente_whatsapp(telefono, cliente, numero_orden, equipo):
+    mensaje = (f"Hola {cliente}, entendemos que no desea proceder con la reparacion de su {equipo} "
+               f"(orden {numero_orden}). Puede pasar a recoger su equipo sin ningun costo. Gracias por su preferencia.")
+    return enviar_whatsapp(telefono, mensaje)

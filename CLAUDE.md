@@ -35,9 +35,29 @@ Usuario escribe mensaje
      system prompt, ver openclaw_bridge.py send_to_openclaw(message, contexto))
 
 ## Login y roles
-- Flask-Login. Roles: admin (acceso total) y empleado (solo inventario, ventas y clientes;
+- Flask-Login. Roles: admin (acceso total), empleado (solo inventario, ventas y clientes;
   el resto de categorias de intent quedan bloqueadas tanto en las rutas API como dentro
-  del chat, ver core/action_engine.py).
+  del chat, ver core/action_engine.py) y tecnico (solo Servicio Tecnico - ver mas abajo).
+  core/action_engine.py.CATEGORIAS_POR_ROL mapea cada rol no-admin a su propio set de
+  categorias permitidas (CATEGORIAS_EMPLEADO / CATEGORIAS_TECNICO = {"service"}); un rol
+  que no aparece en ese dict no tiene ninguna categoria permitida por defecto (deny-by-default).
+- Usuario.Telefono (ALTER TABLE, migracion en core/auth.py init_usuarios()) - necesario para
+  que Nimbo pueda avisar a un tecnico por WhatsApp cuando se le asigna una orden. Se pide en
+  el formulario "Nuevo usuario" del dashboard (obligatorio en el frontend si el rol es
+  tecnico, no hay validacion equivalente en el backend). core.auth.listar_tecnicos() trae
+  los tecnicos activos (Id, Nombre, Username, Telefono) para ofrecerlos al crear una orden.
+- El dashboard oculta del sidebar todo lo que no sea Dashboard/Chat IA/Servicio Tecnico para
+  rol tecnico (templates/index.html, bloques `{% if rol != 'tecnico' %}` / `{% if rol ==
+  'admin' or rol == 'tecnico' %}`) - incluye tambien los accesos rapidos del panel Dashboard
+  (antes tenian botones sueltos a Inventario/Analisis/Contenido sin gate de rol, lo que le
+  hubiera permitido a un tecnico saltarse el sidebar oculto con esos atajos; ahora tecnico ve
+  en su lugar un acceso directo a Servicio Tecnico). Los endpoints /api/servicio/* usan un
+  decorador nuevo admin_o_tecnico_required (ademas de admin_required) para que la
+  restriccion no dependa solo de ocultar botones en el HTML. Los widgets del Dashboard que
+  siguen siendo @admin_required (recordatorios, alertas de precio, punto de equilibrio,
+  cotizaciones) no se ocultaron especificamente para tecnico - su API ya rechaza el rol, asi
+  que el tecnico solo veria esas tarjetas vacias/con error si entrara al Dashboard, no datos
+  reales; no se considero necesario ocultar tambien esas tarjetas.
 - Primera instalacion: mientras Configuracion.onboarding_completado != "1", cualquier
   ruta redirige a /setup, que a su vez redirige a /setup/<paso> (wizard de 6 pasos,
   progreso guardado en Configuracion.onboarding_step):
@@ -143,13 +163,13 @@ Usuario escribe mensaje
     NumeroOrden, RutaFoto, Descripcion, Fecha - database.aronium.init_fotos_servicio/
     agregar_foto_orden/get_fotos_orden). Se suben desde el dashboard, no desde el chat (subir
     un archivo por chat no es posible) - panel "Servicio Tecnico" en el menu lateral
-    (solo admin, misma categoria "service" que el resto de este modulo es admin-only en
-    core/action_engine.py), templates/index.html panel-servicio: tabla simple de ordenes con
+    (admin y tecnico - categoria "service" en core/action_engine.py, ver seccion "Flujo de
+    tecnicos" mas abajo), templates/index.html panel-servicio: tabla simple de ordenes con
     boton 📷 "Subir foto" por fila (subirFotoServicio(), mismo patron que subirFoto() de
     productos: input file oculto -> FormData -> POST) y, si ya tiene fotos, un boton 🖼 con el
     conteo que abre un modal con las miniaturas (verFotosServicio()). Los 3 endpoints usan
-    @admin_required (no solo @login_required) para que un empleado no pueda llegar a ellos
-    directo por URL aunque el boton/panel este oculto para su rol. Endpoints: POST
+    @admin_o_tecnico_required (no solo @login_required) para que un empleado no pueda llegar
+    a ellos directo por URL aunque el boton/panel este oculto para su rol. Endpoints: POST
     /api/servicio/fotos (foto + numero_orden + descripcion opcional, guarda en
     static/fotos_servicio/OS-XXXX/uuid.ext, valida que la orden exista) y GET
     /api/servicio/fotos/<numero_orden>; GET /api/servicio/ordenes lista las ordenes para la
@@ -163,6 +183,80 @@ Usuario escribe mensaje
     tiene fotos. Al crear una orden nueva (step service_waiting_problema en core/nimbo.py) el
     mensaje final ahora incluye "Puedes subir fotos del equipo en el dashboard, seccion
     Servicio Tecnico, orden OS-XXXX".
+  - Flujo de tecnicos (rol "tecnico", ver seccion "Login y roles"): asignacion de tecnico,
+    informe de revision con presupuesto automatico, aprobacion/rechazo del cliente y tarifas
+    de mano de obra configurables.
+    - Asignar tecnico: OrdenServicio.TecnicoId/TecnicoNombre (ALTER TABLE, migracion en
+      database.aronium.init_servicio_tecnico_ext() - reemplazan a la columna vieja "Tecnico",
+      texto libre que nunca se conecto a ningun flujo). Al crear una orden, despues de
+      "problema" el step service_waiting_tecnico (core/nimbo.py) lista los tecnicos activos
+      (core.auth.listar_tecnicos()) y pide un numero, o "ninguno" para no asignar todavia (o
+      si no hay ningun tecnico registrado). crear_orden() ahora acepta tecnico_id/
+      tecnico_nombre. Si el tecnico elegido tiene Telefono, Nimbo le manda un WhatsApp
+      (services/whatsapp.py enviar_asignacion_tecnico_whatsapp) con el numero de orden,
+      equipo, cliente y problema descrito.
+    - Informe de revision: tabla InformeRevision en nimbo.db (Id, OrdenId, NumeroOrden,
+      TecnicoId, TecnicoNombre, Descripcion, ProductosNecesarios [JSON: [{nombre, cantidad,
+      costo}]], ManoObra, Total, Fecha - database.aronium.init_informes_revision/
+      crear_informe_revision/get_informes_orden). "informe OS-0001: necesita cuchilla 1
+      unidad y empaque 2 unidades mano de obra 75" (service.informe,
+      core/detectors/service_detector.py + tools/service_tool.py informe_tool): separa el
+      texto por " mano de obra N" al final, parte el resto por "," o " y " en items
+      individuales ("cuchilla 1 unidad"), y por cada uno busca el producto en el inventario
+      (database.aronium.get_products(), mismo fuzzy fallback que el resto del sistema) para
+      resolver el precio (Price, no Cost - es lo que se le cobra al cliente) automaticamente;
+      si un producto no matchea nada se registra con costo Q0 y se avisa en la respuesta ("no
+      encontre en inventario: X"). El TecnicoId/TecnicoNombre del informe se toma de
+      flask_login.current_user (quien esta escribiendo el informe en ese momento, no
+      necesariamente el mismo tecnico que quedo asignado en la orden - mismo criterio que
+      anular_turno en core/nimbo.py, que tambien usa current_user.nombre directamente) - por
+      eso informe_tool solo funciona dentro de una request real de Flask (no se puede probar
+      llamando core.nimbo.send() en un script suelto sin app context, hay que usar
+      app.test_client() con una sesion logueada).
+    - Presupuesto automatico: crear_informe_revision() calcula presupuesto_repuestos = suma
+      de costo*cantidad, total = presupuesto_repuestos + mano_obra, y llama a la funcion ya
+      existente set_presupuesto_orden() (que ya actualizaba Presupuesto/ManoObra y ponia
+      Estado='PRESUPUESTO' con su nota en HistorialOrden desde antes de este feature - nunca
+      se habia conectado a nada que la disparara automaticamente). informe_tool arma el
+      desglose completo ("Revision de X:\n- producto xN: QN\n...\n- Mano de obra: QN\nTotal:
+      QN") y lo manda por WhatsApp al cliente completo (services/whatsapp.py
+      enviar_presupuesto_whatsapp), ademas de mostrarlo en el chat.
+    - Aprobacion/rechazo del cliente: "cliente aprobo OS-0001" / "cliente rechazo OS-0001"
+      (service.aprobacion_cliente, core/detectors/service_detector.py + tools/service_tool.py
+      aprobacion_cliente_tool). Aprobado -> actualizar_estado_orden a APROBADO + WhatsApp al
+      tecnico asignado (busca su Telefono en Usuario por OrdenServicio.TecnicoId,
+      enviar_aprobacion_tecnico_whatsapp). Rechazado -> nuevo estado RECHAZADO (no forma
+      parte de la secuencia normal de 7 estados, es un estado terminal aparte) + WhatsApp al
+      cliente avisando que puede recoger su equipo sin costo (enviar_rechazo_cliente_whatsapp).
+      Se agrego un lookahead negativo en core/detectors/cliente_detector.py PATTERNS_BUSCAR
+      (`r"^cliente\s+(?!aprobo\b|rechazo\b)(.+)$"`) porque ClienteDetector se revisa antes que
+      ServiceDetector en core/intent_detector.py y su catch-all "cliente (.+)" interceptaba
+      "cliente aprobo/rechazo OS-XXXX" como si fuera una busqueda de cliente por nombre
+      (mismo tipo de ambiguedad que ya existia entre GarantiaDetector/ServiceDetector, ver
+      mas arriba).
+    - Tarifas de mano de obra: tabla TarifaManoObra en nimbo.db (Id, Descripcion, Precio,
+      Activo - database.aronium.init_tarifas_mano_obra/crear_tarifa/get_tarifas). "agregar
+      tarifa revision basica Q50" (tarifa.agregar) / "ver tarifas" (tarifa.listar) - detector
+      nuevo core/detectors/tarifa_detector.py + tools/tarifa_tool.py. Es solo un catalogo de
+      referencia (no hay ningun lugar del codigo que lo consulte automaticamente): el tecnico
+      sigue escribiendo el monto de mano de obra directo en el comando "informe": ("mano de
+      obra 75"), las tarifas no se aplican solas. Categoria "tarifa" no esta en
+      CATEGORIAS_EMPLEADO ni CATEGORIAS_TECNICO (admin-only, como el resto de configuracion
+      de precios: descuento, garantia, combo).
+    - Vocabulario del CommandNormalizer (core/command_normalizer.py): "mano" y "obra" no
+      estaban en la lista y "obra" se corregia sola a "cobrar" (el par mas cercano en
+      similitud de cadenas, cutoff 0.8) ANTES de que cualquier detector viera el mensaje -
+      esto rompia silenciosamente tanto "informe OS-XXXX: ... mano de obra N" como el
+      "presupuesto OS-XXXX es N mano de obra N" que ya existia desde antes. Se agregaron
+      "mano", "obra", "presupuesto", "tecnico(s)", "informe(s)", "tarifa(s)", "aprobo",
+      "rechazo", "asigna(da/do)", "necesita", "revision" al VOCABULARIO.
+    - Widget de pipeline: GET /api/servicio/pipeline (@admin_o_tecnico_required,
+      database.aronium.get_pipeline_servicio() - COUNT(*) por Estado) alimenta una fila de
+      tarjetas en panel-servicio (RECEPCION | REVISION | PRESUPUESTO | APROBADO | REPARACION
+      | LISTO | ENTREGADO, mismo estilo .stat-card del Dashboard) mas una tarjeta aparte para
+      RECHAZADO (solo se muestra si hay al menos una) porque no es parte de la secuencia del
+      pipeline. loadPipelineServicio() en templates/index.html, se llama junto con
+      loadOrdenesServicio() al entrar al panel.
 - Proveedores: contactos, pedidos sugeridos, ordenes compra, alertas precio. El historial de
   proveedor requiere la palabra "compras" ("historial de compras a/de X", "compras a X", "cuanto
   le compre a X") - antes ese calificador era opcional en core/detectors/proveedor_detector.py y
@@ -529,7 +623,7 @@ Usuario escribe mensaje
 
 ## Tablas nimbo.db
 Cliente, OrdenServicio, HistorialOrden, Kardex, StockMinimo, ProductoFoto, ProductoInfo,
-FotoOrdenServicio,
+FotoOrdenServicio, InformeRevision, TarifaManoObra,
 Venta, ResumenTrimestral, PagoFijo, RecordatorioPersonal, ChatHistorial,
 Gasto, ResumenContable, Proveedor, ContactoProveedor, ProductoProveedor,
 OrdenCompra, ItemOrdenCompra, HistorialPrecio, Usuario, PasswordResetToken, Configuracion,

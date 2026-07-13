@@ -941,17 +941,57 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         return "Cual es el problema o falla que reporta el cliente?:", context
 
     if step == "service_waiting_problema":
+        from core.auth import listar_tecnicos
+        context["problema"] = message.strip()
+        tecnicos = listar_tecnicos()
+        context["step"] = "service_waiting_tecnico"
+        context["tecnicos_opciones"] = [
+            {"id": t["Id"], "nombre": t["Nombre"] or t["Username"], "telefono": t.get("Telefono", "")}
+            for t in tecnicos
+        ]
+        if not context["tecnicos_opciones"]:
+            return "No hay tecnicos registrados todavia. Escribe 'ninguno' para crear la orden sin asignar.", context
+        lista = "\n".join(f"{i+1}. {t['nombre']}" for i, t in enumerate(context["tecnicos_opciones"]))
+        return f"A que tecnico se asigna esta orden?\n{lista}\n\nEscribe el numero o 'ninguno' para no asignar todavia.", context
+
+    if step == "service_waiting_tecnico":
         from database.aronium import crear_cliente, crear_orden
-        problema = message.strip()
-        cliente_id = crear_cliente(context["cliente_nombre"], context.get("cliente_telefono",""))
+        from services.whatsapp import enviar_asignacion_tecnico_whatsapp
+        txt = message.strip().lower()
+        opciones = context.get("tecnicos_opciones", [])
+        tecnico_id, tecnico_nombre, tecnico_telefono = None, "", ""
+        if txt not in ("ninguno", "no", "sin asignar", "ninguna", ""):
+            try:
+                idx = int(txt) - 1
+            except ValueError:
+                return "Escribe el numero del tecnico de la lista, o 'ninguno'.", context
+            if not (0 <= idx < len(opciones)):
+                return "Numero invalido. Escribe el numero del tecnico de la lista, o 'ninguno'.", context
+            elegido = opciones[idx]
+            tecnico_id, tecnico_nombre, tecnico_telefono = elegido["id"], elegido["nombre"], elegido["telefono"]
+
+        problema = context.get("problema", "")
+        cliente_id = crear_cliente(context["cliente_nombre"], context.get("cliente_telefono", ""))
         marca_modelo = context["marca"].split(" ", 1)
         marca = marca_modelo[0]
         modelo = marca_modelo[1] if len(marca_modelo) > 1 else ""
-        numero = crear_orden(cliente_id, context["equipo"], marca, modelo, problema)
+        numero = crear_orden(cliente_id, context["equipo"], marca, modelo, problema,
+                              tecnico_id=tecnico_id, tecnico_nombre=tecnico_nombre)
         ctx = {}
         resp = ("Orden " + numero + " creada. Cliente: " + context["cliente_nombre"] + ". Equipo: "
                 + context["equipo"] + " " + context["marca"] + ". Problema: " + problema)
-        resp += (f"\nPuedes subir fotos del equipo en el dashboard, seccion Servicio Tecnico, orden {numero}.")
+        if tecnico_nombre:
+            resp += f"\nAsignada a: {tecnico_nombre}."
+            if tecnico_telefono:
+                ok, msg = enviar_asignacion_tecnico_whatsapp(
+                    tecnico_telefono, tecnico_nombre, numero,
+                    context["equipo"] + " " + context["marca"], context["cliente_nombre"], problema)
+                resp += " Se le aviso por WhatsApp." if ok else f" No se pudo avisar por WhatsApp ({msg})."
+            else:
+                resp += " No tiene telefono registrado, no se le pudo avisar por WhatsApp."
+        else:
+            resp += "\nSin tecnico asignado todavia."
+        resp += f"\nPuedes subir fotos del equipo en el dashboard, seccion Servicio Tecnico, orden {numero}."
         return resp, ctx
 
     # Flujo de entrega con garantia de reparacion (arrancado por

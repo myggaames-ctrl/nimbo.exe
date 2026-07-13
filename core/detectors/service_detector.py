@@ -19,6 +19,8 @@ class ServiceDetector:
         "terminado": "LISTO",
         "entregado": "ENTREGADO",
         "entregaron": "ENTREGADO",
+        "rechazado": "RECHAZADO",
+        "rechazaron": "RECHAZADO",
     }
 
     PATTERNS_NUEVA_ORDEN = [
@@ -30,6 +32,19 @@ class ServiceDetector:
 
     PATTERNS_FOTOS = [
         r"^fotos?\s+(?:de\s+)?(?:la\s+)?(?:orden\s+)?(?:os[- ]?)?(\w+)$",
+    ]
+
+    # "informe OS-0001: necesita cuchilla 1 unidad y empaque 2 unidades mano de obra 75"
+    # (PASO 3 del flujo de tecnicos, ver tools/service_tool.py informe_tool).
+    PATTERNS_INFORME = [
+        r"^informe\s+(?:de\s+)?(?:la\s+orden\s+)?(?:os[- ]?)?(\w+)\s*:\s*(.+)$",
+    ]
+
+    # PASO 5: aprobacion/rechazo del cliente (respuesta por WhatsApp o en tienda,
+    # capturada manualmente en el chat).
+    PATTERNS_APROBACION_CLIENTE = [
+        r"^cliente\s+aprobo\s+(?:la\s+orden\s+)?(?:os[- ]?)?(\w+)$",
+        r"^cliente\s+rechazo\s+(?:la\s+orden\s+)?(?:os[- ]?)?(\w+)$",
     ]
 
     PATTERNS_BUSCAR_ORDEN = [
@@ -82,6 +97,16 @@ class ServiceDetector:
             match = re.search(pattern, text)
             if match:
                 return {"intent": "service.fotos", "numero": match.group(1).upper()}
+
+        for pattern in self.PATTERNS_INFORME:
+            match = re.search(pattern, text)
+            if match:
+                return {"intent": "service.informe", "numero": match.group(1).upper(), "texto": match.group(2).strip()}
+
+        for i, pattern in enumerate(self.PATTERNS_APROBACION_CLIENTE):
+            match = re.search(pattern, text)
+            if match:
+                return {"intent": "service.aprobacion_cliente", "numero": match.group(1).upper(), "aprobado": i == 0}
 
         for pattern in self.PATTERNS_BUSCAR_ORDEN:
             match = re.search(pattern, text)

@@ -292,6 +292,21 @@ def get_alertas_stock():
 
 # ── SERVICIO TECNICO ──────────────────────────────────
 
+def init_servicio_tecnico_ext():
+    """Migracion: OrdenServicio ya existia antes del flujo de tecnicos. TecnicoId/
+    TecnicoNombre reemplazan a la columna vieja 'Tecnico' (texto libre, nunca se
+    conecto a ningun flujo de chat) - se agregan aparte, sin tocar esa columna."""
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    for columna, definicion in [("TecnicoId", "INTEGER"), ("TecnicoNombre", "TEXT")]:
+        try:
+            cur.execute(f"ALTER TABLE OrdenServicio ADD COLUMN {columna} {definicion}")
+        except sqlite3.OperationalError:
+            pass
+    conn.commit()
+    conn.close()
+
+
 def crear_cliente(nombre, telefono="", email="", direccion="", nit=""):
     conn = nimbo_connect()
     cur = conn.cursor()
@@ -316,16 +331,17 @@ def buscar_cliente(query):
     conn.close()
     return rows
 
-def crear_orden(cliente_id, equipo, marca, modelo, problema, serie="", tecnico=""):
+def crear_orden(cliente_id, equipo, marca, modelo, problema, serie="", tecnico="",
+                 tecnico_id=None, tecnico_nombre=""):
     conn = nimbo_connect()
     cur = conn.cursor()
     cur.execute("SELECT COUNT(*) as total FROM OrdenServicio")
     total = cur.fetchone()["total"] + 1
     numero = f"OS-{total:04d}"
-    cur.execute("""INSERT INTO OrdenServicio 
-        (NumeroOrden, ClienteId, Equipo, Marca, Modelo, Serie, Problema, Tecnico)
-        VALUES (?,?,?,?,?,?,?,?)""",
-        (numero, cliente_id, equipo, marca, modelo, serie, problema, tecnico))
+    cur.execute("""INSERT INTO OrdenServicio
+        (NumeroOrden, ClienteId, Equipo, Marca, Modelo, Serie, Problema, Tecnico, TecnicoId, TecnicoNombre)
+        VALUES (?,?,?,?,?,?,?,?,?,?)""",
+        (numero, cliente_id, equipo, marca, modelo, serie, problema, tecnico, tecnico_id, tecnico_nombre))
     conn.commit()
     orden_id = cur.lastrowid
     cur.execute("INSERT INTO HistorialOrden (OrdenId, Estado, Nota) VALUES (?,?,?)",
@@ -379,6 +395,123 @@ def set_presupuesto_orden(numero, presupuesto, mano_obra):
     conn.commit()
     conn.close()
     return True
+
+
+# ── INFORMES DE REVISION (SERVICIO TECNICO) ────────────
+
+def init_informes_revision():
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS InformeRevision (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            OrdenId INTEGER,
+            NumeroOrden TEXT,
+            TecnicoId INTEGER,
+            TecnicoNombre TEXT,
+            Descripcion TEXT,
+            ProductosNecesarios TEXT,
+            ManoObra NUMERIC DEFAULT 0,
+            Total NUMERIC DEFAULT 0,
+            Fecha DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def crear_informe_revision(orden_id, numero_orden, tecnico_id, tecnico_nombre, descripcion,
+                            productos_necesarios, mano_obra):
+    """productos_necesarios: lista de dicts {nombre, cantidad, costo} (costo ya resuelto
+    contra el inventario, ver tools/service_tool.py informe_tool). Guarda el informe y
+    actualiza la orden via set_presupuesto_orden (que ya cambia Estado a PRESUPUESTO y
+    lo anota en HistorialOrden - PASO 4 del flujo). Retorna el desglose ya calculado."""
+    import json
+    presupuesto_repuestos = round(sum(p["costo"] * p["cantidad"] for p in productos_necesarios), 2)
+    total = round(presupuesto_repuestos + mano_obra, 2)
+
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""INSERT INTO InformeRevision
+        (OrdenId, NumeroOrden, TecnicoId, TecnicoNombre, Descripcion, ProductosNecesarios, ManoObra, Total)
+        VALUES (?,?,?,?,?,?,?,?)""",
+        (orden_id, numero_orden, tecnico_id, tecnico_nombre, descripcion,
+         json.dumps(productos_necesarios), mano_obra, total))
+    conn.commit()
+    informe_id = cur.lastrowid
+    conn.close()
+
+    set_presupuesto_orden(numero_orden, presupuesto_repuestos, mano_obra)
+
+    return {"id": informe_id, "presupuesto_repuestos": presupuesto_repuestos, "mano_obra": mano_obra, "total": total}
+
+
+def get_informes_orden(numero_orden):
+    import json
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM InformeRevision WHERE NumeroOrden=? ORDER BY Fecha DESC", (numero_orden,))
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    for r in rows:
+        r["ProductosNecesarios"] = json.loads(r["ProductosNecesarios"] or "[]")
+    return rows
+
+
+# ── TARIFAS DE MANO DE OBRA ────────────────────────────
+
+def init_tarifas_mano_obra():
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS TarifaManoObra (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            Descripcion TEXT,
+            Precio NUMERIC DEFAULT 0,
+            Activo INTEGER DEFAULT 1
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def crear_tarifa(descripcion, precio):
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("INSERT INTO TarifaManoObra (Descripcion, Precio) VALUES (?,?)", (descripcion, precio))
+    conn.commit()
+    tarifa_id = cur.lastrowid
+    conn.close()
+    return tarifa_id
+
+
+def get_tarifas(activo=True):
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM TarifaManoObra WHERE Activo=? ORDER BY Descripcion", (1 if activo else 0,))
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+# ── PIPELINE DE SERVICIO TECNICO (widget del dashboard) ─
+
+PIPELINE_ESTADOS_SERVICIO = ["RECEPCION", "REVISION", "PRESUPUESTO", "APROBADO", "REPARACION", "LISTO", "ENTREGADO"]
+
+
+def get_pipeline_servicio():
+    """Conteo de ordenes por estado, para el widget visual del dashboard (7 columnas
+    fijas del pipeline + RECHAZADO aparte, que no es parte de la secuencia normal)."""
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT Estado, COUNT(*) as total FROM OrdenServicio GROUP BY Estado")
+    conteos = {row["Estado"]: row["total"] for row in cur.fetchall()}
+    conn.close()
+    return {
+        "pipeline": [{"estado": e, "total": conteos.get(e, 0)} for e in PIPELINE_ESTADOS_SERVICIO],
+        "rechazado": conteos.get("RECHAZADO", 0)
+    }
+
 
 def get_historial_orden(numero):
     conn = nimbo_connect()

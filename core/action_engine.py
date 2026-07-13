@@ -6,14 +6,25 @@ from core.intent_detector import IntentDetector
 
 # Categorias de intent (prefijo antes del punto) permitidas para el rol empleado.
 # Todo lo demas (proveedor, contabilidad, contenido, reporte, evento, service, budget, windows,
-# descuento, garantia, combo) es solo admin.
+# descuento, garantia, combo, tarifa) es solo admin.
 CATEGORIAS_EMPLEADO = {
     "inventory", "venta", "cliente", "customer", "caja", "unidadmedida", "puntos",
     "codigobarras", "etiqueta"
 }
 
+# El tecnico solo ve Servicio Tecnico (crear/consultar ordenes, informes de revision,
+# aprobacion/rechazo del cliente) - nada de inventario, ventas, caja, etc.
+CATEGORIAS_TECNICO = {"service"}
+
+# Categorias permitidas por rol no-admin. Un rol que no aparece aqui (o un rol
+# desconocido) no tiene ninguna categoria permitida por defecto.
+CATEGORIAS_POR_ROL = {
+    "empleado": CATEGORIAS_EMPLEADO,
+    "tecnico": CATEGORIAS_TECNICO,
+}
+
 # Intents especificos que siguen siendo admin-only aunque su categoria este permitida
-# para empleados (ej. caja es de empleado, pero retirar efectivo o anular un turno es
+# para el rol (ej. caja es de empleado, pero retirar efectivo o anular un turno es
 # solo de admin; unidadmedida es de empleado para vender/ver, pero configurar precios
 # y equivalencias por unidad es una decision de precios, solo de admin).
 INTENTS_SOLO_ADMIN = {"caja.retirar", "caja.anular", "unidadmedida.configurar"}
@@ -33,8 +44,10 @@ class ActionEngine:
         print("INTENT:", result)
 
         categoria = result["intent"].split(".")[0]
-        if role != "admin" and (categoria not in CATEGORIAS_EMPLEADO or result["intent"] in INTENTS_SOLO_ADMIN):
-            return MENSAJE_SIN_PERMISO
+        if role != "admin":
+            categorias_permitidas = CATEGORIAS_POR_ROL.get(role, set())
+            if categoria not in categorias_permitidas or result["intent"] in INTENTS_SOLO_ADMIN:
+                return MENSAJE_SIN_PERMISO
 
         tool = get(result["intent"])
         if tool:

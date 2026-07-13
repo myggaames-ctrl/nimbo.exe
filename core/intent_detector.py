@@ -22,6 +22,7 @@ from core.detectors.combo_detector import ComboDetector
 from core.detectors.unidad_medida_detector import UnidadMedidaDetector
 from core.detectors.puntos_detector import PuntosDetector
 from core.detectors.codigo_barras_detector import CodigoBarrasDetector
+from core.detectors.tarifa_detector import TarifaDetector
 from core.command_normalizer import CommandNormalizer
 
 
@@ -48,6 +49,7 @@ class IntentDetector:
             ContabilidadDetector(),
             ContenidoDetector(),
             ClienteDetector(),
+            TarifaDetector(),
             ServiceDetector(),
             InventoryDetector(),
             BudgetDetector(),
