@@ -518,6 +518,83 @@ def get_historial_cliente(cliente_id, meses=None):
     conn.close()
     return {"ventas": ventas, "ordenes": ordenes, "cotizaciones": cotizaciones, "garantias": garantias}
 
+
+# ── GRUPOS DE CLIENTE ──────────────────────────────────
+
+# (grupo, PorcentajeDescuento, PuntosMultiplicador). "Especial" queda en 0% aqui a
+# proposito - su descuento no es fijo por grupo, se configura por cliente con el
+# mecanismo de Descuento individual (tipo='cliente', ver calcular_descuento) que ya
+# existia antes de este feature.
+GRUPOS_CLIENTE_DEFAULT = [
+    ("detallista", 0, 1),
+    ("mayorista", 10, 1),
+    ("especial", 0, 1),
+    ("vip", 15, 2),
+]
+
+GRUPOS_CLIENTE = {g for g, _, _ in GRUPOS_CLIENTE_DEFAULT}
+
+
+def init_grupos_cliente():
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS GrupoDescuento (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            Grupo TEXT UNIQUE,
+            PorcentajeDescuento NUMERIC DEFAULT 0,
+            PuntosMultiplicador NUMERIC DEFAULT 1
+        )
+    """)
+    for grupo, porcentaje, multiplicador in GRUPOS_CLIENTE_DEFAULT:
+        cur.execute("INSERT OR IGNORE INTO GrupoDescuento (Grupo, PorcentajeDescuento, PuntosMultiplicador) VALUES (?,?,?)",
+            (grupo, porcentaje, multiplicador))
+
+    # Migracion: Cliente ya existia antes de agregar GrupoCliente.
+    try:
+        cur.execute("ALTER TABLE Cliente ADD COLUMN GrupoCliente TEXT DEFAULT 'detallista'")
+    except sqlite3.OperationalError:
+        pass
+
+    conn.commit()
+    conn.close()
+
+
+def get_grupos_descuento():
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM GrupoDescuento ORDER BY Grupo")
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+def get_grupo_descuento(grupo):
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM GrupoDescuento WHERE Grupo=?", (grupo,))
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def set_grupo_cliente(cliente_id, grupo):
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("UPDATE Cliente SET GrupoCliente=? WHERE Id=?", (grupo, cliente_id))
+    conn.commit()
+    conn.close()
+
+
+def get_clientes_por_grupo(grupo):
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM Cliente WHERE GrupoCliente=? ORDER BY Nombre", (grupo,))
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
 def get_clientes_inactivos(meses=3):
     conn = nimbo_connect()
     cur = conn.cursor()
@@ -935,11 +1012,13 @@ def calcular_descuento(cliente_id=None, productos=None, total=0, fecha=None):
     fecha = fecha or datetime.now().date()
     productos = productos or []
     candidatos = []
+    tiene_descuento_individual = False
     for d in get_descuentos(activo=True):
         tipo = d["Tipo"]
         base = None
         if tipo == "cliente" and cliente_id and d["ClienteId"] == cliente_id:
             base = total
+            tiene_descuento_individual = True
         elif tipo == "temporada" and d["FechaInicio"] and d["FechaFin"]:
             try:
                 fi = datetime.strptime(d["FechaInicio"][:10], "%Y-%m-%d").date()
@@ -958,6 +1037,24 @@ def calcular_descuento(cliente_id=None, productos=None, total=0, fecha=None):
         if monto <= 0:
             continue
         candidatos.append((monto, d, base))
+
+    # Descuento automatico de grupo (ver GRUPOS_CLIENTE_DEFAULT): solo entra a competir
+    # si el cliente NO tiene un descuento individual (tipo 'cliente') configurado - el
+    # individual siempre tiene prioridad sobre el automatico del grupo, nunca se compara
+    # cual conviene mas. "Especial" no tiene porcentaje fijo en GrupoDescuento (queda en
+    # 0), asi que en la practica su descuento sale siempre del Descuento individual.
+    if cliente_id and not tiene_descuento_individual and total > 0:
+        cliente = get_cliente_por_id(cliente_id)
+        grupo = (cliente.get("GrupoCliente") if cliente else None) or "detallista"
+        grupo_descuento = get_grupo_descuento(grupo)
+        if grupo_descuento and grupo_descuento["PorcentajeDescuento"]:
+            monto_grupo = round(total * float(grupo_descuento["PorcentajeDescuento"]) / 100, 2)
+            if monto_grupo > 0:
+                d_grupo = {
+                    "Id": None, "Nombre": f"Grupo {grupo.capitalize()}", "Tipo": "grupo",
+                    "Porcentaje": grupo_descuento["PorcentajeDescuento"], "MontoFijo": None
+                }
+                candidatos.append((monto_grupo, d_grupo, total))
 
     if not candidatos:
         return None
@@ -1546,11 +1643,19 @@ def _get_o_crear_puntos_cliente(cur, cliente_id, cliente_nombre):
 def ganar_puntos(cliente_id, cliente_nombre, total, venta_id):
     """Suma puntos ganados por una compra (1 punto por cada Q1 de `total`, ya con
     todos los descuentos/creditos aplicados - se gana sobre lo que el cliente
-    realmente termina pagando). No hace nada si no hay cliente (Consumidor Final no
-    acumula puntos) o si el total no alcanza para al menos 1 punto."""
+    realmente termina pagando), multiplicado por el PuntosMultiplicador del grupo
+    del cliente (VIP = puntos dobles, ver GRUPOS_CLIENTE_DEFAULT). No hace nada si
+    no hay cliente (Consumidor Final no acumula puntos) o si el total no alcanza
+    para al menos 1 punto."""
     if not cliente_id or not total or total <= 0:
         return None
-    puntos_ganados = int(total * PUNTOS_POR_QUETZAL)
+
+    cliente = get_cliente_por_id(cliente_id)
+    grupo = (cliente.get("GrupoCliente") if cliente else None) or "detallista"
+    grupo_descuento = get_grupo_descuento(grupo)
+    multiplicador = float(grupo_descuento["PuntosMultiplicador"]) if grupo_descuento else 1
+
+    puntos_ganados = int(total * PUNTOS_POR_QUETZAL * multiplicador)
     if puntos_ganados <= 0:
         return None
 

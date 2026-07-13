@@ -6,6 +6,32 @@ def normalize(text):
 
 class ClienteDetector:
 
+    GRUPOS_TEXTO = {
+        "detallista": "detallista", "detallistas": "detallista",
+        "mayorista": "mayorista", "mayoristas": "mayorista",
+        "especial": "especial", "especiales": "especial",
+        "vip": "vip", "vips": "vip",
+    }
+
+    # Se revisan antes que PATTERNS_NUEVO/BUSCAR (mas genericos) para que "Juan Perez
+    # es mayorista" o "grupo de Juan Perez" no terminen matcheando como busqueda de
+    # cliente por nombre.
+    PATTERNS_GRUPO_LISTAR = [
+        r"^ver\s+(detallistas?|mayoristas?|especiales?|vips?)$",
+        r"^lista(?:r)?\s+(?:clientes?\s+)?(detallistas?|mayoristas?|especiales?|vips?)$",
+        r"^clientes?\s+(detallistas?|mayoristas?|especiales?|vips?)$",
+    ]
+
+    PATTERNS_GRUPO_SET = [
+        r"^(.+?)\s+es\s+(detallista|mayorista|especial|vip)s?$",
+    ]
+
+    PATTERNS_GRUPO_VER = [
+        r"^grupo\s+(?:de\s+)?(.+)$",
+        r"^que\s+grupo\s+tiene\s+(.+)$",
+        r"^tipo\s+de\s+cliente\s+(?:de\s+)?(.+)$",
+    ]
+
     PATTERNS_NUEVO = [
         r"^(?:nuevo|crear|registra[r]?|agrega[r]?)\s+cliente\s+(.+?)\s+(\d{7,})$",
         r"^registra[r]?\s+cliente\s+(.+?)\s+(\d{7,})$",
@@ -56,6 +82,23 @@ class ClienteDetector:
 
     def detect(self, text: str):
         text = normalize(text)
+
+        for pattern in self.PATTERNS_GRUPO_LISTAR:
+            match = re.search(pattern, text)
+            if match:
+                grupo = self.GRUPOS_TEXTO.get(match.group(1), match.group(1))
+                return {"intent": "cliente.grupo_listar", "grupo": grupo}
+
+        for pattern in self.PATTERNS_GRUPO_SET:
+            match = re.search(pattern, text)
+            if match:
+                nombre, grupo = match.groups()
+                return {"intent": "cliente.grupo_set", "nombre": nombre.strip(), "grupo": grupo}
+
+        for pattern in self.PATTERNS_GRUPO_VER:
+            match = re.search(pattern, text)
+            if match:
+                return {"intent": "cliente.grupo_ver", "query": match.group(1).strip()}
 
         for pattern in self.PATTERNS_EXCEL:
             if re.search(pattern, text):

@@ -6,7 +6,8 @@ from datetime import datetime
 from core.tool_registry import register
 from database.aronium import (
     crear_cliente_completo, buscar_cliente_completo,
-    get_todos_clientes, get_historial_cliente, get_clientes_inactivos, get_descuentos
+    get_todos_clientes, get_historial_cliente, get_clientes_inactivos, get_descuentos,
+    set_grupo_cliente, get_grupo_descuento, get_clientes_por_grupo
 )
 
 ESTADOS_COTIZACION = {
@@ -93,11 +94,13 @@ def _estadisticas_cliente(cliente, historial):
         "frecuencia_dias": _frecuencia_compra(ventas),
         "ultima_visita": ventas[0]["Fecha"][:10] if ventas else (cliente.get("UltimaCompra") or "").strip()[:10] or None,
         "descuento": descuento,
+        "grupo": cliente.get("GrupoCliente") or "detallista",
     }
 
 
 def _texto_estadisticas(stats):
-    resp = f"Total gastado: Q{stats['total_gastado']} ({stats['total_compras']} compra(s))\n"
+    resp = f"Grupo: {stats['grupo'].capitalize()}\n"
+    resp += f"Total gastado: Q{stats['total_gastado']} ({stats['total_compras']} compra(s))\n"
     resp += f"Producto favorito: {stats['producto_favorito'] or 'sin datos'}\n"
     if stats["frecuencia_dias"]:
         resp += f"Frecuencia de compra: cada {stats['frecuencia_dias']} dias en promedio\n"
@@ -107,18 +110,18 @@ def _texto_estadisticas(stats):
     if stats["descuento"]:
         d = stats["descuento"]
         valor = f"{d['Porcentaje']}%" if d.get("Porcentaje") else f"Q{d['MontoFijo']}"
-        resp += f"Descuento configurado: {valor} ({d['Nombre']})\n"
+        resp += f"Descuento individual configurado: {valor} ({d['Nombre']})\n"
     else:
-        resp += "Descuento configurado: ninguno\n"
+        resp += "Descuento individual configurado: ninguno\n"
     return resp
 
 def nuevo_cliente_tool(data):
+    """Arranca el flujo conversacional que pregunta el grupo del cliente (detallista/
+    mayorista/especial/vip) antes de crearlo - ver step cliente_waiting_grupo en
+    core/nimbo.py. No crea el cliente todavia."""
     nombre = data.get("nombre", "") if isinstance(data, dict) else str(data)
     telefono = data.get("telefono", "") if isinstance(data, dict) else ""
-    cliente_id, creado = crear_cliente_completo(nombre, telefono)
-    if creado:
-        return f"Cliente {nombre} registrado con telefono {telefono}."
-    return f"El cliente con telefono {telefono} ya existe."
+    return f"CLIENTE_NUEVO_INICIO:{nombre}|{telefono}"
 
 register("cliente.nuevo", nuevo_cliente_tool)
 
@@ -130,6 +133,7 @@ def buscar_cliente_tool(data):
     resp = ""
     for c in clientes:
         resp += "Cliente: " + c["Nombre"] + "\n"
+        resp += "Grupo: " + (c.get("GrupoCliente") or "detallista").capitalize() + "\n"
         resp += "Telefono: " + (c["Telefono"] or "—") + "\n"
         resp += "Email: " + (c["Email"] or "—") + "\n"
         resp += "NIT: " + (c["Nit"] or "—") + "\n"
@@ -143,6 +147,67 @@ def buscar_cliente_tool(data):
     return resp.strip()
 
 register("cliente.buscar", buscar_cliente_tool)
+
+
+def _detalle_grupo(grupo_info):
+    """Texto corto describiendo el descuento/multiplicador automatico de un grupo."""
+    if not grupo_info:
+        return ""
+    partes = []
+    if grupo_info["PorcentajeDescuento"]:
+        partes.append(f"{grupo_info['PorcentajeDescuento']}% de descuento automatico")
+    mult = float(grupo_info["PuntosMultiplicador"] or 1)
+    if mult != 1:
+        partes.append(f"puntos x{mult:g}")
+    return f" ({', '.join(partes)})" if partes else ""
+
+
+def cambiar_grupo_cliente_tool(data):
+    nombre = data.get("nombre", "").strip()
+    grupo = data.get("grupo", "").strip()
+    clientes = buscar_cliente_completo(nombre)
+    if not clientes:
+        return f"No encontre cliente con '{nombre}'."
+    c = clientes[0]
+    set_grupo_cliente(c["Id"], grupo)
+    detalle = _detalle_grupo(get_grupo_descuento(grupo))
+    return f"{c['Nombre']} ahora es {grupo}{detalle}."
+
+register("cliente.grupo_set", cambiar_grupo_cliente_tool)
+
+
+def ver_grupo_cliente_tool(data):
+    query = (data.get("query", "") if isinstance(data, dict) else str(data)).strip()
+    clientes = buscar_cliente_completo(query)
+    if not clientes:
+        return f"No encontre cliente con '{query}'."
+    c = clientes[0]
+    grupo = c.get("GrupoCliente") or "detallista"
+    detalle = _detalle_grupo(get_grupo_descuento(grupo))
+    resp = f"{c['Nombre']} es {grupo}{detalle}."
+
+    descuento_individual = _descuento_cliente(c["Id"])
+    if descuento_individual:
+        d = descuento_individual
+        valor = f"{d['Porcentaje']}%" if d.get("Porcentaje") else f"Q{d['MontoFijo']}"
+        resp += (f" Ademas tiene un descuento individual configurado ({valor}, {d['Nombre']}) "
+                 f"que tiene prioridad sobre el del grupo.")
+    return resp
+
+register("cliente.grupo_ver", ver_grupo_cliente_tool)
+
+
+def listar_grupo_cliente_tool(data):
+    grupo = data.get("grupo", "").strip() if isinstance(data, dict) else str(data).strip()
+    clientes = get_clientes_por_grupo(grupo)
+    if not clientes:
+        return f"No hay clientes en el grupo {grupo}."
+    resp = f"{len(clientes)} cliente(s) en el grupo {grupo}:\n"
+    for c in clientes:
+        resp += f"- {c['Nombre']} | {c['Telefono'] or 'sin tel'}\n"
+    return resp
+
+register("cliente.grupo_listar", listar_grupo_cliente_tool)
 
 def listar_clientes_tool(data):
     clientes = get_todos_clientes()

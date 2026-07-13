@@ -216,6 +216,14 @@ def _intentar_detectar(message: str, role: str, context: dict, contexto_historia
             context = {"step": "cotizacion_waiting_cliente", "cot_items": []}
             return "Para que cliente es la cotizacion?", context
 
+        if str(result).startswith("CLIENTE_NUEVO_INICIO:"):
+            partes = str(result).replace("CLIENTE_NUEVO_INICIO:", "").split("|")
+            nombre = partes[0]
+            telefono = partes[1] if len(partes) > 1 else ""
+            context = {"step": "cliente_waiting_grupo", "cliente_nombre": nombre, "cliente_telefono": telefono}
+            return (f"Cliente {nombre}. Que tipo de cliente es? "
+                    f"(detallista, mayorista, especial o vip - por defecto detallista):"), context
+
         if str(result).startswith("COMBO_INICIO:"):
             nombre_combo = str(result).replace("COMBO_INICIO:", "").strip()
             context = {"step": "combo_crear_waiting_producto", "combo_nombre": nombre_combo, "combo_items": []}
@@ -416,6 +424,31 @@ def send(message: str, context: dict = None, role: str = "admin") -> tuple:
             return ("No entendi esa instruccion. Si necesitas ayuda con algo fuera de "
                     "inventario, ventas o clientes, contacta a un administrador."), context
         return send_to_openclaw(combinado, contexto_historial), context
+
+    # Flujo de cliente nuevo (arrancado por CLIENTE_NUEVO_INICIO, ver
+    # tools/cliente_tool.py nuevo_cliente_tool) - pregunta el grupo antes de crear.
+    if step == "cliente_waiting_grupo":
+        from database.aronium import crear_cliente_completo, set_grupo_cliente, GRUPOS_CLIENTE
+        nombre = context.get("cliente_nombre", "")
+        telefono = context.get("cliente_telefono", "")
+        txt = message.strip().lower()
+        if txt in ("", "no", "ninguno", "default", "normal"):
+            grupo = "detallista"
+        elif txt in GRUPOS_CLIENTE:
+            grupo = txt
+        elif txt.rstrip("s") in GRUPOS_CLIENTE:
+            grupo = txt.rstrip("s")
+        else:
+            return ("Tipo de cliente no reconocido. Escribe: detallista, mayorista, "
+                     "especial o vip (o 'no' para dejarlo como detallista)."), context
+
+        cliente_id, creado = crear_cliente_completo(nombre, telefono)
+        context = {}
+        if not creado:
+            return f"El cliente con telefono {telefono} ya existe.", context
+        if grupo != "detallista":
+            set_grupo_cliente(cliente_id, grupo)
+        return f"Cliente {nombre} registrado con telefono {telefono}. Grupo: {grupo.capitalize()}.", context
 
     # Flujo de agregar pago fijo
     if step == "pago_waiting_dia":

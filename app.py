@@ -74,6 +74,9 @@ init_puntos()
 from database.aronium import init_codigos_barras
 init_codigos_barras()
 
+from database.aronium import init_grupos_cliente
+init_grupos_cliente()
+
 # Instalaciones que ya tenian usuarios antes de que existiera el wizard de
 # onboarding (o que lo completaron con el /setup viejo de un solo paso) se
 # marcan como completas automaticamente, para no forzar el wizard nuevo.

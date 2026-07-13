@@ -463,6 +463,45 @@ Usuario escribe mensaje
     tools/codigo_barras_tool.py. Categorias "codigobarras" y "etiqueta" SI son de empleado
     (CATEGORIAS_EMPLEADO en core/action_engine.py) - generar codigos/etiquetas es una tarea
     operativa de bodega, igual que el resto de inventario, no una decision de precios.
+- Grupos de cliente: columna Cliente.GrupoCliente (TEXT DEFAULT 'detallista', agregada con
+  ALTER TABLE en database.aronium.init_grupos_cliente() porque Cliente ya existia de antes,
+  mismo patron que GarantiaVenta.Tipo). Tabla GrupoDescuento (Grupo UNIQUE, PorcentajeDescuento,
+  PuntosMultiplicador) - se siembra con GRUPOS_CLIENTE_DEFAULT en el mismo init: detallista
+  (0%, x1), mayorista (10%, x1), especial (0%, x1), vip (15%, x2). "Especial" no tiene
+  porcentaje fijo a proposito - su "descuento personalizable por cliente" sale siempre del
+  Descuento individual (tipo='cliente') que ya existia antes de este feature, nunca de
+  GrupoDescuento.
+  - database.aronium.calcular_descuento() ahora primero recorre los Descuento normales
+    (cliente/temporada/producto/monto) igual que antes; solo si el cliente NO tiene un
+    Descuento individual activo (tipo='cliente') agrega el descuento automatico del grupo
+    como un candidato mas a competir por "el que mas le convenga" con temporada/producto/
+    monto - el individual nunca compite contra el del grupo, tiene prioridad absoluta.
+    database.aronium.ganar_puntos() multiplica los puntos ganados por el PuntosMultiplicador
+    del grupo del cliente (VIP = puntos dobles) - como ambas funciones son el unico punto de
+    entrada para descuentos/puntos en los 3-4 lugares donde se cierra una venta (venta simple
+    del chat, caja, cotizacion, combo), el grupo se aplica automaticamente en todos sin tocar
+    esos call sites.
+  - "Juan Perez es mayorista" / "... es vip" / "... es especial" / "... es detallista"
+    (cliente.grupo_set, tools/cliente_tool.py), "grupo de Juan Perez" (cliente.grupo_ver,
+    tambien muestra el descuento individual si lo tiene, aclarando que ese manda sobre el del
+    grupo), "ver mayoristas" / "ver vip" / "ver especiales" / "ver detallistas"
+    (cliente.grupo_listar). Detector core/detectors/cliente_detector.py - estos patrones se
+    revisan ANTES que los catch-all de busqueda de cliente (PATTERNS_BUSCAR) para que "Juan
+    Perez es mayorista" no se interprete como buscar un cliente llamado "Juan Perez Es
+    Mayorista".
+  - "nuevo cliente Juan Perez 12345678" (cliente.nuevo) ya no crea el cliente de inmediato:
+    tools/cliente_tool.py retorna el marcador CLIENTE_NUEVO_INICIO:nombre|telefono, que
+    arranca el step cliente_waiting_grupo en core/nimbo.py ("Que tipo de cliente es?
+    (detallista/mayorista/especial/vip)") - con la respuesta ya crea el cliente
+    (crear_cliente_completo) y le asigna el grupo si no es detallista. Acepta el nombre
+    del grupo en singular o plural, y "no"/vacio para dejarlo en detallista (el default). Los
+    otros 3 lugares donde tambien se crea un cliente sobre la marcha (venta simple sin
+    cliente existente, cotizacion para cliente nuevo, onboarding /setup) NO preguntan el
+    grupo - se quedan en detallista por defecto para no interrumpir esos flujos con una
+    pregunta ajena a lo que se esta haciendo.
+  - Grupo visible tambien en cliente.buscar, cliente.historial y cliente.resumen (via
+    _estadisticas_cliente/_texto_estadisticas en tools/cliente_tool.py), no solo en
+    "grupo de X".
 
 ## Tablas nimbo.db
 Cliente, OrdenServicio, HistorialOrden, Kardex, StockMinimo, ProductoFoto, ProductoInfo,
@@ -470,7 +509,8 @@ Venta, ResumenTrimestral, PagoFijo, RecordatorioPersonal, ChatHistorial,
 Gasto, ResumenContable, Proveedor, ContactoProveedor, ProductoProveedor,
 OrdenCompra, ItemOrdenCompra, HistorialPrecio, Usuario, PasswordResetToken, Configuracion,
 Cotizacion, CajaTurno, MovimientoCaja, ItemCarrito, Descuento, GarantiaProducto, GarantiaVenta,
-ProductoCombo, ItemCombo, UnidadMedida, PuntosCliente, MovimientoPuntos, CodigoBarrasGenerado
+ProductoCombo, ItemCombo, UnidadMedida, PuntosCliente, MovimientoPuntos, CodigoBarrasGenerado,
+GrupoDescuento
 
 ## Variables de entorno (.env)
 GEMINI_API_KEY, FB_PAGE_TOKEN, FB_PAGE_ID, WA_TOKEN, WA_PHONE_ID, IG_ACCOUNT_ID,
