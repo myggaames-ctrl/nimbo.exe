@@ -210,7 +210,14 @@ def _intentar_detectar(message: str, role: str, context: dict, contexto_historia
             return "Para que cliente es la cotizacion?", context
 
         if str(result) == "CAJA_ABRIR_INICIO":
-            from database.aronium import DENOMINACIONES
+            from database.aronium import DENOMINACIONES, get_ultimo_cierre_denominaciones
+            sugerido = get_ultimo_cierre_denominaciones()
+            if sugerido:
+                total = sum(int(k) * int(v) for k, v in sugerido.items())
+                detalle = ", ".join([f"{v}xQ{k}" for k, v in sugerido.items() if int(v) > 0])
+                context = {"step": "caja_abrir_confirmar_sugerido", "caja_fondo_sugerido": sugerido}
+                return (f"El cierre anterior quedo en Q{total} ({detalle}). "
+                        f"Abrir el turno con este mismo fondo? (si / no, quiero contar de nuevo)"), context
             context = {"step": "caja_abrir_denom", "caja_idx": 0, "caja_fondo": {}}
             return f"Abriendo turno de caja. Fondo inicial: cuantos billetes/monedas de Q{DENOMINACIONES[0]} hay?", context
 
@@ -218,6 +225,24 @@ def _intentar_detectar(message: str, role: str, context: dict, contexto_historia
             from database.aronium import DENOMINACIONES
             context = {"step": "caja_cerrar_denom", "caja_idx": 0, "caja_conteo": {}}
             return f"Cerrando turno de caja. Conteo fisico: cuantos billetes/monedas de Q{DENOMINACIONES[0]} contaste?", context
+
+        if str(result) == "CAJA_ANULAR_INICIO":
+            context = {"step": "caja_anular_waiting_motivo"}
+            return "Cual es el motivo de la anulacion? (esta accion no se puede deshacer)", context
+
+        if str(result).startswith("CAJA_ANULAR_CONFIRMAR:"):
+            motivo = str(result).replace("CAJA_ANULAR_CONFIRMAR:", "").strip()
+            from database.aronium import get_turno_abierto, anular_turno
+            from flask_login import current_user
+            turno = get_turno_abierto()
+            if not turno:
+                return "No hay ningun turno de caja abierto para anular.", context
+            resultado = anular_turno(turno["Id"], motivo, current_user.nombre)
+            aviso = ""
+            if resultado.get("ventas_no_revertidas"):
+                aviso = (f" Atencion: este turno ya tenia Q{resultado['ventas_no_revertidas']} en ventas "
+                         f"registradas; esas ventas y el stock descontado NO se revierten automaticamente.")
+            return f"Turno #{turno['Id']} anulado. Motivo: {motivo}.{aviso}", context
 
         if "No encontre producto" in str(result):
             m = re.search(r"agrega[r]?\s+(\d+)\s+(.+)", message.lower())
@@ -745,6 +770,21 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         context["step"] = "cotizacion_waiting_producto"
         return f"Agregado: {cantidad}x {p['nombre']} = Q{subtotal}. Otro producto? (nombre o 'listo' para terminar)", context
 
+    # Confirmacion del fondo sugerido (igual al cierre del turno anterior)
+    if step == "caja_abrir_confirmar_sugerido":
+        resp = message.strip().lower()
+        if resp in ["si", "si.", "sí", "s", "ok", "dale", "yes", "de una"]:
+            from database.aronium import abrir_turno
+            from flask_login import current_user
+            fondo = context.get("caja_fondo_sugerido", {})
+            context = {}
+            turno_id, total = abrir_turno(int(current_user.id), current_user.nombre, fondo)
+            detalle = ", ".join([f"{v}xQ{k}" for k, v in fondo.items() if int(v) > 0])
+            return f"Turno de caja abierto (#{turno_id}). Fondo inicial: Q{total} ({detalle}).", context
+        from database.aronium import DENOMINACIONES
+        context = {"step": "caja_abrir_denom", "caja_idx": 0, "caja_fondo": {}}
+        return f"Cuantos billetes/monedas de Q{DENOMINACIONES[0]} hay?", context
+
     # Flujo de apertura de turno de caja (fondo inicial por denominacion)
     if step == "caja_abrir_denom":
         from database.aronium import DENOMINACIONES, abrir_turno
@@ -804,6 +844,24 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         resp += f"{msg_dif}\n"
         resp += f"Ventas del turno: Q{resultado['TotalVentas']} (Efectivo Q{resultado['TotalEfectivo']}, Tarjeta Q{resultado['TotalTarjeta']}, Mixto Q{resultado['TotalMixto']})"
         return resp, context
+
+    # Flujo de anulacion de turno (admin-only, ver INTENTS_SOLO_ADMIN en action_engine.py)
+    if step == "caja_anular_waiting_motivo":
+        from database.aronium import get_turno_abierto, anular_turno
+        from flask_login import current_user
+        motivo = message.strip()
+        if not motivo:
+            return "Escribe el motivo de la anulacion.", context
+        turno = get_turno_abierto()
+        context = {}
+        if not turno:
+            return "No hay ningun turno de caja abierto para anular.", context
+        resultado = anular_turno(turno["Id"], motivo, current_user.nombre)
+        aviso = ""
+        if resultado.get("ventas_no_revertidas"):
+            aviso = (f" Atencion: este turno ya tenia Q{resultado['ventas_no_revertidas']} en ventas "
+                     f"registradas; esas ventas y el stock descontado NO se revierten automaticamente.")
+        return f"Turno #{turno['Id']} anulado. Motivo: {motivo}.{aviso}", context
 
     # Si hay un flujo activo de creacion de producto
     if step == "waiting_price":

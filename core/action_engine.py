@@ -9,8 +9,9 @@ from core.intent_detector import IntentDetector
 CATEGORIAS_EMPLEADO = {"inventory", "venta", "cliente", "customer", "caja"}
 
 # Intents especificos que siguen siendo admin-only aunque su categoria este permitida
-# para empleados (ej. caja es de empleado, pero retirar efectivo es solo de admin).
-INTENTS_SOLO_ADMIN = {"caja.retirar"}
+# para empleados (ej. caja es de empleado, pero retirar efectivo o anular un turno es
+# solo de admin).
+INTENTS_SOLO_ADMIN = {"caja.retirar", "caja.anular"}
 
 MENSAJE_SIN_PERMISO = "No tienes permiso para realizar esa accion. Contacta a un administrador."
 

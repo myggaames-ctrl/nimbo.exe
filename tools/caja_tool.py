@@ -51,3 +51,14 @@ def efectivo_actual_tool(data):
     return resp
 
 register("caja.efectivo_actual", efectivo_actual_tool)
+
+
+def anular_caja_tool(data):
+    if not get_turno_abierto():
+        return "No hay ningun turno de caja abierto para anular."
+    motivo = data.get("motivo", "").strip() if isinstance(data, dict) else ""
+    if motivo:
+        return f"CAJA_ANULAR_CONFIRMAR:{motivo}"
+    return "CAJA_ANULAR_INICIO"
+
+register("caja.anular", anular_caja_tool)

@@ -30,8 +30,17 @@ class CajaDetector:
         r"^(?:cuanto\s+hay\s+en\s+caja|efectivo\s+en\s+caja|efectivo\s+actual|como\s+va\s+la\s+caja)$",
     ]
 
+    PATTERNS_ANULAR = [
+        r"^anular\s+(?:el\s+)?(?:turno|caja)(?:\s+(?:por|porque|motivo)\s+(.+))?$",
+    ]
+
     def detect(self, text: str):
         text = normalize(text)
+
+        for pattern in self.PATTERNS_ANULAR:
+            match = re.search(pattern, text)
+            if match:
+                return {"intent": "caja.anular", "motivo": (match.group(1) or "").strip()}
 
         for pattern in self.PATTERNS_RETIRAR:
             match = re.search(pattern, text)

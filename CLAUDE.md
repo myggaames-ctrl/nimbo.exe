@@ -161,6 +161,26 @@ Usuario escribe mensaje
     Estado=CERRADO. El conteo fisico completo tambien se guarda en un MovimientoCaja tipo
     AJUSTE para auditoria. Un empleado no puede editar ventas ya cerradas (no existe endpoint
     para eso).
+  - FondoInicial es inmutable: se fija una unica vez en el INSERT de database.aronium.abrir_turno()
+    y no existe en todo el codebase ninguna funcion/endpoint que le haga UPDATE despues (la
+    consola SQL del dashboard es solo SELECT y solo contra Aronium/pos.db, nunca contra
+    nimbo.db). La unica forma de corregir un fondo mal capturado es que un admin anule el turno.
+  - Fondo inicial automatico: al abrir un turno nuevo, si existe un turno CERRADO previo,
+    database.aronium.get_ultimo_cierre_denominaciones() recupera el desglose que se conto
+    fisicamente en su cierre (el JSON guardado en el MovimientoCaja tipo AJUSTE de ese turno)
+    y se ofrece como fondo inicial sugerido: por chat, Nimbo pregunta "abrir con este mismo
+    fondo? (si/no)" (step caja_abrir_confirmar_sugerido en core/nimbo.py) en vez de pedir cada
+    denominacion; en la UI, el modal de apertura llega prellenado con esos valores (editable
+    por si el efectivo fisico cambio de un dia a otro). Si no hay ningun turno cerrado todavia,
+    cae al flujo manual de siempre (contar cada denominacion).
+  - Anular turno: "anular turno [por motivo]" (chat, pide el motivo si no vino en el mensaje)
+    o boton "Anular turno" en la UI (oculto para empleado) - solo admin, mismo gate doble que
+    Retirar (INTENTS_SOLO_ADMIN + current_user.is_admin en /api/caja/anular). Solo aplica a un
+    turno ABIERTO (no se puede anular uno ya CERRADO); pone Estado=ANULADO y jamas toca
+    FondoInicial. Si el turno anulado ya tenia ventas registradas, esas ventas y el stock
+    descontado NO se revierten automaticamente (se avisa en la respuesta); un turno ANULADO
+    tampoco cuenta para el fondo sugerido del siguiente turno (get_ultimo_cierre_denominaciones
+    solo mira turnos CERRADO).
 
 ## Tablas nimbo.db
 Cliente, OrdenServicio, HistorialOrden, Kardex, StockMinimo, ProductoFoto, ProductoInfo,

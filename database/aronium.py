@@ -880,6 +880,12 @@ def get_turno(turno_id):
 
 
 def abrir_turno(empleado_id, empleado_nombre, fondo_inicial):
+    """Crea el turno con su fondo inicial. FondoInicial queda fijo desde este INSERT:
+    no existe en todo el codebase ninguna funcion ni endpoint que haga UPDATE de esa
+    columna despues de creada (la consola SQL del dashboard es solo SELECT y solo
+    contra la base de Aronium, no contra nimbo.db). Si se abrio con datos incorrectos,
+    la unica correccion posible es que un admin anule el turno (ver anular_turno) y
+    se abra uno nuevo."""
     import json
     total = _total_denominaciones(fondo_inicial)
     conn = nimbo_connect()
@@ -895,6 +901,52 @@ def abrir_turno(empleado_id, empleado_nombre, fondo_inicial):
     conn.commit()
     conn.close()
     return turno_id, total
+
+
+def get_ultimo_cierre_denominaciones():
+    """Desglose de denominaciones que se conto fisicamente al cerrar el turno CERRADO
+    mas reciente (turnos ANULADOS no cuentan, nunca llegan a un conteo real). Se usa
+    para que el fondo inicial del siguiente turno se sugiera solo, sin volver a contar
+    billete por billete. Retorna None si no hay ningun turno cerrado todavia."""
+    import json
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT Id FROM CajaTurno WHERE Estado='CERRADO' ORDER BY FechaCierre DESC LIMIT 1")
+    turno = cur.fetchone()
+    if not turno:
+        conn.close()
+        return None
+    cur.execute("""SELECT Denominaciones FROM MovimientoCaja
+        WHERE TurnoId=? AND Tipo='AJUSTE' AND Denominaciones IS NOT NULL
+        ORDER BY Id DESC LIMIT 1""", (turno["Id"],))
+    mov = cur.fetchone()
+    conn.close()
+    if not mov or not mov["Denominaciones"]:
+        return None
+    return json.loads(mov["Denominaciones"])
+
+
+def anular_turno(turno_id, motivo, anulado_por=""):
+    """Anula un turno ABIERTO por un error grave (ej. fondo mal capturado, apertura
+    duplicada). Solo cambia Estado/FechaCierre - jamas toca FondoInicial. Las ventas
+    que ya se hayan registrado en ese turno NO se revierten automaticamente (stock,
+    Venta y Kardex quedan igual); el llamador debe avisar de eso si aplica."""
+    turno = get_turno(turno_id)
+    if not turno:
+        return {"error": "Turno no encontrado."}
+    if turno["Estado"] != "ABIERTO":
+        return {"error": f"Solo se puede anular un turno abierto (este esta {turno['Estado']})."}
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("UPDATE CajaTurno SET Estado='ANULADO', FechaCierre=CURRENT_TIMESTAMP WHERE Id=?", (turno_id,))
+    cur.execute("""INSERT INTO MovimientoCaja (TurnoId, Tipo, Monto, Descripcion)
+        VALUES (?, 'ANULACION', 0, ?)""",
+        (turno_id, f"Anulado por {anulado_por or 'admin'}: {motivo}"))
+    conn.commit()
+    conn.close()
+    resultado = get_turno(turno_id)
+    resultado["ventas_no_revertidas"] = turno["TotalVentas"]
+    return resultado
 
 
 def cerrar_turno(turno_id, conteo_fisico):

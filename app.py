@@ -1154,10 +1154,17 @@ def _requiere_turno_abierto():
 @app.route("/api/caja/estado")
 @login_required
 def caja_estado():
-    from database.aronium import get_turno_abierto, get_denominaciones_actuales, sencillo_bajo, DENOMINACIONES
+    from database.aronium import (
+        get_turno_abierto, get_denominaciones_actuales, sencillo_bajo, DENOMINACIONES,
+        get_ultimo_cierre_denominaciones
+    )
     turno = get_turno_abierto()
     if not turno:
-        return jsonify({"turno": None, "denominaciones": DENOMINACIONES})
+        return jsonify({
+            "turno": None,
+            "denominaciones": DENOMINACIONES,
+            "fondo_sugerido": get_ultimo_cierre_denominaciones()
+        })
     bajo, pequenas = sencillo_bajo(turno["Id"])
     return jsonify({
         "turno": turno,
@@ -1316,6 +1323,25 @@ def caja_retirar():
     except (TypeError, ValueError):
         return jsonify({"error": "Monto invalido"}), 400
     resultado = retirar_caja(turno["Id"], monto, data.get("descripcion", ""), data.get("denominaciones"))
+    if resultado.get("error"):
+        return jsonify(resultado), 400
+    return jsonify(resultado)
+
+
+@app.route("/api/caja/anular", methods=["POST"])
+@login_required
+def caja_anular():
+    if not current_user.is_admin:
+        return jsonify({"error": "Solo un administrador puede anular un turno de caja."}), 403
+    from database.aronium import anular_turno
+    turno, error = _requiere_turno_abierto()
+    if error:
+        return error
+    data = request.json or {}
+    motivo = (data.get("motivo") or "").strip()
+    if not motivo:
+        return jsonify({"error": "Escribe el motivo de la anulacion."}), 400
+    resultado = anular_turno(turno["Id"], motivo, current_user.nombre)
     if resultado.get("error"):
         return jsonify(resultado), 400
     return jsonify(resultado)
