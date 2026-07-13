@@ -30,6 +30,12 @@ class GarantiaDetector:
         r"^garantia(?:s)?\s+(?:de\s+|del\s+)?(.+?)\s+es\s+(\d+)\s+dias?$",
     ]
 
+    # Forma corta sin "de"/"es": "garantia [producto] [N] dias". Se revisa despues
+    # de PATTERNS_SIMPLE (que exige "es") para no interceptar ese caso primero.
+    PATTERNS_SIMPLE_CORTO = [
+        r"^garantia(?:s)?\s+(?:de\s+|del\s+)?(.+?)\s+(\d+)\s+dias?$",
+    ]
+
     # Catch-all: se revisa al final para no comerse los patrones de configuracion
     # de arriba (esos tambien empiezan con "garantia de ...").
     PATTERNS_CLIENTE = [
@@ -60,6 +66,17 @@ class GarantiaDetector:
                 }
 
         for pattern in self.PATTERNS_SIMPLE:
+            match = re.search(pattern, text)
+            if match:
+                producto, dias = match.groups()
+                return {
+                    "intent": "garantia.configurar",
+                    "producto_query": producto.strip(),
+                    "dias_fabrica": None,
+                    "dias_propia": int(dias)
+                }
+
+        for pattern in self.PATTERNS_SIMPLE_CORTO:
             match = re.search(pattern, text)
             if match:
                 producto, dias = match.groups()

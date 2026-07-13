@@ -28,6 +28,7 @@ VOCABULARIO = [
     "caja", "turno", "efectivo", "tarjeta", "denominacion", "denominaciones", "cambio",
     "billete", "billetes", "moneda", "monedas", "carrito", "ticket", "sencillo",
     "descuento", "descuentos", "temporada", "porciento",
+    "nuestra", "nuestro", "propia", "propio",
     # electrodomesticos y repuestos comunes en la tienda
     "licuadora", "licuadoras", "refrigerador", "refrigeradores", "cuchilla", "cuchillas",
     "empaque", "empaques", "adaptador", "adaptadores", "regulador", "reguladores",
