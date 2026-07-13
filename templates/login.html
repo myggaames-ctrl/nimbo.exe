@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mi Cocina — Iniciar sesión</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+  :root {
+    --bg:        #0a0a0f;
+    --surface:   #111118;
+    --surface2:  #1a1a24;
+    --border:    #22222e;
+    --accent:    #f97316;
+    --accent2:   #fb923c;
+    --text:      #e8e8f0;
+    --muted:     #6b6b80;
+    --red:       #ef4444;
+    --radius:    12px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Inter', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .login-card {
+    width: 100%;
+    max-width: 360px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 32px 28px;
+  }
+
+  .logo-mark {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 2px;
+  }
+
+  .logo-name {
+    font-size: 20px;
+    font-weight: 700;
+    margin-bottom: 24px;
+  }
+
+  .input-group { margin-bottom: 16px; }
+
+  .input-label {
+    display: block;
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+
+  .input {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    padding: 10px 12px;
+    font-size: 14px;
+    font-family: inherit;
+    outline: none;
+  }
+
+  .input:focus { border-color: var(--accent); }
+
+  .btn-primary {
+    width: 100%;
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 11px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 4px;
+  }
+
+  .btn-primary:hover { background: var(--accent2); }
+
+  .error-box {
+    background: rgba(239,68,68,0.12);
+    border: 1px solid var(--red);
+    color: var(--red);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 13px;
+    margin-bottom: 16px;
+  }
+
+  .success-box {
+    background: rgba(34,197,94,0.12);
+    border: 1px solid #22c55e;
+    color: #22c55e;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 13px;
+    margin-bottom: 16px;
+  }
+
+  .forgot-link {
+    display: block;
+    text-align: center;
+    margin-top: 16px;
+    font-size: 12.5px;
+    color: var(--muted);
+    text-decoration: none;
+  }
+
+  .forgot-link:hover { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<form class="login-card" method="POST" action="{{ url_for('login', next=request.args.get('next')) }}">
+  <div class="logo-mark">Mi Cocina</div>
+  <div class="logo-name">Centro de Control</div>
+
+  {% if error %}
+  <div class="error-box">{{ error }}</div>
+  {% endif %}
+
+  {% if request.args.get('reset') == 'ok' %}
+  <div class="success-box">Contraseña actualizada. Ya puedes iniciar sesión.</div>
+  {% endif %}
+
+  <div class="input-group">
+    <label class="input-label">Usuario</label>
+    <input class="input" type="text" name="username" autocomplete="username" required autofocus>
+  </div>
+
+  <div class="input-group">
+    <label class="input-label">Contraseña</label>
+    <input class="input" type="password" name="password" autocomplete="current-password" required>
+  </div>
+
+  <button class="btn-primary" type="submit">Ingresar</button>
+  <a class="forgot-link" href="{{ url_for('forgot_password') }}">¿Olvidaste tu contraseña?</a>
+</form>
+
+</body>
+</html>

@@ -1,0 +1,24 @@
+import requests
+
+TOKEN = "11ca93db97c684ee87b9df2f8e589e3be07e8878bc8da8f8"
+URL = "http://127.0.0.1:18789/v1/chat/completions"
+
+def send_to_openclaw(message: str) -> str:
+    try:
+        r = requests.post(URL,
+            headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"},
+            json={"model": "openclaw/main", "messages": [{"role": "user", "content": message}]},
+            timeout=30)
+        if r.status_code != 200:
+            return r.text
+        return r.json()["choices"][0]["message"]["content"]
+    except Exception as e:
+        return f"Error: {e}"
+
+def check_openclaw_status() -> bool:
+    try:
+        r = requests.get("http://127.0.0.1:18789/v1/models",
+            headers={"Authorization": f"Bearer {TOKEN}"}, timeout=3)
+        return r.status_code == 200
+    except:
+        return False

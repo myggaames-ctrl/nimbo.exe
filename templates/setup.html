@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nimbo AI — Configuración inicial</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+  :root {
+    --bg:        #0a0a0f;
+    --surface:   #111118;
+    --surface2:  #1a1a24;
+    --border:    #22222e;
+    --accent:    #f97316;
+    --accent2:   #fb923c;
+    --text:      #e8e8f0;
+    --muted:     #6b6b80;
+    --red:       #ef4444;
+    --green:     #22c55e;
+    --radius:    12px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Inter', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+
+  .setup-wrap {
+    width: 100%;
+    max-width: 480px;
+  }
+
+  /* ── PROGRESO ─────────────────────────── */
+  .progress-track {
+    display: flex;
+    align-items: center;
+    margin-bottom: 24px;
+  }
+
+  .progress-step {
+    flex: 1;
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    margin: 0 3px;
+    transition: background 0.2s;
+  }
+
+  .progress-step:first-child { margin-left: 0; }
+  .progress-step:last-child { margin-right: 0; }
+
+  .progress-step.done { background: var(--accent); }
+  .progress-step.current { background: var(--accent2); }
+
+  .progress-label {
+    font-size: 11px;
+    color: var(--muted);
+    text-align: center;
+    margin-bottom: 20px;
+  }
+
+  .progress-label b { color: var(--accent); font-weight: 600; }
+
+  /* ── CARD ─────────────────────────────── */
+  .setup-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 32px 28px;
+  }
+
+  .logo-mark {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 2px;
+  }
+
+  .logo-name {
+    font-size: 20px;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+
+  .subtitle {
+    font-size: 13px;
+    color: var(--muted);
+    margin-bottom: 24px;
+    line-height: 1.5;
+  }
+
+  .input-group { margin-bottom: 14px; }
+
+  .input-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .input-label {
+    display: block;
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+
+  .input, select.input {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    padding: 10px 12px;
+    font-size: 14px;
+    font-family: inherit;
+    outline: none;
+  }
+
+  select.input { cursor: pointer; }
+
+  .input:focus { border-color: var(--accent); }
+
+  .hint {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 4px;
+  }
+
+  .dias-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+
+  .dia-check {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12.5px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 6px;
+    cursor: pointer;
+  }
+
+  .dia-check input { accent-color: var(--accent); }
+
+  .btn-primary {
+    width: 100%;
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 11px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 8px;
+  }
+
+  .btn-primary:hover { background: var(--accent2); }
+
+  .btn-ghost {
+    width: 100%;
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 11px;
+    font-size: 13.5px;
+    font-weight: 500;
+    cursor: pointer;
+    margin-top: 8px;
+  }
+
+  .btn-ghost:hover { color: var(--text); border-color: var(--muted); }
+
+  .back-link {
+    display: block;
+    text-align: center;
+    margin-top: 16px;
+    font-size: 12.5px;
+    color: var(--muted);
+    text-decoration: none;
+  }
+
+  .back-link:hover { color: var(--accent); }
+
+  .error-box {
+    background: rgba(239,68,68,0.12);
+    border: 1px solid var(--red);
+    color: var(--red);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 13px;
+    margin-bottom: 16px;
+  }
+
+  /* ── RESUMEN (paso 6) ─────────────────── */
+  .resumen-list { margin-bottom: 20px; }
+
+  .resumen-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 9px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+
+  .resumen-row:last-child { border-bottom: none; }
+  .resumen-key { color: var(--muted); }
+  .resumen-val { color: var(--text); font-weight: 500; text-align: right; }
+
+  .check-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: rgba(34,197,94,0.12);
+    color: var(--green);
+    font-size: 24px;
+    margin-bottom: 16px;
+  }
+</style>
+</head>
+<body>
+
+<div class="setup-wrap">
+
+  <div class="progress-track">
+    {% for i in range(1, total_pasos + 1) %}
+    <div class="progress-step {% if i < paso %}done{% elif i == paso %}current{% endif %}"></div>
+    {% endfor %}
+  </div>
+  <div class="progress-label">Paso <b>{{ paso }}</b> de {{ total_pasos }}</div>
+
+  <div class="setup-card">
+    <div class="logo-mark">Nimbo AI</div>
+
+    {% if error %}
+    <div class="error-box">{{ error }}</div>
+    {% endif %}
+
+    {# ══ PASO 1: BIENVENIDA ══ #}
+    {% if paso == 1 %}
+    <div class="logo-name">Bienvenido a Nimbo</div>
+    <div class="subtitle">Es la primera vez que se ejecuta el sistema. Empecemos configurando los datos basicos de tu negocio.</div>
+
+    <form method="POST" action="{{ url_for('setup_paso', paso=1) }}">
+      <div class="input-group">
+        <label class="input-label">Nombre del negocio</label>
+        <input class="input" type="text" name="negocio_nombre" placeholder="Ej: Mi Cocina Electrodomésticos" required autofocus>
+      </div>
+
+      <div class="input-group">
+        <label class="input-label">Tipo de negocio</label>
+        <input class="input" type="text" name="tipo_negocio" list="tipos-negocio" placeholder="Ej: Electrodomésticos y repuestos" required>
+        <datalist id="tipos-negocio">
+          <option value="Electrodomésticos y repuestos">
+          <option value="Ferretería">
+          <option value="Tienda de ropa">
+          <option value="Farmacia">
+          <option value="Restaurante / Comida">
+          <option value="Otro">
+        </datalist>
+      </div>
+
+      <div class="input-group">
+        <label class="input-label">País</label>
+        <input class="input" type="text" name="pais" list="paises" value="Guatemala" required>
+        <datalist id="paises">
+          <option value="Guatemala">
+          <option value="El Salvador">
+          <option value="Honduras">
+          <option value="Nicaragua">
+          <option value="Costa Rica">
+          <option value="México">
+          <option value="Otro">
+        </datalist>
+      </div>
+
+      <button class="btn-primary" type="submit">Continuar →</button>
+    </form>
+    {% endif %}
+
+    {# ══ PASO 2: CUENTA ADMIN ══ #}
+    {% if paso == 2 %}
+    <div class="logo-name">Cuenta de administrador</div>
+    <div class="subtitle">Esta cuenta tiene acceso total al sistema. Guarda bien la contraseña.</div>
+
+    <form method="POST" action="{{ url_for('setup_paso', paso=2) }}">
+      <div class="input-group">
+        <label class="input-label">Nombre del dueño</label>
+        <input class="input" type="text" name="dueno_nombre" placeholder="Ej: Victor Paxtor" required autofocus>
+      </div>
+
+      <div class="input-group">
+        <label class="input-label">Usuario</label>
+        <input class="input" type="text" name="username" autocomplete="username" placeholder="Ej: admin" required>
+      </div>
+
+      <div class="input-group">
+        <label class="input-label">Contraseña</label>
+        <input class="input" type="password" name="password" autocomplete="new-password" placeholder="Mínimo 6 caracteres" required>
+      </div>
+
+      <div class="input-group">
+        <label class="input-label">Correo</label>
+        <input class="input" type="email" name="email" placeholder="correo@ejemplo.com">
+        <div class="hint">Se usará para la recuperación de contraseña del administrador.</div>
+      </div>
+
+      <button class="btn-primary" type="submit">Continuar →</button>
+    </form>
+    <a class="back-link" href="{{ url_for('setup_paso', paso=1) }}">← Regresar</a>
+    {% endif %}
+
+    {# ══ PASO 3: CONFIGURACION INICIAL ══ #}
+    {% if paso == 3 %}
+    <div class="logo-name">Configuración inicial</div>
+    <div class="subtitle">Ajusta la moneda y el horario de atención de tu negocio.</div>
+
+    <form method="POST" action="{{ url_for('setup_paso', paso=3) }}">
+      <div class="input-group">
+        <label class="input-label">Moneda</label>
+        <input class="input" type="text" name="moneda" value="Q" maxlength="4" required autofocus>
+        <div class="hint">Simbolo que se usara en precios y reportes. Ej: Q, $</div>
+      </div>
+
+      <div class="input-row">
+        <div class="input-group">
+          <label class="input-label">Hora de apertura</label>
+          <input class="input" type="time" name="horario_apertura" value="08:00">
+        </div>
+        <div class="input-group">
+          <label class="input-label">Hora de cierre</label>
+          <input class="input" type="time" name="horario_cierre" value="18:00">
+        </div>
+      </div>
+
+      <div class="input-group">
+        <label class="input-label">Días laborales</label>
+        <div class="dias-grid">
+          {% for dia in ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'] %}
+          <label class="dia-check">
+            <input type="checkbox" name="dias_laborales" value="{{ dia }}" {% if dia != 'Domingo' %}checked{% endif %}>
+            {{ dia }}
+          </label>
+          {% endfor %}
+        </div>
+      </div>
+
+      <button class="btn-primary" type="submit">Continuar →</button>
+    </form>
+    <a class="back-link" href="{{ url_for('setup_paso', paso=2) }}">← Regresar</a>
+    {% endif %}
+
+    {# ══ PASO 4: PRIMER PRODUCTO ══ #}
+    {% if paso == 4 %}
+    <div class="logo-name">Tu primer producto</div>
+    <div class="subtitle">Opcional. Agrega un producto de ejemplo para ver como funciona el inventario, o sáltate este paso.</div>
+
+    <form method="POST" action="{{ url_for('setup_paso', paso=4) }}">
+      <div class="input-group">
+        <label class="input-label">Nombre del producto</label>
+        <input class="input" type="text" name="producto_nombre" placeholder="Ej: Licuadora Oster" autofocus>
+      </div>
+
+      <div class="input-row">
+        <div class="input-group">
+          <label class="input-label">Precio de venta</label>
+          <input class="input" type="number" step="0.01" min="0" name="producto_precio" placeholder="0.00">
+        </div>
+        <div class="input-group">
+          <label class="input-label">Costo</label>
+          <input class="input" type="number" step="0.01" min="0" name="producto_costo" placeholder="0.00">
+        </div>
+      </div>
+
+      <div class="input-group">
+        <label class="input-label">Cantidad inicial en stock</label>
+        <input class="input" type="number" step="1" min="0" name="producto_cantidad" placeholder="0">
+      </div>
+
+      <button class="btn-primary" type="submit">Guardar y continuar →</button>
+      <button class="btn-ghost" type="submit" name="accion" value="saltar" formnovalidate>Saltar este paso</button>
+    </form>
+    {% endif %}
+
+    {# ══ PASO 5: PRIMER CLIENTE ══ #}
+    {% if paso == 5 %}
+    <div class="logo-name">Tu primer cliente</div>
+    <div class="subtitle">Opcional. Registra un cliente de ejemplo, o sáltate este paso.</div>
+
+    <form method="POST" action="{{ url_for('setup_paso', paso=5) }}">
+      <div class="input-group">
+        <label class="input-label">Nombre del cliente</label>
+        <input class="input" type="text" name="cliente_nombre" placeholder="Ej: Sandra López" autofocus>
+      </div>
+
+      <div class="input-group">
+        <label class="input-label">Teléfono</label>
+        <input class="input" type="text" name="cliente_telefono" placeholder="Ej: 5555-5555">
+      </div>
+
+      <div class="input-group">
+        <label class="input-label">Correo</label>
+        <input class="input" type="email" name="cliente_email" placeholder="correo@ejemplo.com">
+      </div>
+
+      <button class="btn-primary" type="submit">Guardar y continuar →</button>
+      <button class="btn-ghost" type="submit" name="accion" value="saltar" formnovalidate>Saltar este paso</button>
+    </form>
+    {% endif %}
+
+    {# ══ PASO 6: LISTO ══ #}
+    {% if paso == 6 %}
+    <div class="check-icon">✓</div>
+    <div class="logo-name">Todo listo</div>
+    <div class="subtitle">Así quedó configurado tu negocio en Nimbo:</div>
+
+    <div class="resumen-list">
+      <div class="resumen-row">
+        <span class="resumen-key">Negocio</span>
+        <span class="resumen-val">{{ resumen.negocio_nombre or '—' }}</span>
+      </div>
+      <div class="resumen-row">
+        <span class="resumen-key">Tipo</span>
+        <span class="resumen-val">{{ resumen.negocio_tipo or '—' }}</span>
+      </div>
+      <div class="resumen-row">
+        <span class="resumen-key">País</span>
+        <span class="resumen-val">{{ resumen.negocio_pais or '—' }}</span>
+      </div>
+      <div class="resumen-row">
+        <span class="resumen-key">Administrador</span>
+        <span class="resumen-val">{{ resumen.dueno_nombre or '—' }}</span>
+      </div>
+      <div class="resumen-row">
+        <span class="resumen-key">Moneda</span>
+        <span class="resumen-val">{{ resumen.moneda or 'Q' }}</span>
+      </div>
+      <div class="resumen-row">
+        <span class="resumen-key">Horario</span>
+        <span class="resumen-val">
+          {% if resumen.horario_apertura or resumen.horario_cierre %}
+            {{ resumen.horario_apertura or '—' }} a {{ resumen.horario_cierre or '—' }}
+          {% else %}—{% endif %}
+        </span>
+      </div>
+      <div class="resumen-row">
+        <span class="resumen-key">Días laborales</span>
+        <span class="resumen-val">{{ resumen.dias_laborales.replace(',', ', ') if resumen.dias_laborales else '—' }}</span>
+      </div>
+      {% if resumen.producto_nombre %}
+      <div class="resumen-row">
+        <span class="resumen-key">Primer producto</span>
+        <span class="resumen-val">{{ resumen.producto_nombre }}</span>
+      </div>
+      {% endif %}
+      {% if resumen.cliente_nombre %}
+      <div class="resumen-row">
+        <span class="resumen-key">Primer cliente</span>
+        <span class="resumen-val">{{ resumen.cliente_nombre }}</span>
+      </div>
+      {% endif %}
+    </div>
+
+    <form method="POST" action="{{ url_for('setup_paso', paso=6) }}">
+      <button class="btn-primary" type="submit">Entrar al dashboard →</button>
+    </form>
+    {% endif %}
+
+  </div>
+</div>
+
+</body>
+</html>

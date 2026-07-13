@@ -1,0 +1,790 @@
+import tools
+from core.action_engine import ActionEngine
+from core.chat_context import obtener_historial_reciente, resumen_texto
+from openclaw_bridge import send_to_openclaw
+from google import genai
+import os
+import re
+
+_engine = ActionEngine()
+
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+_gemini = None
+if GEMINI_API_KEY:
+    _gemini = genai.Client(api_key=GEMINI_API_KEY)
+
+TRANSLATE_PROMPT = """Eres un traductor de comandos para un sistema de inventario.
+Convierte el mensaje del usuario a uno de estos comandos exactos:
+- busca [producto]
+- agrega [cantidad] [producto]
+- quita [cantidad] [producto]
+- cambia precio de [producto] a [precio]
+- elimina [producto]
+- inventario
+
+Si el mensaje usa una referencia ambigua (ej: "eso", "ese producto", "cuantos quedan?", "y ese otro")
+y hay contexto de conversacion reciente disponible, usalo para identificar a que producto se
+refiere y arma el comando con el nombre de producto correcto.
+
+Si el mensaje no es sobre inventario, responde: NINGUNO
+
+Mensaje: {message}
+Comando:"""
+
+def _translate(message: str, contexto: str = "") -> str:
+    if not _gemini:
+        return None
+    try:
+        prompt = TRANSLATE_PROMPT.format(message=message)
+        if contexto:
+            prompt = (
+                "Contexto de conversacion reciente (puede ser de dias anteriores):\n"
+                f"{contexto}\n\n{prompt}"
+            )
+        r = _gemini.models.generate_content(
+            model="gemini-2.5-flash-lite",
+            contents=prompt
+        )
+        cmd = r.text.strip().lower()
+        if cmd == "ninguno" or not cmd:
+            return None
+        return cmd
+    except:
+        return None
+
+
+CLARIFICACION_PROMPT = """Eres Nimbo, el asistente de un sistema de gestion para "Mi Cocina Electrodomesticos", una tienda de electrodomesticos y repuestos en Guatemala.
+
+El sistema puede: buscar y gestionar inventario/productos, registrar ventas, buscar y gestionar clientes, crear y dar seguimiento a ordenes de servicio tecnico (reparaciones), gestionar proveedores, ver contabilidad/gastos/balance, y generar contenido para redes sociales.
+
+El usuario escribio un mensaje que el sistema NO logro entender como una accion concreta. Tu trabajo es decidir si el usuario esta tratando de pedir algo relacionado al negocio pero lo expreso de forma vaga, confusa o incompleta.
+
+Si es asi, responde UNICAMENTE con una pregunta corta en espanol guatemalteco que ayude a aclarar que necesita, ofreciendo entre 2 y 4 opciones concretas. No agregues saludos ni explicaciones, solo la pregunta.
+
+Ejemplos:
+Mensaje: "no encuentro la cosa esa de la licuadora"
+Respuesta: ¿Buscas el repuesto de la licuadora o una orden de servicio?
+
+Mensaje: "cuanto tengo"
+Respuesta: ¿Quieres saber el inventario, el saldo del dia o el valor del inventario?
+
+Mensaje: "el cliente ese"
+Respuesta: ¿Cual cliente buscas? Puedo buscar por nombre o telefono
+
+Mensaje: "no se"
+Respuesta: ¿En que te puedo ayudar? Puedo gestionar inventario, ventas, clientes, reparaciones o generar contenido
+
+Si hay contexto de conversacion reciente disponible (puede ser de dias anteriores), usalo para hacer
+la pregunta de clarificacion mas especifica en vez de una generica (ej: si ayer se hablo de licuadoras
+y hoy el usuario escribe "y esa otra", pregunta directamente si se refiere a las licuadoras).
+
+Si el mensaje es claramente una pregunta de cultura general, un saludo, charla casual, o algo sin ninguna relacion con el negocio, responde exactamente: NINGUNO
+
+Mensaje del usuario: {message}
+Respuesta:"""
+
+def _analizar_intencion_vaga(message: str, contexto: str = "") -> str:
+    """Le pregunta a Gemini si el mensaje es una intencion de negocio expresada de forma vaga.
+    Retorna la pregunta de clarificacion en espanol, o None si no aplica."""
+    if not _gemini:
+        return None
+    try:
+        prompt = CLARIFICACION_PROMPT.format(message=message)
+        if contexto:
+            prompt = (
+                "Contexto de conversacion reciente (puede ser de dias anteriores):\n"
+                f"{contexto}\n\n{prompt}"
+            )
+        r = _gemini.models.generate_content(
+            model="gemini-2.5-flash-lite",
+            contents=prompt
+        )
+        texto = r.text.strip()
+        if not texto or texto.upper() == "NINGUNO":
+            return None
+        return texto
+    except:
+        return None
+
+
+def _intentar_detectar(message: str, role: str, context: dict, contexto_historial: str = ""):
+    """Corre deteccion directa (detectores) y, si falla, traduccion via Gemini.
+    Retorna (respuesta, context) si algo se detecto, o None si nada aplico."""
+    result = _engine.execute(message, role)
+    if result:
+        if str(result).startswith("PAGO_INICIO:"):
+            nombre = str(result).replace("PAGO_INICIO:", "").strip()
+            context = {"step": "pago_waiting_dia", "pago_nombre": nombre}
+            return f"¿Que dia del mes se paga {nombre}?", context
+
+        if str(result).startswith("VIDEO_INICIO:"):
+            partes = str(result).replace("VIDEO_INICIO:", "").split("|")
+            producto_id = partes[0]
+            nombre = partes[1]
+            foto = partes[2] if len(partes) > 2 else ""
+            descripcion = partes[3] if len(partes) > 3 else ""
+            context = {
+                "step": "video_waiting_estilo",
+                "video_producto_id": producto_id,
+                "video_nombre": nombre,
+                "video_foto": foto,
+                "video_descripcion": descripcion
+            }
+            tiene_foto = "Con foto del producto" if foto else "Sin foto (solo texto)"
+            return f"Video de {nombre}. {tiene_foto}.\nEstilo del video? (producto, promocional, tutorial, reel viral):", context
+
+        if str(result).startswith("SET_DESC_INICIO:"):
+            partes = str(result).replace("SET_DESC_INICIO:", "").split("|")
+            producto_id, nombre = partes[0], partes[1]
+            context = {"step": "desc_waiting_descripcion", "desc_producto_id": int(producto_id), "desc_nombre": nombre}
+            return f"Escribe la descripcion completa de {nombre}:", context
+
+        if str(result).startswith("SCRIPT_INICIO:"):
+            producto = str(result).replace("SCRIPT_INICIO:", "").strip()
+            context = {"step": "script_waiting_tono", "script_producto": producto}
+            return f"Script para video de '{producto}'. Que tono quieres? (energico, profesional, divertido, informativo, emotivo):", context
+
+        if str(result) == "PROGRAMACION_INICIO":
+            context = {"step": "prog_waiting_frecuencia"}
+            return "Cuantas veces al dia quieres publicar? (1, 2 o 3):", context
+
+        if str(result).startswith("PROVEEDOR_NUEVO:"):
+            partes = str(result).replace("PROVEEDOR_NUEVO:", "").split("|")
+            proveedor_id, nombre = partes[0], partes[1]
+            context = {"step": "proveedor_waiting_contacto", "proveedor_id": int(proveedor_id), "proveedor_nombre": nombre}
+            return f"Proveedor {nombre} registrado. Nombre del vendedor/contacto (o 'listo' para terminar):", context
+
+        if str(result).startswith("VENTA_INICIO:"):
+            partes = str(result).replace("VENTA_INICIO:", "").split("|")
+            # Puede venir con multiples productos separados por ;
+            if ";" in partes[0]:
+                # Multiples productos encontrados
+                opciones = partes[0].split(";")
+                context = {
+                    "step": "venta_waiting_seleccion",
+                    "venta_cantidad": int(partes[1]) if len(partes) > 1 else 1,
+                    "venta_opciones": opciones
+                }
+                lista = "\n".join([f"{i+1}. {op.split(':')[0]} - Q{op.split(':')[1]}" for i, op in enumerate(opciones)])
+                return f"Hay varios productos similares:\n{lista}\n\nEscribe el numero del producto:", context
+            else:
+                cantidad, producto, precio_unit, total, producto_id = partes
+                context = {
+                    "step": "venta_waiting_nombre",
+                    "venta_ctx": {
+                        "cantidad": int(cantidad),
+                        "producto": producto,
+                        "precio_unit": float(precio_unit),
+                        "total": float(total),
+                        "producto_id": int(producto_id)
+                    }
+                }
+                return f"Venta: {cantidad}x {producto} = Q{total}. Nombre del cliente (o 'sin nombre'):", context
+
+        if str(result).startswith("DOWNLOAD:"):
+            filename = str(result).replace("DOWNLOAD:", "").strip()
+            return f'Excel listo. <a href="/api/download/{filename}" download style="color:var(--accent)">⬇️ Descargar {filename}</a>', context
+
+        if str(result).startswith("NUEVA_ORDEN:"):
+            context = {"step": "service_waiting_cliente"}
+            return "Nombre del cliente:", context
+
+        if str(result).startswith("COTIZACION_INICIO:"):
+            cliente_nombre = str(result).replace("COTIZACION_INICIO:", "").strip()
+            if cliente_nombre:
+                from database.aronium import buscar_cliente_completo
+                clientes = buscar_cliente_completo(cliente_nombre)
+                if clientes:
+                    c = clientes[0]
+                    context = {
+                        "step": "cotizacion_waiting_producto",
+                        "cot_cliente_id": c["Id"],
+                        "cot_cliente_nombre": c["Nombre"],
+                        "cot_cliente_tel": c.get("Telefono", ""),
+                        "cot_items": []
+                    }
+                    return f"Cotizacion para {c['Nombre']}. Que producto quieres agregar? (o 'listo' para terminar)", context
+                context = {"step": "cotizacion_waiting_telefono", "cot_cliente_nombre": cliente_nombre.title(), "cot_items": []}
+                return f"Cliente nuevo: {cliente_nombre.title()}. Telefono (o 'sin telefono'):", context
+            context = {"step": "cotizacion_waiting_cliente", "cot_items": []}
+            return "Para que cliente es la cotizacion?", context
+
+        if "No encontre producto" in str(result):
+            m = re.search(r"agrega[r]?\s+(\d+)\s+(.+)", message.lower())
+            if not m:
+                translated = _translate(message, contexto_historial)
+                if translated:
+                    m = re.search(r"agrega[r]?\s+(\d+)\s+(.+)", translated.lower())
+            if m:
+                qty = int(m.group(1))
+                product_name = m.group(2).strip()
+                context = {"step": "waiting_price", "product_name": product_name, "quantity": qty}
+                return f"El producto '{product_name}' no existe. ¿A qué precio se vende? (en quetzales)", context
+        return result, context
+
+    translated = _translate(message, contexto_historial)
+    if translated:
+        result = _engine.execute(translated, role)
+        if result:
+            if "No encontre producto" in str(result):
+                m = re.search(r"agrega[r]?\s+(\d+)\s+(.+)", translated.lower())
+                if m:
+                    qty = int(m.group(1))
+                    product_name = m.group(2).strip()
+                    context = {"step": "waiting_price", "product_name": product_name, "quantity": qty}
+                    return f"El producto '{product_name}' no existe. ¿A qué precio se vende? (en quetzales)", context
+            return result, context
+
+    return None
+
+
+def _finalizar_cotizacion(context: dict):
+    """Registra la cotizacion, genera el PDF y arma los links de descarga/WhatsApp."""
+    import urllib.parse
+    from datetime import datetime
+    from database.aronium import crear_cotizacion
+    from services.pdf_cotizacion import generar_pdf_cotizacion
+
+    items = context.get("cot_items", [])
+    total = round(sum(i["subtotal"] for i in items), 2)
+    cliente_id = context.get("cot_cliente_id")
+    cliente_nombre = context.get("cot_cliente_nombre", "")
+    cliente_tel = context.get("cot_cliente_tel", "")
+
+    numero, fecha_vencimiento = crear_cotizacion(cliente_id, cliente_nombre, cliente_tel, items, total)
+
+    generar_pdf_cotizacion({
+        "numero": numero,
+        "cliente_nombre": cliente_nombre,
+        "cliente_tel": cliente_tel,
+        "items": items,
+        "total": total,
+        "fecha_creada": datetime.now().strftime("%Y-%m-%d"),
+        "fecha_vencimiento": fecha_vencimiento
+    })
+
+    resp = f"Cotizacion {numero} generada para {cliente_nombre} por Q{total}, valida hasta {fecha_vencimiento[:10]}.\n"
+    resp += f'<a href="/static/cotizaciones/{numero}.pdf" target="_blank" style="color:var(--accent)">📄 Descargar PDF</a>'
+
+    if cliente_tel:
+        detalle = "\n".join([f"- {i['cantidad']}x {i['nombre']} a Q{i['precio_unit']}" for i in items])
+        mensaje_wa = (f"Hola {cliente_nombre}, aqui tiene su cotizacion {numero} de Mi Cocina Electrodomesticos:\n\n"
+                      f"{detalle}\n\nTotal: Q{total}\nValida hasta: {fecha_vencimiento[:10]}\n\nGracias por su preferencia.")
+        tel = cliente_tel.replace("+", "").replace("-", "").replace(" ", "")
+        if not tel.startswith("502"):
+            tel = "502" + tel
+        link = f"https://wa.me/{tel}?text={urllib.parse.quote(mensaje_wa)}"
+        resp += f'<br><a href="{link}" target="_blank" style="color:var(--accent)">📱 Enviar por WhatsApp</a>'
+
+    return resp, {}
+
+
+def send(message: str, context: dict = None, role: str = "admin") -> tuple:
+    """
+    Retorna (respuesta, context_actualizado)
+    context es un dict con el estado de la conversacion
+    role controla que categorias de intent puede ejecutar el usuario (admin | empleado)
+    """
+    if context is None:
+        context = {}
+
+    # Contexto de conversaciones anteriores (hasta 10 mensajes / ~500 tokens, ver
+    # core/chat_context.py). Se calcula una sola vez por mensaje y se reutiliza en
+    # todos los llamados a Gemini/OpenClaw de esta funcion, para que Nimbo entienda
+    # referencias como "cuantas quedan?" aunque el tema se haya hablado dias antes.
+    contexto_historial = resumen_texto(obtener_historial_reciente())
+
+    step = context.get("step")
+
+    # Flujo de aclaracion de intencion vaga (ver _analizar_intencion_vaga)
+    if step == "clarificando":
+        original = context.get("original_message", "")
+        context = {}  # se limpia de inmediato: si esto tampoco se detecta, no se vuelve a preguntar
+
+        detectado = _intentar_detectar(message, role, context, contexto_historial)
+        if not detectado:
+            combinado = f"{original} {message}".strip()
+            detectado = _intentar_detectar(combinado, role, context, contexto_historial)
+        if detectado:
+            return detectado
+
+        # Ni la respuesta sola ni combinada con el mensaje original se detectaron:
+        # se responde directo (sin volver a preguntar) para evitar un loop de aclaraciones.
+        if role != "admin":
+            return ("No entendi esa instruccion. Si necesitas ayuda con algo fuera de "
+                    "inventario, ventas o clientes, contacta a un administrador."), context
+        return send_to_openclaw(combinado, contexto_historial), context
+
+    # Flujo de agregar pago fijo
+    if step == "pago_waiting_dia":
+        try:
+            dia = int(message.strip())
+            context["pago_dia"] = dia
+            context["step"] = "pago_waiting_frecuencia"
+            return f"¿Con que frecuencia? (mensual, quincenal, anual):", context
+        except:
+            return "Escribe solo el numero del dia. Ejemplo: 5", context
+
+    if step == "pago_waiting_frecuencia":
+        from database.aronium import agregar_pago_fijo
+        frecuencia = message.strip().lower()
+        nombre = context.get("pago_nombre", "")
+        dia = context.get("pago_dia", 1)
+        agregar_pago_fijo(nombre, frecuencia, dia)
+        context = {}
+        return f"Pago '{nombre}' registrado. Te recordare el dia {dia} de cada {frecuencia}.", context
+
+    # Flujo de generacion de video
+    if step == "video_waiting_estilo":
+        estilo = message.strip()
+        context["video_estilo"] = estilo
+        context["step"] = "video_waiting_texto"
+        return f"Texto o mensaje principal para el video (o 'automatico' para que Nimbo lo genere):", context
+
+    if step == "video_waiting_texto":
+        texto = message.strip()
+        nombre = context.get("video_nombre", "")
+        descripcion = context.get("video_descripcion", "")
+        estilo = context.get("video_estilo", "promocional")
+        foto = context.get("video_foto", "")
+        context = {}
+
+        if texto.lower() == "automatico":
+            texto = descripcion or nombre
+
+        prompt_final = f"Video {estilo} de {nombre} para Mi Cocina Electrodomesticos Guatemala. {texto}"
+
+        from services.video_gen import generar_video_producto
+        return f"Generando video de {nombre}, esto puede tardar 1-2 minutos...", {"step": "video_generando", "video_prompt": prompt_final, "video_foto": foto, "video_nombre": nombre}
+
+    if step == "video_generando":
+        from services.video_gen import generar_video_producto
+        prompt = context.get("video_prompt", "")
+        foto = context.get("video_foto", "")
+        nombre = context.get("video_nombre", "")
+        context = {}
+        ruta, error = generar_video_producto(nombre, prompt, foto if foto else None)
+        if error:
+            return f"Error generando video: {error}", context
+        return f'<video controls style="max-width:300px;border-radius:8px"><source src="{ruta}" type="video/mp4"></video><br>Video de {nombre} generado. <a href="{ruta}" download style="color:var(--accent)">⬇️ Descargar</a>', context
+
+    # Flujo de descripcion de producto
+    if step == "desc_waiting_descripcion":
+        descripcion = message.strip()
+        context["step"] = "desc_waiting_corta"
+        context["desc_descripcion"] = descripcion
+        return f"Descripcion corta (max 100 caracteres, para WhatsApp/redes):", context
+
+    if step == "desc_waiting_corta":
+        from database.aronium import set_descripcion_producto
+        corta = message.strip()[:100]
+        set_descripcion_producto(context["desc_producto_id"], context["desc_nombre"], context["desc_descripcion"], corta)
+        nombre = context["desc_nombre"]
+        context = {}
+        return f"Descripcion de {nombre} guardada correctamente.", context
+
+    # Flujo de script de video
+    if step == "script_waiting_tono":
+        context["script_tono"] = message.strip()
+        context["step"] = "script_waiting_duracion"
+        return "Duracion del video? (15, 30, 60 segundos o 1 minuto):", context
+
+    if step == "script_waiting_duracion":
+        context["script_duracion"] = message.strip()
+        context["step"] = "script_waiting_red"
+        return "Para que red social? (TikTok, Instagram, Facebook, todas):", context
+
+    if step == "script_waiting_red":
+        context["script_red"] = message.strip()
+        context["step"] = "script_waiting_objetivo"
+        return "Cual es el objetivo? (vender, informar, entretener, generar engagement):", context
+
+    if step == "script_waiting_objetivo":
+        from google import genai as _genai
+        import os
+        objetivo = message.strip()
+        producto = context.get("script_producto", "")
+        tono = context.get("script_tono", "profesional")
+        duracion = context.get("script_duracion", "30 segundos")
+        red = context.get("script_red", "Instagram")
+        context = {}
+        
+        gemini_key = os.environ.get("GEMINI_API_KEY", "")
+        if not gemini_key:
+            return "Gemini no configurado.", context
+        
+        cliente = _genai.Client(api_key=gemini_key)
+        prompt = f"""Eres experto en contenido viral para redes sociales en Guatemala.
+Crea un script completo para video de {duracion} para {red}.
+Producto: {producto}
+Tono: {tono}
+Objetivo: {objetivo}
+Negocio: Mi Cocina Electrodomesticos Guatemala
+
+El script debe incluir:
+- Gancho inicial (primeros 3 segundos)
+- Desarrollo del mensaje
+- Llamada a la accion final
+- Indicaciones de camara/escena entre parentesis
+- Texto en pantalla sugerido entre corchetes
+
+En espanol guatemalteco natural."""
+        
+        r = cliente.models.generate_content(model="gemini-2.5-flash-lite", contents=prompt)
+        return r.text, context
+
+    # Flujo de programacion de contenido
+    if step == "prog_waiting_frecuencia":
+        context["prog_frecuencia"] = message.strip()
+        context["step"] = "prog_waiting_horas"
+        frecuencia = message.strip()
+        if frecuencia == "1":
+            return "A que hora quieres publicar? (ej: 12pm):", context
+        elif frecuencia == "2":
+            return "A que horas? (ej: 9am y 6pm):", context
+        else:
+            return "A que horas? (ej: 9am, 1pm y 7pm):", context
+
+    if step == "prog_waiting_horas":
+        context["prog_horas"] = message.strip()
+        context["step"] = "prog_waiting_tipos"
+        return "Que tipos de contenido quieres alternar? (ej: productos, tips, promociones, testimonios):", context
+
+    if step == "prog_waiting_tipos":
+        from google import genai as _genai
+        import os
+        tipos = message.strip()
+        frecuencia = context.get("prog_frecuencia", "1")
+        horas = context.get("prog_horas", "12pm")
+        context = {}
+        
+        gemini_key = os.environ.get("GEMINI_API_KEY", "")
+        if not gemini_key:
+            return "Gemini no configurado.", context
+        
+        cliente = _genai.Client(api_key=gemini_key)
+        prompt = f"""Eres experto en marketing digital para Mi Cocina Electrodomesticos Guatemala.
+Crea un plan de publicacion semanal con estas especificaciones:
+- Frecuencia: {frecuencia} publicacion(es) por dia
+- Horarios: {horas}
+- Tipos de contenido: {tipos}
+
+Genera un calendario para 7 dias con:
+- Dia y hora
+- Red social sugerida
+- Tipo de contenido
+- Tema especifico sugerido
+- Formato (foto, video, carrusel, historia)
+
+En espanol, practico y realista para una tienda de electrodomesticos en Guatemala."""
+        
+        r = cliente.models.generate_content(model="gemini-2.5-flash-lite", contents=prompt)
+        return r.text, context
+
+    # Flujo de nuevo proveedor
+    if step == "proveedor_waiting_contacto":
+        if message.strip().lower() in ["listo", "no", "ninguno", "skip"]:
+            context = {}
+            return f"Proveedor guardado sin contacto.", context
+        context["contacto_nombre"] = message.strip().title()
+        context["step"] = "proveedor_waiting_contacto_wa"
+        return f"WhatsApp de {message.strip().title()} (o 'skip'):", context
+
+    if step == "proveedor_waiting_contacto_wa":
+        wa = message.strip()
+        if wa.lower() == "skip": wa = ""
+        context["step"] = "proveedor_waiting_contacto_cargo"
+        context["contacto_wa"] = wa
+        return "Cargo del contacto? (ej: Vendedor, Gerente, Representante):", context
+
+    if step == "proveedor_waiting_contacto_cargo":
+        from database.aronium import agregar_contacto_proveedor
+        cargo = message.strip().title()
+        agregar_contacto_proveedor(
+            context["proveedor_id"],
+            context["contacto_nombre"],
+            context.get("contacto_wa", ""),
+            cargo
+        )
+        nombre_prov = context["proveedor_nombre"]
+        context = {}
+        return f"Contacto registrado. Proveedor listo. Para agregar una orden de compra di: pedido a {nombre_prov}", context
+
+    # Flujo de venta con cliente
+    if step == "venta_waiting_seleccion":
+        try:
+            idx = int(message.strip()) - 1
+            opciones = context.get("venta_opciones", [])
+            if 0 <= idx < len(opciones):
+                op = opciones[idx].split(":")
+                nombre_prod = op[0].strip()
+                precio = float(op[1].strip()) if len(op) > 1 else 0
+                producto_id = int(op[2].strip()) if len(op) > 2 else 0
+                cantidad = context.get("venta_cantidad", 1)
+                total = precio * cantidad
+                context["venta_ctx"] = {"cantidad": cantidad, "producto": nombre_prod, "precio_unit": precio, "total": total, "producto_id": producto_id}
+                context["step"] = "venta_waiting_nombre"
+                return f"Venta: {cantidad}x {nombre_prod} = Q{total}. Nombre del cliente (o 'sin nombre'):", context
+        except:
+            pass
+        return "Por favor escribe el numero del producto:", context
+
+    if step == "venta_waiting_nombre":
+        msg = message.strip().lower()
+        if msg in ["sin nombre", "sin cliente", "contado", "cf", "consumidor final"]:
+            context["venta_cliente_nombre"] = "Consumidor Final"
+            context["venta_cliente_id"] = None
+            context["step"] = "venta_waiting_telefono"
+            return "Telefono del cliente (o 'sin telefono'):", context
+        from database.aronium import buscar_cliente_completo
+        clientes = buscar_cliente_completo(message.strip())
+        if clientes:
+            context["venta_cliente_id"] = clientes[0]["Id"]
+            context["venta_cliente_nombre"] = clientes[0]["Nombre"]
+            context["step"] = "venta_waiting_pago"
+            ctx = context.get("venta_ctx", {})
+            return f"Cliente encontrado: {clientes[0]['Nombre']}. Metodo de pago? (efectivo, tarjeta, transferencia):", context
+        context["venta_cliente_nombre"] = message.strip().title()
+        context["step"] = "venta_waiting_telefono"
+        return f"Cliente nuevo. Telefono (o 'sin telefono'):", context
+
+    if step == "venta_waiting_telefono":
+        tel = message.strip()
+        if tel.lower() in ["sin telefono", "no", "-"]:
+            tel = ""
+        context["venta_cliente_tel"] = tel
+        context["step"] = "venta_waiting_nit"
+        return "NIT del cliente (o 'CF' para consumidor final):", context
+
+    if step == "venta_waiting_nit":
+        nit = message.strip().upper()
+        if nit in ["CF", "C/F", "CONSUMIDOR FINAL", "NO", "-"]:
+            nit = "CF"
+        context["venta_cliente_nit"] = nit
+        nombre = context.get("venta_cliente_nombre", "")
+        tel = context.get("venta_cliente_tel", "")
+        if nombre != "Consumidor Final" and not context.get("venta_cliente_id"):
+            from database.aronium import crear_cliente_completo
+            cliente_id, _ = crear_cliente_completo(nombre, tel, nit=nit)
+            context["venta_cliente_id"] = cliente_id
+        context["step"] = "venta_waiting_pago"
+        return "Metodo de pago? (efectivo, tarjeta, transferencia):", context
+
+    if step == "venta_waiting_pago":
+        pago = message.strip().lower()
+        ctx = context.get("venta_ctx", {})
+        cliente_id = context.get("venta_cliente_id")
+        cliente_nombre = context.get("venta_cliente_nombre", "Consumidor Final")
+        cliente_tel = context.get("venta_cliente_tel", "")
+
+        from database.aronium import nimbo_connect
+        from datetime import datetime
+        conn = nimbo_connect()
+        cur = conn.cursor()
+        mes = datetime.now().month
+        trimestre = (mes - 1) // 3 + 1
+        anio = datetime.now().year
+        cur.execute(
+            "INSERT INTO Venta (ClienteId, Descripcion, Total, Mes, Trimestre, Anio) VALUES (?,?,?,?,?,?)",
+            (cliente_id, f"{ctx['cantidad']}x {ctx['producto']} a Q{ctx['precio_unit']}", ctx['total'], mes, trimestre, anio)
+        )
+        venta_id = cur.lastrowid
+        if cliente_id:
+            cur.execute("UPDATE Cliente SET UltimaCompra=? WHERE Id=?", (datetime.now().isoformat(), cliente_id))
+        conn.commit()
+        conn.close()
+
+        factura_opts = ""
+        if cliente_tel:
+            factura_opts = f"\nFactura para {cliente_nombre}. Como enviarla? (whatsapp, imprimir, ninguna)"
+            context = {"step": "venta_waiting_factura", "venta_id": venta_id, "cliente_tel": cliente_tel, "cliente_nombre": cliente_nombre, "venta_ctx": ctx, "pago": pago}
+            return f"Venta #{venta_id} registrada. {ctx['cantidad']}x {ctx['producto']} = Q{ctx['total']}. Pago: {pago}. Cliente: {cliente_nombre}.{factura_opts}", context
+        
+        context = {}
+        return f"Venta #{venta_id} registrada. {ctx['cantidad']}x {ctx['producto']} = Q{ctx['total']}. Pago: {pago}. Cliente: {cliente_nombre}.", context
+
+    if step == "venta_waiting_factura":
+        opcion = message.strip().lower()
+        cliente_tel = context.get("cliente_tel", "")
+        cliente_nombre = context.get("cliente_nombre", "")
+        ctx = context.get("venta_ctx", {})
+        venta_id = context.get("venta_id", "")
+        pago = context.get("pago", "efectivo")
+        context = {}
+        if opcion in ["whatsapp", "wa", "wapp"]:
+            from services.whatsapp import enviar_factura_whatsapp
+            items = [f"{ctx['cantidad']}x {ctx['producto']} a Q{ctx['precio_unit']}"]
+            ok, msg = enviar_factura_whatsapp(cliente_tel, cliente_nombre, items, ctx['total'], pago)
+            if ok:
+                return f"Factura enviada por WhatsApp a {cliente_nombre} ({cliente_tel}).", context
+            else:
+                return f"No se pudo enviar por WhatsApp: {msg}. Intenta manualmente.", context
+        elif opcion in ["imprimir", "print", "impresora"]:
+            return "Funcion de impresion proximamente disponible.", context
+        else:
+            return "Listo. Venta completada sin enviar factura.", context
+
+    # Flujo de nueva orden de servicio
+    if step == "service_waiting_cliente":
+        context["cliente_nombre"] = message.strip()
+        context["step"] = "service_waiting_telefono"
+        return "Telefono del cliente:", context
+
+    if step == "service_waiting_telefono":
+        context["cliente_telefono"] = message.strip()
+        context["step"] = "service_waiting_equipo"
+        return "Que equipo trajo? (ej: Licuadora, Cafetera, Olla):", context
+
+    if step == "service_waiting_equipo":
+        context["equipo"] = message.strip()
+        context["step"] = "service_waiting_marca"
+        return "Marca y modelo:", context
+
+    if step == "service_waiting_marca":
+        context["marca"] = message.strip()
+        context["step"] = "service_waiting_problema"
+        return "Cual es el problema o falla que reporta el cliente?:", context
+
+    if step == "service_waiting_problema":
+        from database.aronium import crear_cliente, crear_orden
+        problema = message.strip()
+        cliente_id = crear_cliente(context["cliente_nombre"], context.get("cliente_telefono",""))
+        marca_modelo = context["marca"].split(" ", 1)
+        marca = marca_modelo[0]
+        modelo = marca_modelo[1] if len(marca_modelo) > 1 else ""
+        numero = crear_orden(cliente_id, context["equipo"], marca, modelo, problema)
+        ctx = {}
+        return "Orden " + numero + " creada. Cliente: " + context["cliente_nombre"] + ". Equipo: " + context["equipo"] + " " + context["marca"] + ". Problema: " + problema, ctx
+
+    # Flujo de nueva cotizacion
+    if step == "cotizacion_waiting_cliente":
+        from database.aronium import buscar_cliente_completo
+        nombre = message.strip()
+        clientes = buscar_cliente_completo(nombre)
+        if clientes:
+            c = clientes[0]
+            context["cot_cliente_id"] = c["Id"]
+            context["cot_cliente_nombre"] = c["Nombre"]
+            context["cot_cliente_tel"] = c.get("Telefono", "")
+            context["step"] = "cotizacion_waiting_producto"
+            return f"Cliente encontrado: {c['Nombre']}. Que producto quieres agregar? (o 'listo' para terminar)", context
+        context["cot_cliente_nombre"] = nombre.title()
+        context["step"] = "cotizacion_waiting_telefono"
+        return f"Cliente nuevo. Telefono de {nombre.title()} (o 'sin telefono'):", context
+
+    if step == "cotizacion_waiting_telefono":
+        from database.aronium import crear_cliente_completo
+        tel = message.strip()
+        if tel.lower() in ["sin telefono", "no", "-"]:
+            tel = ""
+        cliente_id, _ = crear_cliente_completo(context["cot_cliente_nombre"], tel)
+        context["cot_cliente_id"] = cliente_id
+        context["cot_cliente_tel"] = tel
+        context["step"] = "cotizacion_waiting_producto"
+        return "Que producto quieres agregar? (o 'listo' para terminar)", context
+
+    if step == "cotizacion_waiting_producto":
+        msg = message.strip().lower()
+        if msg in ["listo", "ya", "no mas", "no más", "terminar", "fin"]:
+            items = context.get("cot_items", [])
+            if not items:
+                return "Agrega al menos un producto antes de terminar.", context
+            return _finalizar_cotizacion(context)
+        from database.aronium import get_products
+        productos = get_products(search=message.strip())
+        if not productos:
+            return f"No encontre '{message.strip()}' en inventario. Intenta con otro nombre, o escribe 'listo' para terminar.", context
+        if len(productos) > 1:
+            context["cot_opciones"] = [{"id": p["Id"], "nombre": p["Name"], "precio": p["Price"]} for p in productos[:5]]
+            context["step"] = "cotizacion_waiting_seleccion"
+            lista = "\n".join([f"{i+1}. {p['nombre']} - Q{p['precio']}" for i, p in enumerate(context["cot_opciones"])])
+            return f"Varios productos similares:\n{lista}\n\nEscribe el numero:", context
+        p = productos[0]
+        context["cot_pendiente"] = {"id": p["Id"], "nombre": p["Name"], "precio": p["Price"]}
+        context["step"] = "cotizacion_waiting_cantidad"
+        return f"Cuantas unidades de {p['Name']}?", context
+
+    if step == "cotizacion_waiting_seleccion":
+        try:
+            idx = int(message.strip()) - 1
+            opciones = context.get("cot_opciones", [])
+            if 0 <= idx < len(opciones):
+                context["cot_pendiente"] = opciones[idx]
+                context["step"] = "cotizacion_waiting_cantidad"
+                return f"Cuantas unidades de {opciones[idx]['nombre']}?", context
+        except:
+            pass
+        return "Por favor escribe el numero del producto:", context
+
+    if step == "cotizacion_waiting_cantidad":
+        try:
+            cantidad = float(message.strip())
+            if cantidad <= 0:
+                raise ValueError()
+        except:
+            return "Escribe solo la cantidad en numeros. Ejemplo: 2", context
+        p = context.get("cot_pendiente", {})
+        subtotal = round(p["precio"] * cantidad, 2)
+        items = context.get("cot_items", [])
+        items.append({
+            "producto_id": p["id"], "nombre": p["nombre"],
+            "cantidad": cantidad, "precio_unit": p["precio"], "subtotal": subtotal
+        })
+        context["cot_items"] = items
+        context.pop("cot_pendiente", None)
+        context["step"] = "cotizacion_waiting_producto"
+        return f"Agregado: {cantidad}x {p['nombre']} = Q{subtotal}. Otro producto? (nombre o 'listo' para terminar)", context
+
+    # Si hay un flujo activo de creacion de producto
+    if step == "waiting_price":
+        try:
+            price = float(message.strip().replace("Q","").replace("q","").strip())
+            context["price"] = price
+            context["step"] = "waiting_cost"
+            return f"¿Cuál es el costo de {context['product_name']}?", context
+        except:
+            return "Por favor escribe solo el precio en números. Ej: 25", context
+
+    if step == "waiting_cost":
+        try:
+            cost = float(message.strip().replace("Q","").replace("q","").strip())
+            from database.aronium import connect, add_stock
+            name = context["product_name"].title()
+            price = context["price"]
+            qty = context.get("quantity", 0)
+            conn = connect()
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO Product (Name, Code, Price, Cost, IsEnabled) VALUES (?, ?, ?, ?, 1)",
+                (name, "", price, cost)
+            )
+            conn.commit()
+            product_id = cur.lastrowid
+            conn.close()
+            if qty > 0:
+                add_stock(product_id, qty)
+            context = {}
+            return f"Producto '{name}' creado con {qty} unidades. Precio: Q{price}, Costo: Q{cost}.", context
+        except Exception as e:
+            context = {}
+            return f"Error al crear producto: {e}", context
+
+    # Intento 1 y 2: deteccion directa + traduccion Gemini
+    detectado = _intentar_detectar(message, role, context, contexto_historial)
+    if detectado:
+        return detectado
+
+    # Intento 3: el mensaje no coincidio con ningun intent. Antes de mandarlo a
+    # OpenClaw, se analiza si es una intencion de negocio expresada de forma vaga
+    # (ver CLARIFICACION_PROMPT). Si Gemini genera una pregunta de clarificacion,
+    # se guarda el mensaje original en el contexto y se le pregunta al usuario.
+    pregunta = _analizar_intencion_vaga(message, contexto_historial)
+    if pregunta:
+        context = {"step": "clarificando", "original_message": message}
+        return pregunta, context
+
+    # Intento 4: OpenClaw
+    if role != "admin":
+        return ("No entendi esa instruccion. Si necesitas ayuda con algo fuera de "
+                "inventario, ventas o clientes, contacta a un administrador."), context
+    return send_to_openclaw(message, contexto_historial), context

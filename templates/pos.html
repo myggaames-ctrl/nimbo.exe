@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Mi Cocina POS</title>
+
+<style>
+
+body{
+    margin:0;
+    font-family:Arial;
+    background:#202124;
+    color:white;
+}
+
+header{
+    background:#111;
+    padding:15px;
+    font-size:22px;
+}
+
+.container{
+    padding:20px;
+}
+
+input{
+
+    width:100%;
+    font-size:28px;
+    padding:15px;
+}
+
+table{
+
+    width:100%;
+    margin-top:20px;
+    border-collapse:collapse;
+}
+
+th,td{
+
+    padding:10px;
+    border-bottom:1px solid #555;
+}
+
+.total{
+
+    text-align:right;
+    font-size:32px;
+    margin-top:20px;
+}
+
+button{
+
+    font-size:22px;
+    padding:15px 25px;
+    margin-top:20px;
+    margin-right:10px;
+}
+
+</style>
+
+</head>
+
+<body>
+
+<header>
+
+Mi Cocina POS
+
+</header>
+
+<div class="container">
+
+<input
+id="barcode"
+placeholder="Escanee código de barras..."
+autocomplete="off"
+>
+
+<table>
+
+<thead>
+
+<tr>
+
+<th>Producto</th>
+
+<th>Cantidad</th>
+
+<th>Precio</th>
+
+<th>Total</th>
+
+</tr>
+
+</thead>
+
+<tbody id="cart">
+
+</tbody>
+
+</table>
+
+<div class="total">
+
+TOTAL:
+
+Q<span id="total">0.00</span>
+
+</div>
+
+<button>
+
+Cobrar
+
+</button>
+
+<button>
+
+Cancelar
+
+</button>
+
+</div>
+<script>
+
+const input = document.getElementById("barcode");
+const cart = document.getElementById("cart");
+const total = document.getElementById("total");
+
+// Carrito en memoria
+const carrito = {};
+
+input.focus();
+
+input.addEventListener("keydown", async function(e){
+
+    if(e.key !== "Enter") return;
+
+    let codigo = input.value.trim();
+
+    if(codigo=="") return;
+
+    const resp = await fetch("/api/inventory/search?barcode="+codigo);
+
+    if(!resp.ok){
+        alert("Producto no encontrado");
+        input.value="";
+        input.focus();
+        return;
+    }
+
+    const data = await resp.json();
+
+    // ¿Ya existe?
+    if(carrito[data.Id]){
+
+        carrito[data.Id].cantidad++;
+
+    }else{
+
+        carrito[data.Id]={
+            ...data,
+            cantidad:1
+        };
+
+    }
+
+    dibujarCarrito();
+
+    input.value="";
+
+    input.focus();
+
+});
+
+function dibujarCarrito(){
+
+    cart.innerHTML="";
+
+    let suma=0;
+
+    Object.values(carrito).forEach(p=>{
+
+        let subtotal=p.cantidad*p.Price;
+
+        suma+=subtotal;
+
+        cart.innerHTML+=`
+        <tr>
+            <td>${p.Name}</td>
+            <td>${p.cantidad}</td>
+            <td>Q${p.Price.toFixed(2)}</td>
+            <td>Q${subtotal.toFixed(2)}</td>
+        </tr>
+        `;
+
+    });
+
+    total.innerText=suma.toFixed(2);
+
+}
+
+</script>
+
+</body>
+
+</html>
