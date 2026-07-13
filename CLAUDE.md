@@ -275,6 +275,51 @@ Usuario escribe mensaje
     Gemini no esta configurado, sin crear nada.
   - Detector core/detectors/combo_detector.py + herramienta tools/combo_tool.py.
     Admin-only (categoria "combo" no esta en CATEGORIAS_EMPLEADO de core/action_engine.py).
+- Unidades de medida: tabla UnidadMedida en nimbo.db, 1 fila por (ProductoId de Aronium,
+  UnidadBase) - UnidadBase es el nombre de la presentacion (docena/caja/par/paquete/trio/
+  cuarteto), CantidadPorUnidad cuantas unidades base equivale, PrecioUnitario el precio
+  individual al momento de configurar (referencia) y PrecioPorUnidad el precio real de esa
+  presentacion (puede tener descuento por volumen, ej. docena Q1000 vs 12x Q95=Q1140).
+  - "[producto] se vende por [unidad] de [N]" / "[producto] vienen en [unidad] de [N]"
+    configura CantidadPorUnidad=N sin precio especial (PrecioPorUnidad = precio individual
+    x N, sin descuento). "[producto] se vende por [unidad] [N] unidades precio Q[P]"
+    configura ademas un precio especial. "[producto] se vende por [unidad]" (sin numero)
+    solo funciona para unidades con cantidad implicita conocida (par=2, docena=12, trio=3,
+    cuarteto=4 - ver UNIDADES_CANTIDAD_DEFAULT en tools/unidad_medida_tool.py); para
+    cualquier otra unidad pide que se especifique la cantidad. Admin-only
+    (unidadmedida.configurar esta en INTENTS_SOLO_ADMIN de core/action_engine.py, aunque
+    la categoria "unidadmedida" si es de empleado para vender/listar).
+  - "vendi N [unidad] de [producto]" (ej. "vendi 2 docenas de cuchillas") reutiliza el
+    mismo flujo conversacional de venta simple del chat (VENTA_INICIO -> venta_waiting_nombre
+    -> ... -> venta_waiting_pago en core/nimbo.py) que la venta normal por unidad -
+    tools/unidad_medida_tool.py.vender_por_unidad_tool calcula la cantidad real en
+    unidades base (cantidad_medida x CantidadPorUnidad), descuenta ese stock de una vez
+    (igual que venta.registrar) y arma el marcador VENTA_INICIO con el PrecioPorUnidad
+    como "precio unitario" y el nombre del producto con la presentacion entre parentesis
+    (ej. "Cuchilla oster original (docena)") para que quede claro en el ticket/resumen/
+    garantia que no es precio por pieza. Como reutiliza el flujo normal, hereda gratis los
+    descuentos (Descuento tipo producto matchea por ProductoId igual que siempre) y la
+    garantia automatica (una por producto_id real, sin importar la presentacion).
+    Solo reconoce las palabras de unidad en UNIDADES_RECONOCIDAS de
+    core/detectors/unidad_medida_detector.py (docena/caja/par/paquete/trio/cuarteto,
+    singular o plural) - una unidad configurada con otro nombre no se reconoce al vender
+    y hay que agregar la palabra a esa lista. Singular/plural ("docena" al configurar vs
+    "docenas" al vender) se resuelve con _singularizar() en tools/unidad_medida_tool.py,
+    no con el CommandNormalizer (que corrige typos por similitud, no gramatica).
+    Si no se especifica ninguna unidad, "vendi N producto" sigue el flujo normal de
+    venta.registrar sin cambios.
+  - "ver unidades de medida" lista todas las configuradas.
+  - Al mostrar un producto (core/responses.py, busqueda/inventario) se agrega una linea
+    "Equivalente: X unidad(es)" por cada UnidadMedida configurada para ese producto,
+    calculada como Stock / CantidadPorUnidad. Para que esto funcione en la lista completa
+    de inventario tambien se agrego Product.Id al SELECT de InventoryService.list() en
+    services/inventory.py (antes solo lo traia InventoryService.search(), que delega en
+    database.aronium.get_products()).
+  - Se aprovecho para corregir un bug preexistente en core/nimbo.py venta_waiting_seleccion
+    (el paso donde se elige un producto entre varios resultados similares al vender): nunca
+    descontaba stock, sin importar el flujo. Ahora descuenta cantidad x CantidadPorUnidad
+    (4to campo opcional en cada opcion de venta_opciones, ausente = 1 para una venta normal
+    por unidad) y valida que haya stock suficiente antes de continuar.
 
 ## Tablas nimbo.db
 Cliente, OrdenServicio, HistorialOrden, Kardex, StockMinimo, ProductoFoto, ProductoInfo,
@@ -282,7 +327,7 @@ Venta, ResumenTrimestral, PagoFijo, RecordatorioPersonal, ChatHistorial,
 Gasto, ResumenContable, Proveedor, ContactoProveedor, ProductoProveedor,
 OrdenCompra, ItemOrdenCompra, HistorialPrecio, Usuario, PasswordResetToken, Configuracion,
 Cotizacion, CajaTurno, MovimientoCaja, ItemCarrito, Descuento, GarantiaProducto, GarantiaVenta,
-ProductoCombo, ItemCombo
+ProductoCombo, ItemCombo, UnidadMedida
 
 ## Variables de entorno (.env)
 GEMINI_API_KEY, FB_PAGE_TOKEN, FB_PAGE_ID, WA_TOKEN, WA_PHONE_ID, IG_ACCOUNT_ID,

@@ -615,7 +615,19 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
                 nombre_prod = op[0].strip()
                 precio = float(op[1].strip()) if len(op) > 1 else 0
                 producto_id = int(op[2].strip()) if len(op) > 2 else 0
+                # 4to campo opcional: cuantas unidades base representa cada unidad de
+                # medida (ej. 12 si es una docena). Ausente = 1 (venta por unidad simple).
+                cantidad_por_unidad = float(op[3].strip()) if len(op) > 3 else 1
                 cantidad = context.get("venta_cantidad", 1)
+                cantidad_base = cantidad * cantidad_por_unidad
+
+                from database.aronium import get_product_by_id, remove_stock
+                producto = get_product_by_id(producto_id)
+                stock = producto["Stock"] if producto else 0
+                if stock < cantidad_base:
+                    return f"Stock insuficiente. {nombre_prod} solo tiene {int(stock)} unidades disponibles. Escribe el numero de otro producto:", context
+                remove_stock(producto_id, cantidad_base, razon="Venta")
+
                 total = precio * cantidad
                 context["venta_ctx"] = {"cantidad": cantidad, "producto": nombre_prod, "precio_unit": precio, "total": total, "producto_id": producto_id}
                 context["step"] = "venta_waiting_nombre"

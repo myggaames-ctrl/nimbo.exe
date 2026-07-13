@@ -5,13 +5,15 @@ from core.tool_registry import get
 from core.intent_detector import IntentDetector
 
 # Categorias de intent (prefijo antes del punto) permitidas para el rol empleado.
-# Todo lo demas (proveedor, contabilidad, contenido, reporte, evento, service, budget, windows) es solo admin.
-CATEGORIAS_EMPLEADO = {"inventory", "venta", "cliente", "customer", "caja"}
+# Todo lo demas (proveedor, contabilidad, contenido, reporte, evento, service, budget, windows,
+# descuento, garantia, combo) es solo admin.
+CATEGORIAS_EMPLEADO = {"inventory", "venta", "cliente", "customer", "caja", "unidadmedida"}
 
 # Intents especificos que siguen siendo admin-only aunque su categoria este permitida
 # para empleados (ej. caja es de empleado, pero retirar efectivo o anular un turno es
-# solo de admin).
-INTENTS_SOLO_ADMIN = {"caja.retirar", "caja.anular"}
+# solo de admin; unidadmedida es de empleado para vender/ver, pero configurar precios
+# y equivalencias por unidad es una decision de precios, solo de admin).
+INTENTS_SOLO_ADMIN = {"caja.retirar", "caja.anular", "unidadmedida.configurar"}
 
 MENSAJE_SIN_PERMISO = "No tienes permiso para realizar esa accion. Contacta a un administrador."
 

@@ -1241,6 +1241,79 @@ def vender_combo(combo_id, cliente_id=None, cliente_nombre="Consumidor Final", c
     }
 
 
+# ── UNIDADES DE MEDIDA ────────────────────────────────
+
+def init_unidades_medida():
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS UnidadMedida (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ProductoId INTEGER,
+            ProductoNombre TEXT,
+            UnidadBase TEXT,
+            CantidadPorUnidad NUMERIC DEFAULT 1,
+            PrecioUnitario NUMERIC,
+            PrecioPorUnidad NUMERIC,
+            Activo INTEGER DEFAULT 1,
+            FechaCreado DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def set_unidad_medida(producto_id, producto_nombre, unidad_base, cantidad_por_unidad,
+                       precio_unitario, precio_por_unidad=None):
+    """Configura (crea o actualiza) una unidad de medida para un producto. Si no se
+    da un precio especial para la unidad, se calcula multiplicando el precio
+    individual por la cantidad (sin descuento por volumen)."""
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    precio_final = round(precio_por_unidad, 2) if precio_por_unidad is not None else round(precio_unitario * cantidad_por_unidad, 2)
+    cur.execute("SELECT Id FROM UnidadMedida WHERE ProductoId=? AND UnidadBase=?", (producto_id, unidad_base))
+    existente = cur.fetchone()
+    if existente:
+        cur.execute("""UPDATE UnidadMedida SET CantidadPorUnidad=?, PrecioUnitario=?, PrecioPorUnidad=?,
+            Activo=1 WHERE Id=?""", (cantidad_por_unidad, precio_unitario, precio_final, existente["Id"]))
+    else:
+        cur.execute("""INSERT INTO UnidadMedida
+            (ProductoId, ProductoNombre, UnidadBase, CantidadPorUnidad, PrecioUnitario, PrecioPorUnidad)
+            VALUES (?,?,?,?,?,?)""",
+            (producto_id, producto_nombre, unidad_base, cantidad_por_unidad, precio_unitario, precio_final))
+    conn.commit()
+    conn.close()
+    return precio_final
+
+
+def get_unidad_medida(producto_id, unidad_base):
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM UnidadMedida WHERE ProductoId=? AND UnidadBase=? AND Activo=1",
+        (producto_id, unidad_base))
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_unidades_medida_producto(producto_id):
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM UnidadMedida WHERE ProductoId=? AND Activo=1", (producto_id,))
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+def get_todas_unidades_medida():
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM UnidadMedida WHERE Activo=1 ORDER BY ProductoNombre, UnidadBase")
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
 # ── CAJA REGISTRADORA ─────────────────────────────────
 
 DENOMINACIONES = [200, 100, 50, 20, 10, 5, 1]

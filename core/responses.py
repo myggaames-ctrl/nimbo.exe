@@ -6,12 +6,26 @@ Nimbo AI
 
 def product(product):
 
-    return f"""• {product['Name']}
+    texto = f"""• {product['Name']}
 Código: {product['Code']}
 Precio: Q{product['Price']}
 Costo: Q{product['Cost']}
 Existencias: {product['Stock']}
 """
+
+    if product.get("Id") is not None:
+        from database.aronium import get_unidades_medida_producto
+        unidades = get_unidades_medida_producto(product["Id"])
+        if unidades:
+            stock = product.get("Stock") or 0
+            equivalentes = [
+                f"{stock / u['CantidadPorUnidad']:.1f} {u['UnidadBase']}(s)"
+                for u in unidades if u.get("CantidadPorUnidad")
+            ]
+            if equivalentes:
+                texto += f"Equivalente: {', '.join(equivalentes)}\n"
+
+    return texto
 
 
 def products(items):

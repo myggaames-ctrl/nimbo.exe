@@ -19,6 +19,7 @@ from core.detectors.caja_detector import CajaDetector
 from core.detectors.descuento_detector import DescuentoDetector
 from core.detectors.garantia_detector import GarantiaDetector
 from core.detectors.combo_detector import ComboDetector
+from core.detectors.unidad_medida_detector import UnidadMedidaDetector
 from core.command_normalizer import CommandNormalizer
 
 
@@ -34,6 +35,7 @@ class IntentDetector:
             DescuentoDetector(),
             GarantiaDetector(),
             ComboDetector(),
+            UnidadMedidaDetector(),
             CotizacionDetector(),
             VentaDetector(),
             ProveedorDetector(),

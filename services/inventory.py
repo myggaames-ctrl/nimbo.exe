@@ -65,6 +65,7 @@ class InventoryService:
         cur.execute("""
 
             SELECT
+                Product.Id,
                 Name,
                 Code,
                 Price,

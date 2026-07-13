@@ -29,6 +29,8 @@ VOCABULARIO = [
     "billete", "billetes", "moneda", "monedas", "carrito", "ticket", "sencillo",
     "descuento", "descuentos", "temporada", "porciento",
     "nuestra", "nuestro", "propia", "propio", "combo", "combos", "kit", "kits",
+    "docena", "docenas", "cajas", "par", "pares", "paquete", "paquetes",
+    "trio", "trios", "cuarteto", "cuartetos", "vienen", "unidad", "unidades",
     # electrodomesticos y repuestos comunes en la tienda
     "licuadora", "licuadoras", "refrigerador", "refrigeradores", "cuchilla", "cuchillas",
     "empaque", "empaques", "adaptador", "adaptadores", "regulador", "reguladores",

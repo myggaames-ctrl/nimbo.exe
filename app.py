@@ -65,6 +65,9 @@ init_garantias()
 from database.aronium import init_combos
 init_combos()
 
+from database.aronium import init_unidades_medida
+init_unidades_medida()
+
 # Instalaciones que ya tenian usuarios antes de que existiera el wizard de
 # onboarding (o que lo completaron con el /setup viejo de un solo paso) se
 # marcan como completas automaticamente, para no forzar el wizard nuevo.
