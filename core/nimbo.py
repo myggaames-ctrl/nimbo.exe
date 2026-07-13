@@ -281,6 +281,30 @@ def _intentar_detectar(message: str, role: str, context: dict, contexto_historia
     return None
 
 
+def _registrar_venta_chat(cliente_id, descripcion, total):
+    """Inserta la Venta del flujo de venta simple del chat (un solo producto) y
+    actualiza la ultima compra del cliente. Usado tanto por el pago de un solo
+    metodo como por el pago mixto (efectivo + tarjeta)."""
+    from database.aronium import nimbo_connect
+    from datetime import datetime
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    now = datetime.now()
+    mes = now.month
+    trimestre = (mes - 1) // 3 + 1
+    anio = now.year
+    cur.execute(
+        "INSERT INTO Venta (ClienteId, Descripcion, Total, Mes, Trimestre, Anio) VALUES (?,?,?,?,?,?)",
+        (cliente_id, descripcion, total, mes, trimestre, anio)
+    )
+    venta_id = cur.lastrowid
+    if cliente_id:
+        cur.execute("UPDATE Cliente SET UltimaCompra=? WHERE Id=?", (now.isoformat(), cliente_id))
+    conn.commit()
+    conn.close()
+    return venta_id
+
+
 def _finalizar_cotizacion(context: dict):
     """Registra la cotizacion, genera el PDF y arma los links de descarga/WhatsApp."""
     import urllib.parse
@@ -599,7 +623,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
             context["venta_cliente_nombre"] = clientes[0]["Nombre"]
             context["step"] = "venta_waiting_pago"
             ctx = context.get("venta_ctx", {})
-            return f"Cliente encontrado: {clientes[0]['Nombre']}. Metodo de pago? (efectivo, tarjeta, transferencia):", context
+            return f"Cliente encontrado: {clientes[0]['Nombre']}. Metodo de pago? (efectivo, tarjeta, transferencia, mixto):", context
         context["venta_cliente_nombre"] = message.strip().title()
         context["step"] = "venta_waiting_telefono"
         return f"Cliente nuevo. Telefono (o 'sin telefono'):", context
@@ -624,7 +648,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
             cliente_id, _ = crear_cliente_completo(nombre, tel, nit=nit)
             context["venta_cliente_id"] = cliente_id
         context["step"] = "venta_waiting_pago"
-        return "Metodo de pago? (efectivo, tarjeta, transferencia):", context
+        return "Metodo de pago? (efectivo, tarjeta, transferencia, mixto):", context
 
     if step == "venta_waiting_pago":
         pago = message.strip().lower()
@@ -633,8 +657,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         cliente_nombre = context.get("venta_cliente_nombre", "Consumidor Final")
         cliente_tel = context.get("venta_cliente_tel", "")
 
-        from database.aronium import nimbo_connect, calcular_descuento
-        from datetime import datetime
+        from database.aronium import calcular_descuento
 
         descuento = calcular_descuento(
             cliente_id=cliente_id,
@@ -643,24 +666,23 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         )
         total_final = round(ctx["total"] - descuento["monto_descuento"], 2) if descuento else ctx["total"]
 
+        if pago in ["mixto", "mixta", "combinado", "los dos", "efectivo y tarjeta"]:
+            context = {
+                "step": "venta_waiting_pago_mixto_efectivo",
+                "venta_ctx": ctx,
+                "venta_cliente_id": cliente_id,
+                "venta_cliente_nombre": cliente_nombre,
+                "venta_cliente_tel": cliente_tel,
+                "venta_total_final": total_final,
+                "venta_descuento": descuento
+            }
+            return "Cuanto en efectivo?", context
+
         descripcion = f"{ctx['cantidad']}x {ctx['producto']} a Q{ctx['precio_unit']}"
         if descuento:
             descripcion += f" | Descuento {descuento['nombre']}: -Q{descuento['monto_descuento']}"
 
-        conn = nimbo_connect()
-        cur = conn.cursor()
-        mes = datetime.now().month
-        trimestre = (mes - 1) // 3 + 1
-        anio = datetime.now().year
-        cur.execute(
-            "INSERT INTO Venta (ClienteId, Descripcion, Total, Mes, Trimestre, Anio) VALUES (?,?,?,?,?,?)",
-            (cliente_id, descripcion, total_final, mes, trimestre, anio)
-        )
-        venta_id = cur.lastrowid
-        if cliente_id:
-            cur.execute("UPDATE Cliente SET UltimaCompra=? WHERE Id=?", (datetime.now().isoformat(), cliente_id))
-        conn.commit()
-        conn.close()
+        venta_id = _registrar_venta_chat(cliente_id, descripcion, total_final)
 
         resumen = f"Venta #{venta_id} registrada. {ctx['cantidad']}x {ctx['producto']} = Q{ctx['total']}."
         if descuento:
@@ -671,6 +693,68 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         if cliente_tel:
             factura_opts = f"\nFactura para {cliente_nombre}. Como enviarla? (whatsapp, imprimir, ninguna)"
             context = {"step": "venta_waiting_factura", "venta_id": venta_id, "cliente_tel": cliente_tel, "cliente_nombre": cliente_nombre, "venta_ctx": ctx, "pago": pago}
+            return resumen + factura_opts, context
+
+        context = {}
+        return resumen, context
+
+    # Flujo de pago mixto (efectivo + tarjeta) para la venta simple del chat
+    if step == "venta_waiting_pago_mixto_efectivo":
+        try:
+            monto_efectivo = round(float(message.strip().replace(",", "").replace("Q", "").replace("q", "").strip()), 2)
+            if monto_efectivo < 0:
+                raise ValueError()
+        except (TypeError, ValueError):
+            return "Escribe solo el monto en efectivo. Ejemplo: 50", context
+
+        total_final = context.get("venta_total_final", 0)
+        if monto_efectivo > total_final:
+            return f"El monto en efectivo (Q{monto_efectivo}) no puede ser mayor al total (Q{total_final}). Cuanto en efectivo?", context
+
+        restante = round(total_final - monto_efectivo, 2)
+        context["venta_pago_efectivo"] = monto_efectivo
+        context["step"] = "venta_waiting_pago_mixto_tarjeta"
+        return f"Cuanto en tarjeta? (resta Q{restante})", context
+
+    if step == "venta_waiting_pago_mixto_tarjeta":
+        try:
+            monto_tarjeta = round(float(message.strip().replace(",", "").replace("Q", "").replace("q", "").strip()), 2)
+            if monto_tarjeta < 0:
+                raise ValueError()
+        except (TypeError, ValueError):
+            return "Escribe solo el monto en tarjeta. Ejemplo: 45.50", context
+
+        ctx = context.get("venta_ctx", {})
+        cliente_id = context.get("venta_cliente_id")
+        cliente_nombre = context.get("venta_cliente_nombre", "Consumidor Final")
+        cliente_tel = context.get("venta_cliente_tel", "")
+        total_final = context.get("venta_total_final", 0)
+        descuento = context.get("venta_descuento")
+        monto_efectivo = context.get("venta_pago_efectivo", 0)
+
+        if round(monto_efectivo + monto_tarjeta, 2) != round(total_final, 2):
+            return (f"Los montos no coinciden: Efectivo Q{monto_efectivo} + Tarjeta Q{monto_tarjeta} = "
+                    f"Q{round(monto_efectivo + monto_tarjeta, 2)}, pero el total es Q{total_final}. "
+                    f"Cuanto en tarjeta?"), context
+
+        comision_pos = round(monto_tarjeta * 0.06, 2)
+
+        descripcion = f"{ctx['cantidad']}x {ctx['producto']} a Q{ctx['precio_unit']}"
+        if descuento:
+            descripcion += f" | Descuento {descuento['nombre']}: -Q{descuento['monto_descuento']}"
+        descripcion += f" | Efectivo: Q{monto_efectivo} + Tarjeta: Q{monto_tarjeta}"
+
+        venta_id = _registrar_venta_chat(cliente_id, descripcion, total_final)
+
+        resumen = f"Venta #{venta_id} registrada. Efectivo Q{monto_efectivo} + Tarjeta Q{monto_tarjeta}."
+        if descuento:
+            resumen += f" Descuento {descuento['nombre']} ({descuento['tipo']}): -Q{descuento['monto_descuento']}."
+        resumen += f" Comision POS: Q{comision_pos} (solo sobre tarjeta). Cliente: {cliente_nombre}."
+
+        factura_opts = ""
+        if cliente_tel:
+            factura_opts = f"\nFactura para {cliente_nombre}. Como enviarla? (whatsapp, imprimir, ninguna)"
+            context = {"step": "venta_waiting_factura", "venta_id": venta_id, "cliente_tel": cliente_tel, "cliente_nombre": cliente_nombre, "venta_ctx": ctx, "pago": "mixto"}
             return resumen + factura_opts, context
 
         context = {}
