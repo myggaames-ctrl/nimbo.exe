@@ -77,6 +77,9 @@ init_codigos_barras()
 from database.aronium import init_grupos_cliente
 init_grupos_cliente()
 
+from database.aronium import init_fotos_servicio
+init_fotos_servicio()
+
 # Instalaciones que ya tenian usuarios antes de que existiera el wizard de
 # onboarding (o que lo completaron con el /setup viejo de un solo paso) se
 # marcan como completas automaticamente, para no forzar el wizard nuevo.
@@ -1122,6 +1125,64 @@ def get_fotos_producto(producto_id):
     fotos = [dict(r) for r in cur.fetchall()]
     conn.close()
     return jsonify(fotos)
+
+
+UPLOAD_FOLDER_SERVICIO = '/home/ictor_axtor/micocina-dashboard/static/fotos_servicio'
+
+@app.route("/api/servicio/fotos", methods=["POST"])
+@admin_required
+def subir_foto_servicio():
+    from database.aronium import get_orden, agregar_foto_orden
+
+    if 'foto' not in request.files:
+        return jsonify({"error": "No se envio foto"}), 400
+
+    numero_orden = request.form.get("numero_orden", "").strip().upper()
+    if not numero_orden.startswith("OS-"):
+        numero_orden = "OS-" + numero_orden.zfill(4)
+    descripcion = request.form.get("descripcion", "")
+    foto = request.files['foto']
+
+    if foto.filename == '':
+        return jsonify({"error": "Archivo vacio"}), 400
+
+    orden = get_orden(numero_orden)
+    if not orden:
+        return jsonify({"error": f"No encontre la orden {numero_orden}"}), 404
+
+    ext = foto.filename.rsplit('.', 1)[-1].lower()
+    if ext not in ['jpg', 'jpeg', 'png', 'webp']:
+        return jsonify({"error": "Formato no permitido"}), 400
+
+    carpeta_orden = os.path.join(UPLOAD_FOLDER_SERVICIO, numero_orden)
+    os.makedirs(carpeta_orden, exist_ok=True)
+
+    import uuid
+    filename = f"{uuid.uuid4()}.{ext}"
+    foto.save(os.path.join(carpeta_orden, filename))
+
+    ruta = f"/static/fotos_servicio/{numero_orden}/{filename}"
+    agregar_foto_orden(orden["Id"], numero_orden, ruta, descripcion)
+
+    return jsonify({"ok": True, "ruta": ruta})
+
+
+@app.route("/api/servicio/fotos/<numero_orden>")
+@admin_required
+def get_fotos_servicio(numero_orden):
+    from database.aronium import get_fotos_orden
+    numero_orden = numero_orden.strip().upper()
+    if not numero_orden.startswith("OS-"):
+        numero_orden = "OS-" + numero_orden.zfill(4)
+    return jsonify(get_fotos_orden(numero_orden))
+
+
+@app.route("/api/servicio/ordenes")
+@admin_required
+def get_ordenes_servicio():
+    from database.aronium import get_ordenes
+    estado = request.args.get("estado")
+    return jsonify(get_ordenes(estado=estado, limit=100))
 
 
 @app.route("/producto/<codigo>")

@@ -6,7 +6,8 @@ from database.aronium import (
     crear_cliente, buscar_cliente, crear_orden,
     get_ordenes, get_orden, actualizar_estado_orden,
     set_presupuesto_orden, get_historial_orden,
-    get_garantia_reparacion_por_orden, reclamar_garantia_reparacion
+    get_garantia_reparacion_por_orden, reclamar_garantia_reparacion,
+    get_fotos_orden
 )
 
 ESTADOS_GARANTIA = {"VIGENTE": "Vigente", "VENCIDA": "Vencida", "RECLAMADA": "Reclamada"}
@@ -20,6 +21,15 @@ ESTADOS = {
     "LISTO": "Listo para recoger",
     "ENTREGADO": "Entregado"
 }
+
+def _miniaturas_html(fotos, tamano=110):
+    imgs = "".join(
+        f'<img src="{f["RutaFoto"]}" style="max-width:{tamano}px;max-height:{tamano}px;'
+        f'border-radius:6px;margin:4px;object-fit:cover">'
+        for f in fotos
+    )
+    return f'<div style="display:flex;flex-wrap:wrap;margin-top:6px">{imgs}</div>'
+
 
 def buscar_orden_tool(data):
     numero = data.get("numero", "")
@@ -41,9 +51,31 @@ def buscar_orden_tool(data):
         resp += "\nHistorial:"
         for h in historial:
             resp += "\n- " + h["Fecha"] + ": " + h["Estado"] + " - " + h["Nota"]
+    fotos = get_fotos_orden(numero)
+    if fotos:
+        resp += f"\nFotos ({len(fotos)}):"
+        resp += _miniaturas_html(fotos)
     return resp
 
 register("service.buscar_orden", buscar_orden_tool)
+
+
+def fotos_orden_tool(data):
+    numero = data.get("numero", "") if isinstance(data, dict) else str(data)
+    if not numero.startswith("OS-"):
+        numero = "OS-" + numero.zfill(4)
+    orden = get_orden(numero)
+    if not orden:
+        return "No encontre la orden " + numero + "."
+    fotos = get_fotos_orden(numero)
+    if not fotos:
+        return (f"La orden {numero} no tiene fotos todavia. Puedes subirlas en el dashboard, "
+                f"seccion Servicio Tecnico, orden {numero}.")
+    resp = f"Fotos de la orden {numero} ({orden['Equipo']} {orden['Marca']}), {len(fotos)} foto(s):"
+    resp += _miniaturas_html(fotos, tamano=220)
+    return resp
+
+register("service.fotos", fotos_orden_tool)
 
 def listar_ordenes_tool(data):
     estado = data.get("estado")

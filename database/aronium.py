@@ -391,6 +391,43 @@ def get_historial_orden(numero):
     return rows
 
 
+# ── FOTOS DE ORDEN DE SERVICIO ─────────────────────────
+
+def init_fotos_servicio():
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS FotoOrdenServicio (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            OrdenId INTEGER,
+            NumeroOrden TEXT,
+            RutaFoto TEXT,
+            Descripcion TEXT,
+            Fecha DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def agregar_foto_orden(orden_id, numero_orden, ruta_foto, descripcion=""):
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("INSERT INTO FotoOrdenServicio (OrdenId, NumeroOrden, RutaFoto, Descripcion) VALUES (?,?,?,?)",
+        (orden_id, numero_orden, ruta_foto, descripcion))
+    conn.commit()
+    conn.close()
+
+
+def get_fotos_orden(numero_orden):
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM FotoOrdenServicio WHERE NumeroOrden=? ORDER BY Fecha ASC", (numero_orden,))
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
 # ── CLIENTES NIMBO ────────────────────────────────────
 
 def get_cliente_por_id(cliente_id):

@@ -575,6 +575,11 @@
     <button class="nav-item" onclick="showPanel('caja')">
       <span class="icon">▣</span> Caja
     </button>
+    {% if rol == 'admin' %}
+    <button class="nav-item" onclick="showPanel('servicio')">
+      <span class="icon">🔧</span> Servicio Técnico
+    </button>
+    {% endif %}
 
     {% if rol == 'admin' %}
     <div class="nav-label">Contenido</div>
@@ -1039,6 +1044,29 @@
       </div>
     </div>
 
+    <!-- ══ SERVICIO TECNICO ══ -->
+    <div class="panel" id="panel-servicio">
+      <div class="card" style="padding:0;overflow:hidden">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Orden</th><th>Cliente</th><th>Equipo</th><th>Estado</th><th>Fotos</th><th>Acciones</th></tr></thead>
+            <tbody id="servicio-body"><tr><td class="text-muted" style="padding:20px">Cargando ordenes...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ MODAL FOTOS SERVICIO ══ -->
+    <div class="modal-overlay" id="modal-fotos-servicio" style="display:none">
+      <div class="modal-box">
+        <div class="card-title" id="modal-fotos-servicio-titulo">Fotos</div>
+        <div id="modal-fotos-servicio-grid" style="display:flex;flex-wrap:wrap;gap:8px;margin:10px 0"></div>
+        <div class="flex gap-2" style="margin-top:8px">
+          <button class="btn btn-ghost" onclick="cerrarModal('modal-fotos-servicio')">Cerrar</button>
+        </div>
+      </div>
+    </div>
+
     <!-- ══ SQL CONSOLE ══ -->
     <div class="panel" id="panel-sql">
       <div class="card">
@@ -1169,7 +1197,8 @@ const titles = {
   historial: ['Historial de Chat', 'Conversaciones guardadas'],
   graficas: ['Gráficas', 'Análisis visual del negocio'],
   usuarios: ['Usuarios', 'Cuentas de acceso al sistema'],
-  caja: ['Caja', 'Punto de venta y turno de caja']
+  caja: ['Caja', 'Punto de venta y turno de caja'],
+  servicio: ['Servicio Técnico', 'Órdenes de reparación y fotos del equipo']
 };
 
 function showPanel(id) {
@@ -1187,6 +1216,7 @@ function showPanel(id) {
   if (id === 'dashboard') loadStats();
   if (id === 'usuarios') loadUsuarios();
   if (id === 'caja') loadCajaEstado();
+  if (id === 'servicio') loadOrdenesServicio();
 }
 
 // ── CLOCK ──────────────────────────────────────────────
@@ -1496,6 +1526,68 @@ async function subirFoto(id, nombre) {
     }
   };
   input.click();
+}
+
+// ── SERVICIO TECNICO ───────────────────────────────────
+const ESTADOS_SERVICIO = {
+  RECEPCION: 'Recepción', REVISION: 'En revisión', PRESUPUESTO: 'Presupuesto enviado',
+  APROBADO: 'Aprobado', REPARACION: 'En reparación', LISTO: 'Listo para recoger', ENTREGADO: 'Entregado'
+};
+
+async function loadOrdenesServicio() {
+  const body = document.getElementById('servicio-body');
+  try {
+    const r = await fetch('/api/servicio/ordenes');
+    const ordenes = await r.json();
+    if (!ordenes.length) {
+      body.innerHTML = '<tr><td colspan="6" class="text-muted" style="padding:20px">Sin órdenes de servicio.</td></tr>';
+      return;
+    }
+    const conteos = await Promise.all(ordenes.map(o =>
+      fetch('/api/servicio/fotos/' + o.NumeroOrden).then(r => r.json()).catch(() => [])
+    ));
+    body.innerHTML = ordenes.map((o, i) => `<tr>
+      <td>${o.NumeroOrden}</td>
+      <td>${o.ClienteNombre || '—'}</td>
+      <td>${o.Equipo || ''} ${o.Marca || ''}</td>
+      <td><span class="badge badge-orange">${ESTADOS_SERVICIO[o.Estado] || o.Estado}</span></td>
+      <td>${conteos[i].length ? `<button class="btn btn-ghost btn-sm" onclick="verFotosServicio('${o.NumeroOrden}')">🖼 ${conteos[i].length}</button>` : '<span class="text-muted">Sin fotos</span>'}</td>
+      <td><button class="btn btn-ghost btn-sm" onclick="subirFotoServicio('${o.NumeroOrden}')">📷 Subir foto</button></td>
+    </tr>`).join('');
+  } catch(e) {
+    body.innerHTML = '<tr><td colspan="6" style="color:red">Error: ' + e.message + '</td></tr>';
+  }
+}
+
+async function subirFotoServicio(numeroOrden) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const formData = new FormData();
+    formData.append('foto', file);
+    formData.append('numero_orden', numeroOrden);
+    const r = await fetch('/api/servicio/fotos', {method: 'POST', body: formData});
+    const d = await r.json();
+    if (d.ok) {
+      loadOrdenesServicio();
+    } else {
+      alert('Error: ' + d.error);
+    }
+  };
+  input.click();
+}
+
+async function verFotosServicio(numeroOrden) {
+  const r = await fetch('/api/servicio/fotos/' + numeroOrden);
+  const fotos = await r.json();
+  document.getElementById('modal-fotos-servicio-titulo').textContent = 'Fotos de ' + numeroOrden;
+  document.getElementById('modal-fotos-servicio-grid').innerHTML = fotos.map(f =>
+    `<img src="${f.RutaFoto}" style="max-width:150px;max-height:150px;border-radius:8px;object-fit:cover">`
+  ).join('');
+  document.getElementById('modal-fotos-servicio').style.display = 'flex';
 }
 
 async function addProduct() {

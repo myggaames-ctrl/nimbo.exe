@@ -139,6 +139,30 @@ Usuario escribe mensaje
     reparacion X" coincidia tambien con el catch-all "garantias de X" (busqueda de garantias
     de un cliente) de core/detectors/garantia_detector.py, que se revisa antes que
     ServiceDetector - se le agrego un lookahead negativo para excluir "reparacion".
+  - Fotos del equipo al recibirlo: tabla FotoOrdenServicio en nimbo.db (Id, OrdenId,
+    NumeroOrden, RutaFoto, Descripcion, Fecha - database.aronium.init_fotos_servicio/
+    agregar_foto_orden/get_fotos_orden). Se suben desde el dashboard, no desde el chat (subir
+    un archivo por chat no es posible) - panel "Servicio Tecnico" en el menu lateral
+    (solo admin, misma categoria "service" que el resto de este modulo es admin-only en
+    core/action_engine.py), templates/index.html panel-servicio: tabla simple de ordenes con
+    boton 📷 "Subir foto" por fila (subirFotoServicio(), mismo patron que subirFoto() de
+    productos: input file oculto -> FormData -> POST) y, si ya tiene fotos, un boton 🖼 con el
+    conteo que abre un modal con las miniaturas (verFotosServicio()). Los 3 endpoints usan
+    @admin_required (no solo @login_required) para que un empleado no pueda llegar a ellos
+    directo por URL aunque el boton/panel este oculto para su rol. Endpoints: POST
+    /api/servicio/fotos (foto + numero_orden + descripcion opcional, guarda en
+    static/fotos_servicio/OS-XXXX/uuid.ext, valida que la orden exista) y GET
+    /api/servicio/fotos/<numero_orden>; GET /api/servicio/ordenes lista las ordenes para la
+    tabla del panel (separado del tools/service_tool.py.listar_ordenes_tool, que devuelve
+    texto para el chat, no JSON).
+  - Desde el chat: "fotos de OS-0001" / "fotos OS-0001" (service.fotos,
+    core/detectors/service_detector.py + tools/service_tool.py fotos_orden_tool) muestra las
+    fotos como imagenes HTML inline (`<img>`, mismo patron que tools/contenido_tool.py para
+    fotos de producto); si la orden no tiene fotos avisa que se suben desde el dashboard. "ver
+    orden OS-0001" (service.buscar_orden) tambien agrega las miniaturas al final si la orden
+    tiene fotos. Al crear una orden nueva (step service_waiting_problema en core/nimbo.py) el
+    mensaje final ahora incluye "Puedes subir fotos del equipo en el dashboard, seccion
+    Servicio Tecnico, orden OS-XXXX".
 - Proveedores: contactos, pedidos sugeridos, ordenes compra, alertas precio. El historial de
   proveedor requiere la palabra "compras" ("historial de compras a/de X", "compras a X", "cuanto
   le compre a X") - antes ese calificador era opcional en core/detectors/proveedor_detector.py y
@@ -505,6 +529,7 @@ Usuario escribe mensaje
 
 ## Tablas nimbo.db
 Cliente, OrdenServicio, HistorialOrden, Kardex, StockMinimo, ProductoFoto, ProductoInfo,
+FotoOrdenServicio,
 Venta, ResumenTrimestral, PagoFijo, RecordatorioPersonal, ChatHistorial,
 Gasto, ResumenContable, Proveedor, ContactoProveedor, ProductoProveedor,
 OrdenCompra, ItemOrdenCompra, HistorialPrecio, Usuario, PasswordResetToken, Configuracion,

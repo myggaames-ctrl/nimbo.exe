@@ -949,7 +949,10 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         modelo = marca_modelo[1] if len(marca_modelo) > 1 else ""
         numero = crear_orden(cliente_id, context["equipo"], marca, modelo, problema)
         ctx = {}
-        return "Orden " + numero + " creada. Cliente: " + context["cliente_nombre"] + ". Equipo: " + context["equipo"] + " " + context["marca"] + ". Problema: " + problema, ctx
+        resp = ("Orden " + numero + " creada. Cliente: " + context["cliente_nombre"] + ". Equipo: "
+                + context["equipo"] + " " + context["marca"] + ". Problema: " + problema)
+        resp += (f"\nPuedes subir fotos del equipo en el dashboard, seccion Servicio Tecnico, orden {numero}.")
+        return resp, ctx
 
     # Flujo de entrega con garantia de reparacion (arrancado por
     # ENTREGA_GARANTIA_INICIO, ver tools/service_tool.py cambiar_estado_tool)

@@ -28,6 +28,10 @@ class ServiceDetector:
         r"^recib[io]+\s+(?:una?\s+)?(.+?)\s+de\s+(.+)$",
     ]
 
+    PATTERNS_FOTOS = [
+        r"^fotos?\s+(?:de\s+)?(?:la\s+)?(?:orden\s+)?(?:os[- ]?)?(\w+)$",
+    ]
+
     PATTERNS_BUSCAR_ORDEN = [
         r"^(?:busca[r]?|ver?|estado\s+de?|info\s+de?)\s+(?:la\s+)?(?:orden|os)[- ]?(\w+)$",
         r"^(?:ver|busca[r]?|estado)\s+(?:orden\s+)?(?:os[- ]?)?(\d+)$",
@@ -73,6 +77,11 @@ class ServiceDetector:
             match = re.search(pattern, text)
             if match:
                 return {"intent": "service.ver_garantia_reparacion", "numero": match.group(1).upper()}
+
+        for pattern in self.PATTERNS_FOTOS:
+            match = re.search(pattern, text)
+            if match:
+                return {"intent": "service.fotos", "numero": match.group(1).upper()}
 
         for pattern in self.PATTERNS_BUSCAR_ORDEN:
             match = re.search(pattern, text)
