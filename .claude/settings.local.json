@@ -90,7 +90,8 @@
       "Bash(identify static/icon.png)",
       "Bash(awk '/^\\\\.btn/{print NR\": \"$0}' templates/index.html)",
       "Bash(awk '/^\\\\.badge/{print NR\": \"$0}' templates/index.html)",
-      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:5000/ --max-time 5)"
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:5000/ --max-time 5)",
+      "Bash(grep *)"
     ]
   }
 }

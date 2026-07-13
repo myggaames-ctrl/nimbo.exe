@@ -103,7 +103,7 @@ def aceptar_cotizacion_tool(data):
         remove_stock(item["producto_id"], item["cantidad"], razon=f"Venta por cotizacion {numero}")
 
     descripcion = f"Cotizacion {numero}: " + ", ".join([f"{i['cantidad']}x {i['nombre']}" for i in items])
-    venta_id = registrar_venta_cliente(c["ClienteId"], descripcion, c["Total"])
+    venta_id, total_cobrado, puntos_info = registrar_venta_cliente(c["ClienteId"], descripcion, c["Total"])
 
     garantias = [
         generar_garantia_venta(
@@ -116,11 +116,17 @@ def aceptar_cotizacion_tool(data):
 
     actualizar_estado_cotizacion(numero, "ACEPTADA")
 
-    resp = f"Cotizacion {numero} aceptada. Venta registrada por Q{c['Total']} y stock descontado."
+    resp = f"Cotizacion {numero} aceptada. Venta registrada por Q{total_cobrado} y stock descontado."
+    if total_cobrado != c["Total"]:
+        resp += f" (precio original Q{c['Total']}, ajustado por puntos de lealtad)."
     if garantias:
         resp += "\nGarantias generadas: " + ", ".join(
             f"{g['numero']} ({p['nombre']}, hasta {g['vencimiento_propia']})" for g, p in zip(garantias, items)
         )
+    if puntos_info:
+        resp += (f"\n{c['ClienteNombre']} gano {puntos_info['puntos_ganados']} puntos. "
+                 f"Total acumulado: {puntos_info['saldo_disponible']} puntos "
+                 f"(Q{puntos_info['valor_disponible']} en descuentos).")
     return resp
 
 register("cotizacion.aceptar", aceptar_cotizacion_tool)

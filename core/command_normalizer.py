@@ -20,6 +20,7 @@ VOCABULARIO = [
     "cambia", "cambiar", "crear", "registra", "registrar", "vende", "vendi", "vendio", "vender",
     "cotiza", "cotizar", "genera", "generar", "actualiza", "actualizar", "muestra",
     "mostrar", "listar", "abrir", "cerrar", "retirar", "cobrar", "sugerir", "sugiere",
+    "canjear", "canjea", "canje",
     # sustantivos generales del negocio
     "producto", "productos", "inventario", "precio", "costo", "cliente", "clientes",
     "venta", "ventas", "factura", "gasto", "gastos", "balance", "proveedor", "proveedores",
@@ -31,6 +32,7 @@ VOCABULARIO = [
     "nuestra", "nuestro", "propia", "propio", "combo", "combos", "kit", "kits",
     "docena", "docenas", "cajas", "par", "pares", "paquete", "paquetes",
     "trio", "trios", "cuarteto", "cuartetos", "vienen", "unidad", "unidades",
+    "puntos", "punto", "disponibles", "nivel", "niveles", "bronce", "plata", "lealtad",
     # electrodomesticos y repuestos comunes en la tienda
     "licuadora", "licuadoras", "refrigerador", "refrigeradores", "cuchilla", "cuchillas",
     "empaque", "empaques", "adaptador", "adaptadores", "regulador", "reguladores",

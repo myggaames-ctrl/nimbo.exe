@@ -447,7 +447,16 @@ def get_todos_clientes(limit=100):
     return rows
 
 def registrar_venta_cliente(cliente_id, descripcion, total):
+    """Registra una Venta aplicando el ajuste de puntos de lealtad (credito de un
+    canje pendiente + 5% extra de nivel Oro, ver calcular_ajuste_puntos) sobre
+    `total` antes de insertar, y luego gana puntos nuevos sobre el monto ya
+    ajustado. Retorna (venta_id, total_final_cobrado, puntos_info)."""
     from datetime import datetime
+
+    ajuste = calcular_ajuste_puntos(cliente_id, total)
+    total_final = ajuste["total_final"]
+    descripcion += formatear_nota_ajuste_puntos(ajuste)
+
     now = datetime.now()
     mes = now.month
     trimestre = (mes - 1) // 3 + 1
@@ -456,13 +465,21 @@ def registrar_venta_cliente(cliente_id, descripcion, total):
     cur = conn.cursor()
     cur.execute(
         "INSERT INTO Venta (ClienteId, Descripcion, Total, Mes, Trimestre, Anio) VALUES (?,?,?,?,?,?)",
-        (cliente_id, descripcion, total, mes, trimestre, anio)
+        (cliente_id, descripcion, total_final, mes, trimestre, anio)
     )
     venta_id = cur.lastrowid
     cur.execute("UPDATE Cliente SET UltimaCompra=? WHERE Id=?", (now.isoformat(), cliente_id))
     conn.commit()
     conn.close()
-    return venta_id
+
+    puntos_info = None
+    if cliente_id:
+        consumir_credito_puntos_pendiente(cliente_id, venta_id)
+        cliente = get_cliente_por_id(cliente_id)
+        nombre = cliente["Nombre"] if cliente else "Consumidor Final"
+        puntos_info = ganar_puntos(cliente_id, nombre, total_final, venta_id)
+
+    return venta_id, total_final, puntos_info
 
 def get_historial_cliente(cliente_id, meses=None):
     """Historial completo del cliente desde el primer dia (meses=None, default) o
@@ -1243,7 +1260,7 @@ def vender_combo(combo_id, cliente_id=None, cliente_nombre="Consumidor Final", c
 
     descripcion = f"Combo {combo['Nombre']}: " + ", ".join(f"{i['Cantidad']}x {i['ProductoNombre']}" for i in items)
     total = combo["PrecioCombo"]
-    venta_id = registrar_venta_cliente(cliente_id, descripcion, total)
+    venta_id, total_cobrado, puntos_info = registrar_venta_cliente(cliente_id, descripcion, total)
 
     garantias = [
         generar_garantia_venta(
@@ -1257,8 +1274,9 @@ def vender_combo(combo_id, cliente_id=None, cliente_nombre="Consumidor Final", c
         "venta_id": venta_id,
         "combo": combo,
         "items": items,
-        "total": total,
-        "garantias": garantias
+        "total": total_cobrado,
+        "garantias": garantias,
+        "puntos": puntos_info
     }
 
 
@@ -1333,6 +1351,225 @@ def get_todas_unidades_medida():
     rows = [dict(r) for r in cur.fetchall()]
     conn.close()
     return rows
+
+
+# ── PROGRAMA DE LEALTAD (PUNTOS) ───────────────────────
+
+PUNTOS_POR_QUETZAL = 1     # 1 punto por cada Q1 de compra
+PUNTOS_POR_CANJE = 100     # unidad minima de canje (multiplos de esto)
+VALOR_CANJE = 10.0         # cuantos quetzales valen PUNTOS_POR_CANJE puntos
+DESCUENTO_EXTRA_ORO = 0.05  # 5% extra para clientes nivel Oro
+
+# Umbrales de nivel evaluados sobre PuntosAcumulados (historico de por vida, no el
+# saldo disponible - el nivel no baja solo porque el cliente canjeo puntos).
+NIVELES_LEALTAD = [
+    (1000, "Oro"),
+    (500, "Plata"),
+    (0, "Bronce"),
+]
+
+
+def init_puntos():
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS PuntosCliente (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ClienteId INTEGER UNIQUE,
+            ClienteNombre TEXT,
+            PuntosAcumulados NUMERIC DEFAULT 0,
+            PuntosUsados NUMERIC DEFAULT 0,
+            PuntosCancelados NUMERIC DEFAULT 0,
+            FechaUltimaActualizacion DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS MovimientoPuntos (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ClienteId INTEGER,
+            Tipo TEXT,
+            Puntos NUMERIC,
+            Descripcion TEXT,
+            VentaId INTEGER,
+            Fecha DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def puntos_a_quetzales(puntos):
+    return round((puntos or 0) / PUNTOS_POR_CANJE * VALOR_CANJE, 2)
+
+
+def get_nivel_lealtad(puntos_acumulados):
+    for umbral, nivel in NIVELES_LEALTAD:
+        if (puntos_acumulados or 0) >= umbral:
+            return nivel
+    return "Bronce"
+
+
+def get_puntos_cliente(cliente_id):
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM PuntosCliente WHERE ClienteId=?", (cliente_id,))
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_saldo_puntos(cliente_id):
+    """Puntos disponibles para canjear ahora mismo (acumulados - usados - cancelados)."""
+    p = get_puntos_cliente(cliente_id)
+    if not p:
+        return 0
+    return int(p["PuntosAcumulados"] - p["PuntosUsados"] - p["PuntosCancelados"])
+
+
+def get_clientes_con_puntos():
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""SELECT *, (PuntosAcumulados - PuntosUsados - PuntosCancelados) as Saldo
+        FROM PuntosCliente
+        WHERE (PuntosAcumulados - PuntosUsados - PuntosCancelados) > 0
+        ORDER BY Saldo DESC""")
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+def _get_o_crear_puntos_cliente(cur, cliente_id, cliente_nombre):
+    cur.execute("SELECT * FROM PuntosCliente WHERE ClienteId=?", (cliente_id,))
+    row = cur.fetchone()
+    if row:
+        return dict(row)
+    cur.execute("INSERT INTO PuntosCliente (ClienteId, ClienteNombre) VALUES (?,?)", (cliente_id, cliente_nombre))
+    cur.execute("SELECT * FROM PuntosCliente WHERE ClienteId=?", (cliente_id,))
+    return dict(cur.fetchone())
+
+
+def ganar_puntos(cliente_id, cliente_nombre, total, venta_id):
+    """Suma puntos ganados por una compra (1 punto por cada Q1 de `total`, ya con
+    todos los descuentos/creditos aplicados - se gana sobre lo que el cliente
+    realmente termina pagando). No hace nada si no hay cliente (Consumidor Final no
+    acumula puntos) o si el total no alcanza para al menos 1 punto."""
+    if not cliente_id or not total or total <= 0:
+        return None
+    puntos_ganados = int(total * PUNTOS_POR_QUETZAL)
+    if puntos_ganados <= 0:
+        return None
+
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    _get_o_crear_puntos_cliente(cur, cliente_id, cliente_nombre)
+    cur.execute("""UPDATE PuntosCliente SET PuntosAcumulados=PuntosAcumulados+?, ClienteNombre=?,
+        FechaUltimaActualizacion=CURRENT_TIMESTAMP WHERE ClienteId=?""",
+        (puntos_ganados, cliente_nombre, cliente_id))
+    cur.execute("""INSERT INTO MovimientoPuntos (ClienteId, Tipo, Puntos, Descripcion, VentaId)
+        VALUES (?, 'GANADO', ?, ?, ?)""",
+        (cliente_id, puntos_ganados, f"Compra Q{total}", venta_id))
+    conn.commit()
+    cur.execute("SELECT * FROM PuntosCliente WHERE ClienteId=?", (cliente_id,))
+    p = dict(cur.fetchone())
+    conn.close()
+
+    saldo = int(p["PuntosAcumulados"] - p["PuntosUsados"] - p["PuntosCancelados"])
+    return {
+        "puntos_ganados": puntos_ganados,
+        "saldo_disponible": saldo,
+        "valor_disponible": puntos_a_quetzales(saldo),
+        "nivel": get_nivel_lealtad(p["PuntosAcumulados"])
+    }
+
+
+def canjear_puntos(cliente_id, cliente_nombre, puntos):
+    """Canjea puntos ahora mismo: se descuentan del saldo de inmediato (PuntosUsados),
+    pero el credito en quetzales queda pendiente (MovimientoPuntos con VentaId=NULL)
+    hasta que se aplique a una venta - ver consumir_credito_puntos_pendiente(), que se
+    llama automaticamente al cerrar la siguiente venta del cliente. Esto es lo que
+    permite "aplica Q de descuento en la siguiente compra" sin una venta activa."""
+    if not cliente_id:
+        return {"error": "No se puede canjear puntos sin un cliente."}
+    if not puntos or puntos <= 0:
+        return {"error": "La cantidad de puntos a canjear debe ser mayor a 0."}
+    if puntos % PUNTOS_POR_CANJE != 0:
+        return {"error": f"Los puntos se canjean en multiplos de {PUNTOS_POR_CANJE}."}
+    saldo = get_saldo_puntos(cliente_id)
+    if saldo < puntos:
+        return {"error": f"{cliente_nombre} solo tiene {saldo} puntos disponibles, no alcanza para canjear {puntos}."}
+
+    credito = puntos_a_quetzales(puntos)
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""UPDATE PuntosCliente SET PuntosUsados=PuntosUsados+?,
+        FechaUltimaActualizacion=CURRENT_TIMESTAMP WHERE ClienteId=?""", (puntos, cliente_id))
+    cur.execute("""INSERT INTO MovimientoPuntos (ClienteId, Tipo, Puntos, Descripcion, VentaId)
+        VALUES (?, 'USADO', ?, ?, NULL)""",
+        (cliente_id, puntos, f"Canje de {puntos} puntos por Q{credito} (pendiente de aplicar en la siguiente compra)"))
+    conn.commit()
+    conn.close()
+    return {"puntos": puntos, "credito": credito, "saldo_restante": saldo - puntos}
+
+
+def peek_credito_puntos_pendiente(cliente_id):
+    """Puntos ya canjeados (ver canjear_puntos) que todavia no se han aplicado a
+    ninguna venta. Solo consulta, no modifica nada."""
+    if not cliente_id:
+        return 0
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""SELECT IFNULL(SUM(Puntos),0) as puntos FROM MovimientoPuntos
+        WHERE ClienteId=? AND Tipo='USADO' AND VentaId IS NULL""", (cliente_id,))
+    puntos = cur.fetchone()["puntos"]
+    conn.close()
+    return int(puntos or 0)
+
+
+def consumir_credito_puntos_pendiente(cliente_id, venta_id):
+    """Marca todos los canjes pendientes del cliente como aplicados a esta venta
+    (les asigna el VentaId). Debe llamarse justo despues de insertar la Venta cuyo
+    Total ya reflejaba ese credito (ver calcular_ajuste_puntos)."""
+    if not cliente_id:
+        return
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""UPDATE MovimientoPuntos SET VentaId=?
+        WHERE ClienteId=? AND Tipo='USADO' AND VentaId IS NULL""", (venta_id, cliente_id))
+    conn.commit()
+    conn.close()
+
+
+def calcular_ajuste_puntos(cliente_id, total):
+    """Calcula (sin modificar nada todavia) cuanto se le resta a `total` por credito
+    de puntos ya canjeado y pendiente de aplicar, y por el 5% extra de nivel Oro.
+    Se usa ANTES de insertar la Venta para saber el Total final real; despues de
+    insertarla hay que llamar consumir_credito_puntos_pendiente() y ganar_puntos()
+    con el venta_id ya conocido. Si el credito pendiente supera el total de esta
+    venta, se aplica solo hasta cubrirlo (el resto no se parte, se da por usado)."""
+    if not cliente_id or not total or total <= 0:
+        return {"credito_puntos": 0, "descuento_oro": 0, "total_final": round(total or 0, 2)}
+
+    credito_puntos = min(puntos_a_quetzales(peek_credito_puntos_pendiente(cliente_id)), total)
+    restante = round(total - credito_puntos, 2)
+
+    p = get_puntos_cliente(cliente_id)
+    nivel = get_nivel_lealtad(p["PuntosAcumulados"]) if p else "Bronce"
+    descuento_oro = round(restante * DESCUENTO_EXTRA_ORO, 2) if nivel == "Oro" else 0
+
+    total_final = round(restante - descuento_oro, 2)
+    return {"credito_puntos": credito_puntos, "descuento_oro": descuento_oro, "total_final": total_final}
+
+
+def formatear_nota_ajuste_puntos(ajuste):
+    """Texto para anexar a la Descripcion de una Venta cuando calcular_ajuste_puntos
+    resto algo del total (credito de puntos y/o el 5% extra de nivel Oro). Vacio si
+    no aplico ninguno de los dos."""
+    extra = []
+    if ajuste.get("credito_puntos"):
+        extra.append(f"credito de puntos -Q{ajuste['credito_puntos']}")
+    if ajuste.get("descuento_oro"):
+        extra.append(f"5% nivel Oro -Q{ajuste['descuento_oro']}")
+    return " | " + " + ".join(extra) if extra else ""
 
 
 # ── CAJA REGISTRADORA ─────────────────────────────────
@@ -1675,6 +1912,10 @@ def cobrar_carrito(turno_id, metodo_pago, cliente_id=None, monto_efectivo=None, 
         total=subtotal
     )
     total = round(subtotal - descuento["monto_descuento"], 2) if descuento else subtotal
+
+    ajuste_puntos = calcular_ajuste_puntos(cliente_id, total)
+    total = ajuste_puntos["total_final"]
+
     metodo_pago = (metodo_pago or "").lower()
 
     if metodo_pago == "efectivo":
@@ -1706,6 +1947,7 @@ def cobrar_carrito(turno_id, metodo_pago, cliente_id=None, monto_efectivo=None, 
     descripcion = ", ".join([f"{i['Cantidad']}x {i['ProductoNombre']}" for i in items])
     if descuento:
         descripcion += f" | Descuento {descuento['nombre']}: -Q{descuento['monto_descuento']}"
+    descripcion += formatear_nota_ajuste_puntos(ajuste_puntos)
     now = datetime.now()
     mes, anio = now.month, now.year
     trimestre = (mes - 1) // 3 + 1
@@ -1764,17 +2006,25 @@ def cobrar_carrito(turno_id, metodo_pago, cliente_id=None, monto_efectivo=None, 
         for item in items
     ]
 
+    puntos_info = None
+    if cliente_id:
+        consumir_credito_puntos_pendiente(cliente_id, venta_id)
+        puntos_info = ganar_puntos(cliente_id, cliente_nombre_garantia, total, venta_id)
+
     return {
         "venta_id": venta_id,
         "items": items,
         "subtotal": subtotal,
         "descuento": descuento,
+        "credito_puntos": ajuste_puntos["credito_puntos"],
+        "descuento_oro": ajuste_puntos["descuento_oro"],
         "total": total,
         "metodo_pago": metodo_pago,
         "monto_efectivo": monto_efectivo,
         "monto_tarjeta": monto_tarjeta,
         "cambio": cambio,
         "garantias": garantias,
+        "puntos": puntos_info,
         "fecha": now.strftime("%Y-%m-%d %H:%M:%S")
     }
 

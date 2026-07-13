@@ -7,7 +7,7 @@ from core.intent_detector import IntentDetector
 # Categorias de intent (prefijo antes del punto) permitidas para el rol empleado.
 # Todo lo demas (proveedor, contabilidad, contenido, reporte, evento, service, budget, windows,
 # descuento, garantia, combo) es solo admin.
-CATEGORIAS_EMPLEADO = {"inventory", "venta", "cliente", "customer", "caja", "unidadmedida"}
+CATEGORIAS_EMPLEADO = {"inventory", "venta", "cliente", "customer", "caja", "unidadmedida", "puntos"}
 
 # Intents especificos que siguen siendo admin-only aunque su categoria este permitida
 # para empleados (ej. caja es de empleado, pero retirar efectivo o anular un turno es

@@ -339,6 +339,56 @@ Usuario escribe mensaje
     descontaba stock, sin importar el flujo. Ahora descuenta cantidad x CantidadPorUnidad
     (4to campo opcional en cada opcion de venta_opciones, ausente = 1 para una venta normal
     por unidad) y valida que haya stock suficiente antes de continuar.
+- Programa de lealtad (puntos): 2 tablas en nimbo.db. PuntosCliente (1 fila por cliente) -
+  PuntosAcumulados (historico de por vida, nunca baja), PuntosUsados y PuntosCancelados
+  (ambos tambien acumulativos; el saldo disponible para canjear = Acumulados - Usados -
+  Cancelados, ver database.aronium.get_saldo_puntos). MovimientoPuntos es el detalle
+  (GANADO/USADO/CANCELADO) de cada cambio, con VentaId para saber a que venta corresponde.
+  Constantes en database/aronium.py: PUNTOS_POR_QUETZAL=1 (1 punto por cada Q1 de compra,
+  sobre el total ya con todos los descuentos/creditos aplicados), PUNTOS_POR_CANJE=100,
+  VALOR_CANJE=Q10 (asi que 1 punto = Q0.10), DESCUENTO_EXTRA_ORO=5%. Los puntos no vencen
+  (no hay ninguna funcion que reste PuntosCancelados via chat - ese campo del esquema queda
+  para una integracion futura, ej. anular una venta).
+  - Niveles (opcional del pedido original, si se implemento): NIVELES_LEALTAD evalua sobre
+    PuntosAcumulados (no el saldo disponible - el nivel no baja solo porque el cliente
+    canjeo puntos): Bronce 0-499, Plata 500-999, Oro 1000+ (5% de descuento extra en cada
+    compra, ver mas abajo).
+  - "Canjear" no descuenta nada de inmediato: database.aronium.canjear_puntos() resta el
+    saldo (PuntosUsados) y el credito en quetzales queda pendiente como un MovimientoPuntos
+    Tipo='USADO' con VentaId=NULL. database.aronium.calcular_ajuste_puntos(cliente_id, total)
+    - llamada ANTES de insertar cualquier Venta - busca ese credito pendiente
+    (peek_credito_puntos_pendiente) y lo resta del total (topado al total de esa venta, sin
+    partir el canje si sobra), y encima resta el 5% extra si el cliente es nivel Oro.
+    database.aronium.consumir_credito_puntos_pendiente(cliente_id, venta_id) - llamada
+    DESPUES de insertar, ya con el venta_id conocido - marca esos movimientos pendientes
+    como aplicados a esa venta. database.aronium.ganar_puntos() se llama al final con el
+    Total ya ajustado (se ganan puntos sobre lo que el cliente realmente termina pagando).
+    database.aronium.formatear_nota_ajuste_puntos() arma la nota que se anexa a la
+    Descripcion de la Venta cuando aplico alguno de los dos ajustes.
+  - Integrado en los 4 lugares donde se cierra una venta: core/nimbo.py
+    venta_waiting_pago/venta_waiting_pago_mixto_tarjeta (venta simple del chat),
+    database.aronium.cobrar_carrito() (caja) y database.aronium.registrar_venta_cliente()
+    (usada por cotizacion.aceptar y por combo.vender - aunque los combos hoy siempre venden
+    a "Consumidor Final" sin cliente, asi que en la practica no ganan ni canjean puntos, ver
+    seccion Combos arriba). En todos los casos se ganan puntos automaticamente si hay
+    cliente; el mensaje final sigue el formato pedido ("Juan Perez gano 85 puntos. Total
+    acumulado: 185 puntos (Q18.50 en descuentos)").
+  - Solo en la venta simple del chat (core/nimbo.py) se pregunta interactivamente si
+    canjear: al identificar un cliente EXISTENTE en venta_waiting_nombre, si su saldo es
+    >= 100 puntos, entra al step venta_waiting_canjear_puntos ("Tiene N puntos disponibles
+    (QX). Quiere canjearlos en esta compra? si/no") antes de pedir el metodo de pago; si
+    acepta, canjea todo lo canjeable en multiplos de 100 (canjear_puntos()) y ese credito
+    se aplica automaticamente a la MISMA venta que se esta cerrando (mismo mecanismo que
+    "aplica en la siguiente compra", solo que aqui la "siguiente compra" es la actual). No
+    se implemento este mismo prompt interactivo en caja/cotizacion/combo (solo se pidio
+    "flujo en nimbo.py"); esos otros 3 caminos si aplican automaticamente cualquier credito
+    YA canjeado previamente por el cliente.
+  - Detector core/detectors/puntos_detector.py + herramienta tools/puntos_tool.py. Comandos
+    de chat: "puntos de Juan Perez" (saldo, valor, nivel), "canjear 100 puntos Juan Perez"
+    (canje manual fuera de una venta activa, mismo mecanismo de credito pendiente), "puntos
+    disponibles" (lista clientes con saldo > 0). Categoria "puntos" SI es de empleado
+    (CATEGORIAS_EMPLEADO en core/action_engine.py) - ver puntos o canjearlos no es una
+    decision de precios, es una operacion de venta normal.
 
 ## Tablas nimbo.db
 Cliente, OrdenServicio, HistorialOrden, Kardex, StockMinimo, ProductoFoto, ProductoInfo,
@@ -346,7 +396,7 @@ Venta, ResumenTrimestral, PagoFijo, RecordatorioPersonal, ChatHistorial,
 Gasto, ResumenContable, Proveedor, ContactoProveedor, ProductoProveedor,
 OrdenCompra, ItemOrdenCompra, HistorialPrecio, Usuario, PasswordResetToken, Configuracion,
 Cotizacion, CajaTurno, MovimientoCaja, ItemCarrito, Descuento, GarantiaProducto, GarantiaVenta,
-ProductoCombo, ItemCombo, UnidadMedida
+ProductoCombo, ItemCombo, UnidadMedida, PuntosCliente, MovimientoPuntos
 
 ## Variables de entorno (.env)
 GEMINI_API_KEY, FB_PAGE_TOKEN, FB_PAGE_ID, WA_TOKEN, WA_PHONE_ID, IG_ACCOUNT_ID,

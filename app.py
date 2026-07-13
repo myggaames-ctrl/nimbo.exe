@@ -68,6 +68,9 @@ init_combos()
 from database.aronium import init_unidades_medida
 init_unidades_medida()
 
+from database.aronium import init_puntos
+init_puntos()
+
 # Instalaciones que ya tenian usuarios antes de que existiera el wizard de
 # onboarding (o que lo completaron con el /setup viejo de un solo paso) se
 # marcan como completas automaticamente, para no forzar el wizard nuevo.

@@ -648,12 +648,35 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         if clientes:
             context["venta_cliente_id"] = clientes[0]["Id"]
             context["venta_cliente_nombre"] = clientes[0]["Nombre"]
+            from database.aronium import get_saldo_puntos, puntos_a_quetzales, PUNTOS_POR_CANJE
+            saldo = get_saldo_puntos(clientes[0]["Id"])
+            if saldo >= PUNTOS_POR_CANJE:
+                context["step"] = "venta_waiting_canjear_puntos"
+                valor = puntos_a_quetzales(saldo)
+                return (f"Cliente encontrado: {clientes[0]['Nombre']}. Tiene {saldo} puntos disponibles "
+                        f"(Q{valor} en descuentos). Quiere canjearlos en esta compra? (si/no)"), context
             context["step"] = "venta_waiting_pago"
-            ctx = context.get("venta_ctx", {})
             return f"Cliente encontrado: {clientes[0]['Nombre']}. Metodo de pago? (efectivo, tarjeta, transferencia, mixto):", context
         context["venta_cliente_nombre"] = message.strip().title()
         context["step"] = "venta_waiting_telefono"
         return f"Cliente nuevo. Telefono (o 'sin telefono'):", context
+
+    if step == "venta_waiting_canjear_puntos":
+        resp_txt = message.strip().lower()
+        cliente_id = context.get("venta_cliente_id")
+        cliente_nombre = context.get("venta_cliente_nombre", "Consumidor Final")
+        aviso = ""
+        if resp_txt in ["si", "si.", "sí", "s", "ok", "dale", "yes", "de una"]:
+            from database.aronium import get_saldo_puntos, canjear_puntos, PUNTOS_POR_CANJE
+            saldo = get_saldo_puntos(cliente_id)
+            puntos_a_usar = saldo - (saldo % PUNTOS_POR_CANJE)
+            resultado = canjear_puntos(cliente_id, cliente_nombre, puntos_a_usar)
+            if resultado.get("error"):
+                aviso = f" No se pudo canjear: {resultado['error']}"
+            else:
+                aviso = f" Canjeaste {puntos_a_usar} puntos por Q{resultado['credito']} de descuento en esta compra."
+        context["step"] = "venta_waiting_pago"
+        return f"Metodo de pago? (efectivo, tarjeta, transferencia, mixto):{aviso}", context
 
     if step == "venta_waiting_telefono":
         tel = message.strip()
@@ -684,7 +707,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         cliente_nombre = context.get("venta_cliente_nombre", "Consumidor Final")
         cliente_tel = context.get("venta_cliente_tel", "")
 
-        from database.aronium import calcular_descuento
+        from database.aronium import calcular_descuento, calcular_ajuste_puntos
 
         descuento = calcular_descuento(
             cliente_id=cliente_id,
@@ -692,6 +715,9 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
             total=ctx["total"]
         )
         total_final = round(ctx["total"] - descuento["monto_descuento"], 2) if descuento else ctx["total"]
+
+        ajuste_puntos = calcular_ajuste_puntos(cliente_id, total_final)
+        total_final = ajuste_puntos["total_final"]
 
         if pago in ["mixto", "mixta", "combinado", "los dos", "efectivo y tarjeta"]:
             context = {
@@ -701,13 +727,17 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
                 "venta_cliente_nombre": cliente_nombre,
                 "venta_cliente_tel": cliente_tel,
                 "venta_total_final": total_final,
-                "venta_descuento": descuento
+                "venta_descuento": descuento,
+                "venta_ajuste_puntos": ajuste_puntos
             }
             return "Cuanto en efectivo?", context
+
+        from database.aronium import formatear_nota_ajuste_puntos, consumir_credito_puntos_pendiente, ganar_puntos
 
         descripcion = f"{ctx['cantidad']}x {ctx['producto']} a Q{ctx['precio_unit']}"
         if descuento:
             descripcion += f" | Descuento {descuento['nombre']}: -Q{descuento['monto_descuento']}"
+        descripcion += formatear_nota_ajuste_puntos(ajuste_puntos)
 
         venta_id, garantia = _registrar_venta_chat(
             cliente_id, descripcion, total_final,
@@ -715,12 +745,24 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
             cliente_nombre=cliente_nombre, cliente_tel=cliente_tel
         )
 
+        puntos_info = None
+        if cliente_id:
+            consumir_credito_puntos_pendiente(cliente_id, venta_id)
+            puntos_info = ganar_puntos(cliente_id, cliente_nombre, total_final, venta_id)
+
         resumen = f"Venta #{venta_id} registrada. {ctx['cantidad']}x {ctx['producto']} = Q{ctx['total']}."
         if descuento:
-            resumen += f" Descuento {descuento['nombre']} ({descuento['tipo']}): -Q{descuento['monto_descuento']}. Total: Q{total_final}."
-        resumen += f" Pago: {pago}. Cliente: {cliente_nombre}."
+            resumen += f" Descuento {descuento['nombre']} ({descuento['tipo']}): -Q{descuento['monto_descuento']}."
+        if ajuste_puntos["credito_puntos"] or ajuste_puntos["descuento_oro"]:
+            resumen += (f" Ajuste por puntos: -Q{ajuste_puntos['credito_puntos']}"
+                        f"{f' + 5% Oro -Q' + str(ajuste_puntos['descuento_oro']) if ajuste_puntos['descuento_oro'] else ''}.")
+        resumen += f" Total: Q{total_final}. Pago: {pago}. Cliente: {cliente_nombre}."
         if garantia:
             resumen += f" Garantia {garantia['numero']} hasta {garantia['vencimiento_propia']}."
+        if puntos_info:
+            resumen += (f" {cliente_nombre} gano {puntos_info['puntos_ganados']} puntos. "
+                        f"Total acumulado: {puntos_info['saldo_disponible']} puntos "
+                        f"(Q{puntos_info['valor_disponible']} en descuentos).")
 
         factura_opts = ""
         if cliente_tel:
@@ -763,6 +805,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         cliente_tel = context.get("venta_cliente_tel", "")
         total_final = context.get("venta_total_final", 0)
         descuento = context.get("venta_descuento")
+        ajuste_puntos = context.get("venta_ajuste_puntos", {"credito_puntos": 0, "descuento_oro": 0})
         monto_efectivo = context.get("venta_pago_efectivo", 0)
 
         if round(monto_efectivo + monto_tarjeta, 2) != round(total_final, 2):
@@ -772,9 +815,12 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
 
         comision_pos = round(monto_tarjeta * 0.06, 2)
 
+        from database.aronium import formatear_nota_ajuste_puntos, consumir_credito_puntos_pendiente, ganar_puntos
+
         descripcion = f"{ctx['cantidad']}x {ctx['producto']} a Q{ctx['precio_unit']}"
         if descuento:
             descripcion += f" | Descuento {descuento['nombre']}: -Q{descuento['monto_descuento']}"
+        descripcion += formatear_nota_ajuste_puntos(ajuste_puntos)
         descripcion += f" | Efectivo: Q{monto_efectivo} + Tarjeta: Q{monto_tarjeta}"
 
         venta_id, garantia = _registrar_venta_chat(
@@ -783,12 +829,24 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
             cliente_nombre=cliente_nombre, cliente_tel=cliente_tel
         )
 
+        puntos_info = None
+        if cliente_id:
+            consumir_credito_puntos_pendiente(cliente_id, venta_id)
+            puntos_info = ganar_puntos(cliente_id, cliente_nombre, total_final, venta_id)
+
         resumen = f"Venta #{venta_id} registrada. Efectivo Q{monto_efectivo} + Tarjeta Q{monto_tarjeta}."
         if descuento:
             resumen += f" Descuento {descuento['nombre']} ({descuento['tipo']}): -Q{descuento['monto_descuento']}."
+        if ajuste_puntos["credito_puntos"] or ajuste_puntos["descuento_oro"]:
+            resumen += (f" Ajuste por puntos: -Q{ajuste_puntos['credito_puntos']}"
+                        f"{f' + 5% Oro -Q' + str(ajuste_puntos['descuento_oro']) if ajuste_puntos['descuento_oro'] else ''}.")
         resumen += f" Comision POS: Q{comision_pos} (solo sobre tarjeta). Cliente: {cliente_nombre}."
         if garantia:
             resumen += f" Garantia {garantia['numero']} hasta {garantia['vencimiento_propia']}."
+        if puntos_info:
+            resumen += (f" {cliente_nombre} gano {puntos_info['puntos_ganados']} puntos. "
+                        f"Total acumulado: {puntos_info['saldo_disponible']} puntos "
+                        f"(Q{puntos_info['valor_disponible']} en descuentos).")
 
         factura_opts = ""
         if cliente_tel:
