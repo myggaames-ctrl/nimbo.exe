@@ -26,6 +26,10 @@ class ClienteDetector:
         r"^(?:que|cuanto)\s+(?:ha\s+)?comprado\s+(.+)$",
     ]
 
+    PATTERNS_RESUMEN = [
+        r"^resumen\s+(?:de\s+)?(.+)$",
+    ]
+
     PATTERNS_LISTAR = [
         r"^clientes?$",
         r"^lista(?:r)?\s+clientes?$",
@@ -74,6 +78,11 @@ class ClienteDetector:
             match = re.search(pattern, text)
             if match:
                 return {"intent": "cliente.historial", "query": match.group(1).strip()}
+
+        for pattern in self.PATTERNS_RESUMEN:
+            match = re.search(pattern, text)
+            if match:
+                return {"intent": "cliente.resumen", "query": match.group(1).strip()}
 
         for pattern in self.PATTERNS_BUSCAR:
             match = re.search(pattern, text)

@@ -464,21 +464,42 @@ def registrar_venta_cliente(cliente_id, descripcion, total):
     conn.close()
     return venta_id
 
-def get_historial_cliente(cliente_id, meses=12):
+def get_historial_cliente(cliente_id, meses=None):
+    """Historial completo del cliente desde el primer dia (meses=None, default) o
+    acotado a los ultimos `meses` meses si se especifica. Incluye ventas, ordenes
+    de servicio, cotizaciones y garantias vigentes (las vencidas/reclamadas no se
+    incluyen aqui, ver marcar_garantias_vencidas)."""
+    marcar_garantias_vencidas()
     conn = nimbo_connect()
     cur = conn.cursor()
-    cur.execute("""SELECT v.*, c.Nombre as ClienteNombre FROM Venta v
-        JOIN Cliente c ON v.ClienteId=c.Id
-        WHERE v.ClienteId=?
-        AND v.Fecha >= datetime('now', ? || ' months')
-        ORDER BY v.Fecha DESC""",
-        (cliente_id, f"-{meses}"))
+    if meses:
+        cur.execute("""SELECT v.*, c.Nombre as ClienteNombre FROM Venta v
+            JOIN Cliente c ON v.ClienteId=c.Id
+            WHERE v.ClienteId=?
+            AND v.Fecha >= datetime('now', ? || ' months')
+            ORDER BY v.Fecha DESC""",
+            (cliente_id, f"-{meses}"))
+    else:
+        cur.execute("""SELECT v.*, c.Nombre as ClienteNombre FROM Venta v
+            JOIN Cliente c ON v.ClienteId=c.Id
+            WHERE v.ClienteId=?
+            ORDER BY v.Fecha DESC""", (cliente_id,))
     ventas = [dict(r) for r in cur.fetchall()]
+
     cur.execute("""SELECT * FROM OrdenServicio
         WHERE ClienteId=? ORDER BY FechaRecepcion DESC""", (cliente_id,))
     ordenes = [dict(r) for r in cur.fetchall()]
+
+    cur.execute("""SELECT * FROM Cotizacion
+        WHERE ClienteId=? ORDER BY FechaCreada DESC""", (cliente_id,))
+    cotizaciones = [dict(r) for r in cur.fetchall()]
+
+    cur.execute("""SELECT * FROM GarantiaVenta
+        WHERE ClienteId=? AND Estado='VIGENTE' ORDER BY FechaVencimientoPropias ASC""", (cliente_id,))
+    garantias = [dict(r) for r in cur.fetchall()]
+
     conn.close()
-    return {"ventas": ventas, "ordenes": ordenes}
+    return {"ventas": ventas, "ordenes": ordenes, "cotizaciones": cotizaciones, "garantias": garantias}
 
 def get_clientes_inactivos(meses=3):
     conn = nimbo_connect()

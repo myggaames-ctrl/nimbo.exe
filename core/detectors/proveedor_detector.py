@@ -25,7 +25,10 @@ class ProveedorDetector:
     ]
 
     PATTERNS_HISTORIAL = [
-        r"^historial\s+(?:de\s+)?(?:compras?\s+(?:a|de)\s+)?(.+)$",
+        # El calificador "compras a/de" es obligatorio (antes era opcional y esto
+        # capturaba tambien "historial de Juan Perez", tapando el historial de
+        # clientes con ClienteDetector, que se revisa despues en la lista).
+        r"^historial\s+(?:de\s+)?compras?\s+(?:a|de)\s+(.+)$",
         r"^compras?\s+(?:a|de)\s+(.+)$",
         r"^(?:cuanto|que)\s+(?:le\s+)?compre?\s+(?:a\s+)?(.+)$",
     ]

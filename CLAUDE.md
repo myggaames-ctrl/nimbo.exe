@@ -98,9 +98,28 @@ Usuario escribe mensaje
 ## Modulos completados
 - Inventario: CRUD, kardex, alertas stock, fotos, descripcion
 - Ventas: flujo completo, WhatsApp, descuento stock automatico
-- Clientes: historial, Excel, cumpleanos
+- Clientes: historial completo, Excel, cumpleanos. "historial de Juan Perez" (cliente.historial,
+  tools/cliente_tool.py) muestra todo desde el primer dia: datos (telefono/email/NIT/fecha de
+  alta), estadisticas (total gastado, producto favorito, frecuencia de compra en dias promedio,
+  ultima visita, descuento tipo cliente si tiene uno configurado - ver database.aronium.
+  get_descuentos), compras (Descripcion + Total + metodo de pago), ordenes de servicio,
+  cotizaciones y garantias activas. database.aronium.get_historial_cliente(cliente_id,
+  meses=None) trae ventas/ordenes/cotizaciones/garantias vigentes (meses=None = sin limite de
+  tiempo; si se pasa un numero, acota las ventas a esos ultimos meses). "resumen de Juan Perez"
+  (cliente.resumen) es la version corta: solo estadisticas + garantias activas, sin la lista
+  completa de compras/ordenes/cotizaciones. El "producto favorito" y el "metodo de pago" se
+  extraen por texto de Venta.Descripcion de forma best-effort (no hay detalle estructurado de
+  items por venta, ver seccion Caja arriba) - el metodo de pago solo se detecta cuando fue un
+  pago mixto (unico caso que deja un rastro reconocible en la Descripcion, ver core/nimbo.py);
+  para efectivo/tarjeta/transferencia simple se muestra "no registrado".
 - Servicio Tecnico: OS-XXXX, flujo 7 estados, WhatsApp automatico
-- Proveedores: contactos, pedidos sugeridos, ordenes compra, alertas precio
+- Proveedores: contactos, pedidos sugeridos, ordenes compra, alertas precio. El historial de
+  proveedor requiere la palabra "compras" ("historial de compras a/de X", "compras a X", "cuanto
+  le compre a X") - antes ese calificador era opcional en core/detectors/proveedor_detector.py y
+  "historial de X" (sin "compras") interceptaba tambien el historial de clientes, porque
+  ProveedorDetector se revisa antes que ClienteDetector en core/intent_detector.py. Sigue
+  existiendo una ambiguedad menor sin resolver con "compras de X" (sin la palabra "historial"):
+  matchea primero como proveedor.historial antes de llegar a ClienteDetector.
 - Contabilidad: balance, IVA/ISR, margen, inventario valor, equilibrio, analisis Gemini, Excel, comparacion 6 meses,
   sugerencias de precios ("analiza mis precios" / "sugerencias de precios") -> contabilidad.sugerencias_precios
   en tools/contabilidad_tool.py. Calcula el margen real (Precio-Costo)/Precio por producto usando

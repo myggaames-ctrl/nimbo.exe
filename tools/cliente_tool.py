@@ -1,11 +1,116 @@
 """
 Herramienta de Clientes
 """
+import re
+from datetime import datetime
 from core.tool_registry import register
 from database.aronium import (
     crear_cliente_completo, buscar_cliente_completo,
-    get_todos_clientes, get_historial_cliente, get_clientes_inactivos
+    get_todos_clientes, get_historial_cliente, get_clientes_inactivos, get_descuentos
 )
+
+ESTADOS_COTIZACION = {
+    "PENDIENTE": "Pendiente", "ENVIADA": "Enviada", "ACEPTADA": "Aceptada",
+    "RECHAZADA": "Rechazada", "VENCIDA": "Vencida",
+}
+
+ESTADOS_GARANTIA = {"VIGENTE": "Vigente", "VENCIDA": "Vencida", "RECLAMADA": "Reclamada"}
+
+
+def _productos_de_descripcion(descripcion):
+    """Extrae pares (cantidad, nombre) de la Descripcion de una Venta de forma
+    best-effort (texto libre, no datos estructurados - el detalle real de items
+    se borra al cobrar, ver CLAUDE.md). Se usa solo para calcular el producto
+    favorito, no para nada financiero."""
+    if not descripcion:
+        return []
+    segmento = descripcion.split("|")[0].strip()
+    for prefijo in ("Cotizacion ", "Combo "):
+        if segmento.startswith(prefijo) and ":" in segmento:
+            segmento = segmento.split(":", 1)[1]
+            break
+    items = []
+    for parte in segmento.split(","):
+        m = re.match(r"\s*(\d+(?:\.\d+)?)\s*x\s+(.+?)(?:\s+a\s+Q[\d.]+)?\s*$", parte.strip())
+        if m:
+            items.append((float(m.group(1)), m.group(2).strip()))
+    return items
+
+
+def _producto_favorito(ventas):
+    conteo = {}
+    for v in ventas:
+        for cantidad, nombre in _productos_de_descripcion(v.get("Descripcion", "")):
+            conteo[nombre] = conteo.get(nombre, 0) + cantidad
+    if not conteo:
+        return None
+    return max(conteo.items(), key=lambda kv: kv[1])[0]
+
+
+def _frecuencia_compra(ventas):
+    """Promedio de dias entre compras. None si no hay al menos 2 compras con fecha valida."""
+    fechas = []
+    for v in ventas:
+        if not v.get("Fecha"):
+            continue
+        try:
+            fechas.append(datetime.strptime(v["Fecha"][:19], "%Y-%m-%d %H:%M:%S"))
+        except ValueError:
+            continue
+    if len(fechas) < 2:
+        return None
+    fechas.sort()
+    dias_totales = (fechas[-1] - fechas[0]).days
+    intervalos = len(fechas) - 1
+    if dias_totales <= 0:
+        return None
+    return round(dias_totales / intervalos, 1)
+
+
+def _metodo_pago_de(descripcion):
+    """Best-effort: solo el pago mixto deja rastro en la Descripcion (ver
+    core/nimbo.py). Para efectivo/tarjeta/transferencia no hay dato guardado."""
+    if descripcion and "Efectivo: Q" in descripcion and "Tarjeta: Q" in descripcion:
+        return "mixto (efectivo + tarjeta)"
+    return "no registrado"
+
+
+def _descuento_cliente(cliente_id):
+    for d in get_descuentos(activo=True, tipo="cliente"):
+        if d["ClienteId"] == cliente_id:
+            return d
+    return None
+
+
+def _estadisticas_cliente(cliente, historial):
+    ventas = historial["ventas"]
+    total_gastado = round(sum(v["Total"] for v in ventas), 2)
+    descuento = _descuento_cliente(cliente["Id"])
+    return {
+        "total_gastado": total_gastado,
+        "total_compras": len(ventas),
+        "producto_favorito": _producto_favorito(ventas),
+        "frecuencia_dias": _frecuencia_compra(ventas),
+        "ultima_visita": ventas[0]["Fecha"][:10] if ventas else (cliente.get("UltimaCompra") or "").strip()[:10] or None,
+        "descuento": descuento,
+    }
+
+
+def _texto_estadisticas(stats):
+    resp = f"Total gastado: Q{stats['total_gastado']} ({stats['total_compras']} compra(s))\n"
+    resp += f"Producto favorito: {stats['producto_favorito'] or 'sin datos'}\n"
+    if stats["frecuencia_dias"]:
+        resp += f"Frecuencia de compra: cada {stats['frecuencia_dias']} dias en promedio\n"
+    else:
+        resp += "Frecuencia de compra: no hay suficientes compras para calcularla\n"
+    resp += f"Ultima visita: {stats['ultima_visita'] or 'sin registro'}\n"
+    if stats["descuento"]:
+        d = stats["descuento"]
+        valor = f"{d['Porcentaje']}%" if d.get("Porcentaje") else f"Q{d['MontoFijo']}"
+        resp += f"Descuento configurado: {valor} ({d['Nombre']})\n"
+    else:
+        resp += "Descuento configurado: ninguno\n"
+    return resp
 
 def nuevo_cliente_tool(data):
     nombre = data.get("nombre", "") if isinstance(data, dict) else str(data)
@@ -60,22 +165,77 @@ def historial_cliente_tool(data):
         return f"No encontre cliente con '{query}'."
     c = clientes[0]
     historial = get_historial_cliente(c["Id"])
-    resp = "Historial de " + c["Nombre"] + ":\n"
+    stats = _estadisticas_cliente(c, historial)
+
+    resp = f"Historial completo de {c['Nombre']}:\n\n"
+    resp += "DATOS DEL CLIENTE\n"
+    resp += f"Telefono: {c['Telefono'] or '—'}\n"
+    resp += f"Email: {c['Email'] or '—'}\n"
+    resp += f"NIT: {c['Nit'] or '—'}\n"
+    if c.get("FechaCreado"):
+        resp += f"Cliente desde: {str(c['FechaCreado'])[:10]}\n"
+
+    resp += "\nESTADISTICAS\n"
+    resp += _texto_estadisticas(stats)
+
+    resp += f"\nCOMPRAS ({len(historial['ventas'])})\n"
     if historial["ventas"]:
-        resp += "\nCompras:\n"
         for v in historial["ventas"]:
-            resp += "- " + v["Fecha"][:10] + ": " + v["Descripcion"] + " Q" + str(v["Total"]) + "\n"
+            metodo = _metodo_pago_de(v["Descripcion"])
+            resp += f"- {v['Fecha'][:10]}: {v['Descripcion']} - Q{v['Total']} (Pago: {metodo})\n"
     else:
-        resp += "\nSin compras registradas.\n"
+        resp += "Sin compras registradas.\n"
+
+    resp += f"\nORDENES DE SERVICIO ({len(historial['ordenes'])})\n"
     if historial["ordenes"]:
-        resp += "\nOrdenes de servicio:\n"
         for o in historial["ordenes"]:
-            resp += "- " + o["NumeroOrden"] + ": " + o["Equipo"] + " " + o["Marca"] + " | " + o["Estado"] + "\n"
+            resp += f"- {o['NumeroOrden']}: {o['Equipo']} {o['Marca']} | {o['Estado']}\n"
     else:
         resp += "Sin ordenes de servicio.\n"
+
+    resp += f"\nCOTIZACIONES ({len(historial['cotizaciones'])})\n"
+    if historial["cotizaciones"]:
+        for cot in historial["cotizaciones"]:
+            estado = ESTADOS_COTIZACION.get(cot["Estado"], cot["Estado"])
+            resp += f"- {cot['NumeroC']} | Q{cot['Total']} | {estado}\n"
+    else:
+        resp += "Sin cotizaciones.\n"
+
+    resp += f"\nGARANTIAS ACTIVAS ({len(historial['garantias'])})\n"
+    if historial["garantias"]:
+        for g in historial["garantias"]:
+            resp += f"- {g['NumeroGarantia']} | {g['ProductoNombre']} | vence {str(g['FechaVencimientoPropias'])[:10]}\n"
+    else:
+        resp += "Sin garantias activas.\n"
+
     return resp
 
 register("cliente.historial", historial_cliente_tool)
+
+
+def resumen_cliente_tool(data):
+    query = data.get("query", "") if isinstance(data, dict) else str(data)
+    clientes = buscar_cliente_completo(query)
+    if not clientes:
+        return f"No encontre cliente con '{query}'."
+    c = clientes[0]
+    historial = get_historial_cliente(c["Id"])
+    stats = _estadisticas_cliente(c, historial)
+
+    resp = f"Resumen de {c['Nombre']}:\n"
+    resp += _texto_estadisticas(stats)
+
+    garantias = historial["garantias"]
+    resp += f"\nGarantias activas ({len(garantias)}):\n"
+    if garantias:
+        for g in garantias:
+            resp += f"- {g['NumeroGarantia']} | {g['ProductoNombre']} | vence {str(g['FechaVencimientoPropias'])[:10]}\n"
+    else:
+        resp += "Ninguna.\n"
+
+    return resp
+
+register("cliente.resumen", resumen_cliente_tool)
 
 def inactivos_tool(data):
     clientes = get_clientes_inactivos(meses=3)
