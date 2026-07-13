@@ -71,6 +71,9 @@ init_unidades_medida()
 from database.aronium import init_puntos
 init_puntos()
 
+from database.aronium import init_codigos_barras
+init_codigos_barras()
+
 # Instalaciones que ya tenian usuarios antes de que existiera el wizard de
 # onboarding (o que lo completaron con el /setup viejo de un solo paso) se
 # marcan como completas automaticamente, para no forzar el wizard nuevo.
@@ -1116,6 +1119,29 @@ def get_fotos_producto(producto_id):
     fotos = [dict(r) for r in cur.fetchall()]
     conn.close()
     return jsonify(fotos)
+
+
+@app.route("/producto/<codigo>")
+def ver_producto_publico(codigo):
+    """Vista publica (sin login) a la que apunta el QR de las etiquetas de producto -
+    ver services/barcode_service.py. Muestra solo foto/nombre/precio/descripcion,
+    nunca stock ni costo."""
+    from database.aronium import get_product_by_code, get_foto_producto, get_descripcion_producto
+
+    producto = get_product_by_code(codigo)
+    if not producto:
+        return render_template("producto_publico.html", encontrado=False), 404
+
+    info = get_descripcion_producto(producto["Id"])
+    descripcion = (info["Descripcion"] if info and info.get("Descripcion") else "") or (producto.get("Description") or "")
+    foto = get_foto_producto(producto["Id"])
+
+    return render_template("producto_publico.html",
+        encontrado=True,
+        nombre=producto["Name"].strip(),
+        precio=producto["Price"],
+        descripcion=descripcion.strip(),
+        foto=foto)
 
 
 @app.route("/tiktok-verification.html")

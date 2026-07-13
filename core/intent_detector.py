@@ -21,6 +21,7 @@ from core.detectors.garantia_detector import GarantiaDetector
 from core.detectors.combo_detector import ComboDetector
 from core.detectors.unidad_medida_detector import UnidadMedidaDetector
 from core.detectors.puntos_detector import PuntosDetector
+from core.detectors.codigo_barras_detector import CodigoBarrasDetector
 from core.command_normalizer import CommandNormalizer
 
 
@@ -38,6 +39,7 @@ class IntentDetector:
             ComboDetector(),
             UnidadMedidaDetector(),
             PuntosDetector(),
+            CodigoBarrasDetector(),
             CotizacionDetector(),
             VentaDetector(),
             ProveedorDetector(),

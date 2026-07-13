@@ -417,6 +417,43 @@ Usuario escribe mensaje
     disponibles" (lista clientes con saldo > 0). Categoria "puntos" SI es de empleado
     (CATEGORIAS_EMPLEADO en core/action_engine.py) - ver puntos o canjearlos no es una
     decision de precios, es una operacion de venta normal.
+- Codigos de barras y etiquetas: tabla CodigoBarrasGenerado en nimbo.db (Id, ProductoId,
+  ProductoNombre, CodigoEAN, FechaGenerado) - registra el historico de codigos generados,
+  ya que Aronium solo guarda el Code final en Product sin quien/cuando lo asigno.
+  database.aronium.generar_ean13() arma un EAN-13 con prefijo 20 (rango 200-299, reservado
+  por GS1 para "restricted circulation numbers" de uso interno de tienda, no requiere
+  registro ante GS1) + 10 digitos random + digito verificador estandar EAN-13, y reintenta
+  hasta que no choque ni con ningun Product.Code existente en Aronium ni con uno ya generado
+  antes. asignar_codigo_barras(producto_id, producto_nombre) hace el UPDATE Product SET
+  Code=... en Aronium (pos.db) y el INSERT en CodigoBarrasGenerado (nimbo.db).
+  - "generar codigo cuchilla" / "codigo de barras para cuchilla" (codigobarras.generar):
+    si el producto ya tiene Code no lo sobreescribe, avisa cual tiene y sugiere generar la
+    etiqueta directamente.
+  - "etiqueta de cuchilla" (etiqueta.producto): genera el PDF de una sola etiqueta; si el
+    producto no tenia Code todavia se lo asigna primero (asignar_codigo_barras) para no
+    exigir el paso "generar codigo" antes como requisito separado.
+  - "etiquetas de todos los productos sin codigo" (etiqueta.lote_sin_codigo): recorre
+    database.aronium.get_productos_sin_codigo() (Product.Code NULL o vacio), genera un
+    EAN-13 nuevo para cada uno y arma un solo PDF con todas las etiquetas.
+  - services/barcode_service.py genera el PDF con reportlab: una pagina por etiqueta, tamano
+    fijo 5x3cm (50mm x 30mm, estandar de impresora de etiquetas continua) - nombre truncado,
+    precio, imagen de codigo de barras (python-barcode + ImageWriter, sin texto para ahorrar
+    espacio) y un QR (libreria qrcode) que apunta a http://[IP_LOCAL]:5000/producto/[codigo].
+    get_local_ip() detecta la IP local via un socket UDP a 8.8.8.8 (no envia datos, solo lee
+    la IP de salida); en este entorno WSL2 devuelve la IP interna de WSL2, no la IP LAN de
+    Windows, asi que el QR solo sera alcanzable desde un telefono si hay mirrored networking
+    o port forwarding configurado entre Windows y WSL2 (mismo tipo de limitacion que el
+    Pendiente #5 de mas abajo con el link de cotizaciones por WhatsApp).
+  - Ruta publica /producto/<codigo> en app.py (sin login) + templates/producto_publico.html:
+    busca el producto por Code (database.aronium.get_product_by_code, que ahora tambien trae
+    Product.Description de Aronium), muestra foto (ProductoFoto en nimbo.db) + nombre +
+    precio + descripcion (ProductoInfo en nimbo.db si existe, si no la Description nativa de
+    Aronium) - nunca stock ni costo. 404 con pagina propia si el codigo no matchea ningun
+    producto.
+  - Detector core/detectors/codigo_barras_detector.py + herramienta
+    tools/codigo_barras_tool.py. Categorias "codigobarras" y "etiqueta" SI son de empleado
+    (CATEGORIAS_EMPLEADO en core/action_engine.py) - generar codigos/etiquetas es una tarea
+    operativa de bodega, igual que el resto de inventario, no una decision de precios.
 
 ## Tablas nimbo.db
 Cliente, OrdenServicio, HistorialOrden, Kardex, StockMinimo, ProductoFoto, ProductoInfo,
@@ -424,7 +461,7 @@ Venta, ResumenTrimestral, PagoFijo, RecordatorioPersonal, ChatHistorial,
 Gasto, ResumenContable, Proveedor, ContactoProveedor, ProductoProveedor,
 OrdenCompra, ItemOrdenCompra, HistorialPrecio, Usuario, PasswordResetToken, Configuracion,
 Cotizacion, CajaTurno, MovimientoCaja, ItemCarrito, Descuento, GarantiaProducto, GarantiaVenta,
-ProductoCombo, ItemCombo, UnidadMedida, PuntosCliente, MovimientoPuntos
+ProductoCombo, ItemCombo, UnidadMedida, PuntosCliente, MovimientoPuntos, CodigoBarrasGenerado
 
 ## Variables de entorno (.env)
 GEMINI_API_KEY, FB_PAGE_TOKEN, FB_PAGE_ID, WA_TOKEN, WA_PHONE_ID, IG_ACCOUNT_ID,

@@ -33,6 +33,7 @@ VOCABULARIO = [
     "docena", "docenas", "cajas", "par", "pares", "paquete", "paquetes",
     "trio", "trios", "cuarteto", "cuartetos", "vienen", "unidad", "unidades",
     "puntos", "punto", "disponibles", "nivel", "niveles", "bronce", "plata", "lealtad",
+    "codigo", "codigos", "barras", "etiqueta", "etiquetas", "imprimir",
     # electrodomesticos y repuestos comunes en la tienda
     "licuadora", "licuadoras", "refrigerador", "refrigeradores", "cuchilla", "cuchillas",
     "empaque", "empaques", "adaptador", "adaptadores", "regulador", "reguladores",

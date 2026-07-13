@@ -85,7 +85,7 @@ def get_product_by_code(code):
     conn = connect()
     cur = conn.cursor()
     cur.execute("""
-        SELECT p.Id, p.Name, p.Code, p.Price, p.Cost,
+        SELECT p.Id, p.Name, p.Code, p.Price, p.Cost, p.Description,
                IFNULL(SUM(s.Quantity),0) AS Stock
         FROM Product p
         LEFT JOIN Stock s ON p.Id = s.ProductId
@@ -2938,5 +2938,101 @@ def hacer_backup():
     backups = sorted([f for f in os.listdir(backup_dir) if f.startswith("nimbo_")])
     while len(backups) > 7:
         os.remove(f"{backup_dir}/{backups.pop(0)}")
-    
+
     return fecha
+
+
+# ── CODIGOS DE BARRAS ─────────────────────────────────
+
+# Rango 200-299: GS1 lo reserva para "restricted circulation numbers" de uso interno
+# (tiendas/almacenes), no requiere registro ante GS1 ni riesgo de chocar con un
+# codigo de fabricante real.
+PREFIJO_EAN_INTERNO = "20"
+
+
+def init_codigos_barras():
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS CodigoBarrasGenerado (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ProductoId INTEGER,
+            ProductoNombre TEXT,
+            CodigoEAN TEXT,
+            FechaGenerado DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def _digito_verificador_ean13(doce_digitos):
+    """Algoritmo estandar EAN-13: posiciones impares (1a, 3a, ...) x1, pares x3."""
+    total = sum(int(d) if i % 2 == 0 else int(d) * 3 for i, d in enumerate(doce_digitos))
+    return (10 - (total % 10)) % 10
+
+
+def _codigo_ean_existe(codigo):
+    conn = connect()
+    cur = conn.cursor()
+    cur.execute("SELECT 1 FROM Product WHERE Code=? LIMIT 1", (codigo,))
+    existe_aronium = cur.fetchone() is not None
+    conn.close()
+    if existe_aronium:
+        return True
+
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT 1 FROM CodigoBarrasGenerado WHERE CodigoEAN=? LIMIT 1", (codigo,))
+    existe_nimbo = cur.fetchone() is not None
+    conn.close()
+    return existe_nimbo
+
+
+def generar_ean13():
+    """Genera un codigo EAN-13 unico (no choca con ningun Product.Code existente en
+    Aronium ni con uno ya generado antes en CodigoBarrasGenerado)."""
+    import random
+    while True:
+        cuerpo = PREFIJO_EAN_INTERNO + "".join(str(random.randint(0, 9)) for _ in range(10))
+        codigo = cuerpo + str(_digito_verificador_ean13(cuerpo))
+        if not _codigo_ean_existe(codigo):
+            return codigo
+
+
+def get_productos_sin_codigo(limit=500):
+    conn = connect()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT p.Id, p.Name, p.Code, p.Price, p.Cost,
+               IFNULL(SUM(s.Quantity),0) AS Stock
+        FROM Product p
+        LEFT JOIN Stock s ON p.Id = s.ProductId
+        WHERE p.IsEnabled=1 AND (p.Code IS NULL OR TRIM(p.Code)='')
+        GROUP BY p.Id ORDER BY p.Name LIMIT ?
+    """, (limit,))
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+def asignar_codigo_barras(producto_id, producto_nombre):
+    """Genera un EAN-13 nuevo y lo asigna como Code del producto en Aronium; registra
+    el evento en CodigoBarrasGenerado (nimbo.db) porque Aronium no guarda quien/cuando
+    se genero el codigo. No revisa si el producto ya tenia un Code - eso lo decide
+    quien llama (ver codigobarras.generar en tools/codigo_barras_tool.py)."""
+    codigo = generar_ean13()
+
+    conn = connect()
+    cur = conn.cursor()
+    cur.execute("UPDATE Product SET Code=? WHERE Id=?", (codigo, producto_id))
+    conn.commit()
+    conn.close()
+
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("INSERT INTO CodigoBarrasGenerado (ProductoId, ProductoNombre, CodigoEAN) VALUES (?,?,?)",
+        (producto_id, producto_nombre, codigo))
+    conn.commit()
+    conn.close()
+    return codigo

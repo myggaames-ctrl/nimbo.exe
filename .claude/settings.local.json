@@ -91,7 +91,13 @@
       "Bash(awk '/^\\\\.btn/{print NR\": \"$0}' templates/index.html)",
       "Bash(awk '/^\\\\.badge/{print NR\": \"$0}' templates/index.html)",
       "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:5000/ --max-time 5)",
-      "Bash(grep *)"
+      "Bash(grep *)",
+      "Bash(file /home/ictor_axtor/micocina-dashboard/static/etiquetas/*.pdf)",
+      "Bash(pdftoppm -png -r 200 /home/ictor_axtor/micocina-dashboard/static/etiquetas/ETQ-2077955822009.pdf /tmp/claude-1000/-home-ictor-axtor-micocina-dashboard/986b1535-ce3b-471e-9b15-fa1afa17b788/scratchpad/etq_preview)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:5000/producto/01293428)",
+      "Bash(curl -s http://localhost:5000/producto/01293428)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:5000/producto/9999999999999)",
+      "Bash(curl -s http://localhost:5000/producto/9999999999999)"
     ]
   }
 }
