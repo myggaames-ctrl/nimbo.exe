@@ -438,3 +438,47 @@ def flujo_proyectado_detalle_tool(data):
     return resp
 
 register("contabilidad.flujo_proyectado_detalle", flujo_proyectado_detalle_tool)
+
+
+def _resumen_iva(d):
+    resp = f"Declaracion de IVA - {d['periodo']}\n\n"
+    resp += f"Ventas totales: Q{d['total_ventas']:.2f} ({d['cantidad_ventas']} ventas)\n"
+    resp += f"Debito fiscal (IVA cobrado, ventas x 12/112): Q{d['debito_fiscal']:.2f}\n"
+    resp += f"Compras a proveedores registradas: Q{d['total_compras']:.2f} ({d['cantidad_ordenes_compra']} ordenes)\n"
+    resp += f"Credito fiscal (IVA pagado, compras x 12%): Q{d['credito_fiscal']:.2f}\n"
+    if d["cantidad_ordenes_compra"] == 0:
+        resp += ("(Sin ordenes de compra con monto registrado este periodo - si tienes facturas "
+                  "de proveedores fuera del sistema, sumalas manualmente al credito fiscal.)\n")
+    resp += "---\n"
+    if d["a_favor"]:
+        resp += f"Tienes credito fiscal a favor de Q{abs(d['iva_a_pagar']):.2f} (no pagas IVA este mes, se traslada como remanente).\n"
+    else:
+        resp += f"IVA a pagar: Q{d['iva_a_pagar']:.2f}\n"
+    resp += f"\n{d['plazo']}.\n"
+    resp += "Este resumen es de referencia - verifica los montos contra tus facturas antes de declarar."
+    return resp
+
+
+def declaracion_iva_tool(data):
+    from database.aronium import get_declaracion_iva
+    from services.pdf_iva import generar_pdf_declaracion_iva
+    d = get_declaracion_iva()
+    filename = generar_pdf_declaracion_iva(d)
+    resp = _resumen_iva(d)
+    resp += f'\n\n<a href="/api/download/{filename}" download style="color:var(--accent)">⬇️ Descargar PDF de referencia</a>'
+    return resp
+
+register("contabilidad.declaracion_iva", declaracion_iva_tool)
+
+
+def iva_rapido_tool(data):
+    from database.aronium import get_declaracion_iva
+    d = get_declaracion_iva()
+    if d["a_favor"]:
+        return (f"Para {d['periodo']}: tienes credito fiscal a favor de Q{abs(d['iva_a_pagar']):.2f} "
+                f"(debito Q{d['debito_fiscal']:.2f} - credito Q{d['credito_fiscal']:.2f}), no pagas IVA este mes.")
+    return (f"Para {d['periodo']}: debes Q{d['iva_a_pagar']:.2f} de IVA "
+            f"(debito Q{d['debito_fiscal']:.2f} - credito Q{d['credito_fiscal']:.2f}). "
+            "Escribe 'declaracion de IVA' para el resumen completo con PDF.")
+
+register("contabilidad.iva_rapido", iva_rapido_tool)

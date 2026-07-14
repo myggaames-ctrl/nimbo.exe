@@ -297,6 +297,30 @@ Usuario escribe mensaje
   (costo / (1 - 6% comision POS - 30% margen objetivo)) y le pasa a Gemini los productos ya separados
   en dos grupos (saludable / necesita ajuste) para que solo narre el analisis sin recalcular ni inventar
   precios. Usa tambien get_balance_mes() (gastos operativos, ingresos) como contexto. Admin-only.
+  - Declaracion mensual de IVA (SAT-2046, declaraguate.com): database.aronium.
+    get_declaracion_iva(mes=None, anio=None) - si no se especifica periodo, usa el mes recien
+    cerrado (mes actual - 1), no el mes en curso todavia incompleto, porque ese es el periodo
+    que efectivamente toca declarar dentro de los primeros 10 dias habiles del mes actual.
+    Debito fiscal = ventas del periodo x 12/112 (se asume que el precio de venta YA incluye
+    IVA, practica estandar en Guatemala para consumidor final - distinto del campo
+    "iva_estimado" de get_balance_mes(), que es solo un estimado informativo separado y usa
+    ingresos x 12% sin dividir, no se toco). Credito fiscal = 12% sobre el total de
+    OrdenCompra del periodo con Total > 0 (las ordenes creadas por "genera orden para X" hoy
+    siempre quedan en Q0 porque ese flujo no captura precio de compra - ver Pendiente #9 -
+    por eso se filtra Total > 0 y la respuesta avisa explicitamente cuando el credito fiscal
+    da Q0, para no confundirlo con "no compraste nada"). IVA a pagar = debito - credito; si
+    sale negativo se reporta como credito fiscal a favor (remanente, no se implementa arrastre
+    entre meses, solo se informa).
+    - "declaracion de iva" / "iva del mes" / "resumen de iva" (contabilidad.declaracion_iva)
+      da el resumen completo y genera un PDF de referencia (services/pdf_iva.py,
+      generar_pdf_declaracion_iva() - mismo patron reportlab que services/pdf_cotizacion.py)
+      guardado en la raiz del proyecto (NO en static/, a diferencia de las cotizaciones - es
+      informacion financiera interna, se sirve solo logueado via /api/download/<filename>,
+      mismo endpoint que ya usaba el Excel de contabilidad). "cuanto iva debo"
+      (contabilidad.iva_rapido) da solo el monto a pagar, sin generar PDF.
+    - Recordatorio automatico: get_recordatorios() agrega un aviso de urgencia alta del dia 1
+      al 10 de cada mes ("Recuerda declarar el IVA del mes pasado") - el plazo real de la SAT
+      es en dias habiles, aqui se aproxima como dias de calendario 1-10.
 - Reportes: dia/mes/trimestre/semestre/anual, Excel, automatico 5:30pm, limpieza anual
 - Contenido: posts, scripts, video Veo3, publicacion Facebook
 - Recordatorios: pagos fijos, follow ups, cumpleanos, contenido

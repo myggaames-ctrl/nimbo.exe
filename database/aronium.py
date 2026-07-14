@@ -2927,6 +2927,17 @@ def get_recordatorios():
             "urgencia": "alta"
         })
 
+    # Declaracion mensual de IVA ante la SAT: se declara dentro de los primeros
+    # 10 dias (habiles, aproximado aqui como dias de calendario) del mes en
+    # curso, correspondiente al mes recien cerrado.
+    if dia <= 10:
+        recordatorios.append({
+            "tipo": "iva",
+            "mensaje": "Recuerda declarar el IVA del mes pasado (formulario SAT-2046, "
+                       "declaraguate.com). Escribe 'declaracion de IVA' en el chat para el resumen.",
+            "urgencia": "alta"
+        })
+
     conn.close()
     return recordatorios
 
@@ -3205,6 +3216,82 @@ def get_balance_mes(mes=None, anio=None):
         "utilidad_bruta": round(utilidad_bruta, 2),
         "utilidad_neta": round(utilidad_neta, 2)
     }
+
+TASA_IVA_GUATEMALA = 0.12
+
+
+def get_declaracion_iva(mes=None, anio=None):
+    """Calculo de referencia para la declaracion mensual de IVA ante la SAT
+    (formulario SAT-2046, declaraguate.com).
+
+    Si no se especifica mes/anio, se usa el mes recien cerrado (mes actual - 1),
+    no el mes en curso todavia incompleto - es el periodo que efectivamente
+    toca declarar dentro de los primeros 10 dias habiles del mes actual.
+
+    Debito fiscal (IVA cobrado): se asume que los precios de venta ya incluyen
+    IVA (practica estandar en Guatemala para ventas a consumidor final), por lo
+    que se calcula ventas x 12/112 para extraer el IVA ya incluido en el precio.
+
+    Credito fiscal (IVA pagado a proveedores): 12% sobre el total de las
+    OrdenCompra del periodo con Total > 0. Las ordenes creadas hoy por "genera
+    orden para X" (tools/proveedor_tool.py) siempre quedan en Q0 porque ese
+    flujo no captura precio de compra (ver Pendiente #9 en CLAUDE.md) - por eso
+    se filtra Total > 0 y se avisa en la respuesta cuando el credito fiscal
+    calculado es Q0, para que no se confunda con "no compraste nada"."""
+    from datetime import datetime
+    import calendar
+
+    if not mes and not anio:
+        now = datetime.now()
+        mes = now.month - 1
+        anio = now.year
+        if mes == 0:
+            mes = 12
+            anio -= 1
+    else:
+        if not anio: anio = datetime.now().year
+        if not mes: mes = datetime.now().month
+
+    conn = nimbo_connect()
+    cur = conn.cursor()
+
+    cur.execute("SELECT IFNULL(SUM(Total),0) as total, COUNT(*) as cnt FROM Venta WHERE Mes=? AND Anio=?", (mes, anio))
+    row = cur.fetchone()
+    total_ventas = float(row["total"])
+    cantidad_ventas = row["cnt"]
+
+    cur.execute("""SELECT IFNULL(SUM(Total),0) as total, COUNT(*) as cnt FROM OrdenCompra
+        WHERE strftime('%m', Fecha)=? AND strftime('%Y', Fecha)=? AND Total > 0""",
+        (str(mes).zfill(2), str(anio)))
+    row2 = cur.fetchone()
+    total_compras = float(row2["total"])
+    cantidad_ordenes = row2["cnt"]
+
+    conn.close()
+
+    debito_fiscal = round(total_ventas * TASA_IVA_GUATEMALA / (1 + TASA_IVA_GUATEMALA), 2)
+    credito_fiscal = round(total_compras * TASA_IVA_GUATEMALA, 2)
+    iva_a_pagar = round(debito_fiscal - credito_fiscal, 2)
+
+    mes_siguiente = mes + 1 if mes < 12 else 1
+    anio_siguiente = anio if mes < 12 else anio + 1
+
+    return {
+        "mes": mes,
+        "anio": anio,
+        "periodo": f"{calendar.month_abbr[mes]} {anio}",
+        "total_ventas": round(total_ventas, 2),
+        "cantidad_ventas": cantidad_ventas,
+        "debito_fiscal": debito_fiscal,
+        "total_compras": round(total_compras, 2),
+        "cantidad_ordenes_compra": cantidad_ordenes,
+        "credito_fiscal": credito_fiscal,
+        "iva_a_pagar": iva_a_pagar,
+        "a_favor": iva_a_pagar < 0,
+        "plazo": (f"Declarar (formulario SAT-2046, declaraguate.com) dentro de los primeros "
+                  f"10 dias habiles de {calendar.month_abbr[mes_siguiente]} {anio_siguiente}")
+    }
+
 
 def get_valor_inventario():
     conn = connect()

@@ -38,6 +38,19 @@ class ContabilidadDetector:
         r"^detalle\s+(?:de\s+)?(?:la\s+)?proyeccion\s+(?:de\s+)?(?:flujo\s+de\s+)?caja$",
     ]
 
+    PATTERNS_DECLARACION_IVA = [
+        r"^declaracion\s+(?:de\s+|mensual\s+de\s+)?iva$",
+        r"^declarar\s+(?:el\s+)?iva$",
+        r"^iva\s+(?:del?\s+)?mes$",
+        r"^resumen\s+(?:de\s+)?iva$",
+    ]
+
+    PATTERNS_IVA_RAPIDO = [
+        r"^cuanto\s+iva\s+debo$",
+        r"^cuanto\s+debo\s+de\s+iva$",
+        r"^cuanto\s+(?:tengo\s+que\s+pagar|pago|debo\s+pagar)\s+de\s+iva$",
+    ]
+
     PATTERNS_GASTOS_LIST = [
         r"^(?:ver|lista[r]?|mis)\s+gastos?$",
         r"^gastos?\s+(?:del?\s+)?mes$",
@@ -116,6 +129,14 @@ class ContabilidadDetector:
         for pattern in self.PATTERNS_FLUJO_PROYECTADO:
             if re.search(pattern, text):
                 return {"intent": "contabilidad.flujo_proyectado"}
+
+        for pattern in self.PATTERNS_IVA_RAPIDO:
+            if re.search(pattern, text):
+                return {"intent": "contabilidad.iva_rapido"}
+
+        for pattern in self.PATTERNS_DECLARACION_IVA:
+            if re.search(pattern, text):
+                return {"intent": "contabilidad.declaracion_iva"}
 
         for pattern in self.PATTERNS_GASTOS_LIST:
             if re.search(pattern, text):
