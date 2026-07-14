@@ -2808,6 +2808,15 @@ def get_recordatorios():
             "urgencia": "media"
         })
 
+    # Cuentas por cobrar que vencen en los proximos 3 dias
+    cuentas_por_vencer = get_cuentas_por_vencer(dias=3)
+    for c in cuentas_por_vencer:
+        recordatorios.append({
+            "tipo": "cuentacobrar",
+            "mensaje": f"{c['ClienteNombre']} debe Q{c['MontoPendiente']} ({c['Descripcion']}) - vence pronto",
+            "urgencia": "alta"
+        })
+
     conn.close()
     return recordatorios
 
@@ -3311,3 +3320,226 @@ def asignar_codigo_barras(producto_id, producto_nombre):
     conn.commit()
     conn.close()
     return codigo
+
+
+# ── CUENTAS POR COBRAR ────────────────────────────────
+
+DIAS_VENCIMIENTO_CUENTA_DEFAULT = 30  # no especificado en el pedido original; mismo
+# criterio que DIAS_GARANTIA_PROPIA_DEFAULT/COTIZACION (15 dias) - un plazo razonable
+# por defecto que el admin puede ajustar dando una fecha explicita al vender a credito.
+
+ESTADOS_CUENTA_COBRAR = ("PENDIENTE", "PAGADO_PARCIAL", "PAGADO", "VENCIDO")
+
+
+def init_cuentas_cobrar():
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS CuentaCobrar (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ClienteId INTEGER,
+            ClienteNombre TEXT,
+            ClienteTelefono TEXT,
+            Descripcion TEXT,
+            MontoTotal NUMERIC,
+            MontoPagado NUMERIC DEFAULT 0,
+            MontoPendiente NUMERIC,
+            FechaCreada DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FechaVencimiento TEXT,
+            Estado TEXT DEFAULT 'PENDIENTE',
+            Notas TEXT,
+            VentaId INTEGER
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS PagoCuenta (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            CuentaId INTEGER,
+            Monto NUMERIC,
+            MetodoPago TEXT,
+            Fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
+            Notas TEXT,
+            FOREIGN KEY (CuentaId) REFERENCES CuentaCobrar(Id)
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def crear_cuenta_cobrar(cliente_id, cliente_nombre, cliente_telefono, descripcion, monto_total,
+                         monto_pagado=0, fecha_vencimiento=None, notas="", venta_id=None):
+    """monto_pagado > 0 se usa para el enganche de una venta a credito (ver
+    core/nimbo.py venta_waiting_credito_fecha) - se registra tambien como el primer
+    PagoCuenta para que quede en el detalle de abonos."""
+    from datetime import timedelta
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    monto_total = round(float(monto_total), 2)
+    monto_pagado = round(float(monto_pagado or 0), 2)
+    monto_pendiente = round(monto_total - monto_pagado, 2)
+    if not fecha_vencimiento:
+        fecha_vencimiento = (datetime.now() + timedelta(days=DIAS_VENCIMIENTO_CUENTA_DEFAULT)).strftime("%Y-%m-%d")
+    estado = "PAGADO" if monto_pendiente <= 0 else ("PAGADO_PARCIAL" if monto_pagado > 0 else "PENDIENTE")
+    cur.execute("""INSERT INTO CuentaCobrar
+        (ClienteId, ClienteNombre, ClienteTelefono, Descripcion, MontoTotal, MontoPagado, MontoPendiente,
+         FechaVencimiento, Estado, Notas, VentaId)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+        (cliente_id, cliente_nombre, cliente_telefono, descripcion, monto_total, monto_pagado,
+         max(monto_pendiente, 0), fecha_vencimiento, estado, notas, venta_id))
+    cuenta_id = cur.lastrowid
+    if monto_pagado > 0:
+        cur.execute("INSERT INTO PagoCuenta (CuentaId, Monto, MetodoPago, Notas) VALUES (?,?,?,?)",
+            (cuenta_id, monto_pagado, "enganche", "Enganche inicial"))
+    conn.commit()
+    conn.close()
+    return cuenta_id
+
+
+def get_cuenta_por_id(cuenta_id):
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM CuentaCobrar WHERE Id=?", (cuenta_id,))
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def marcar_cuentas_vencidas():
+    """Lazy, igual que marcar_cotizaciones_vencidas()/marcar_garantias_vencidas():
+    se corre cada vez que se consultan cuentas. Una cuenta VENCIDO que recibe un abono
+    y queda saldada pasa a PAGADO (ver registrar_pago_cuenta); si queda con saldo y la
+    fecha ya paso, esta funcion la vuelve a marcar VENCIDO en la siguiente consulta."""
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""UPDATE CuentaCobrar SET Estado='VENCIDO'
+        WHERE Estado IN ('PENDIENTE','PAGADO_PARCIAL') AND MontoPendiente > 0
+        AND date(FechaVencimiento) < date('now')""")
+    conn.commit()
+    conn.close()
+
+
+def registrar_pago_cuenta(cuenta_id, monto, metodo_pago="efectivo", notas=""):
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM CuentaCobrar WHERE Id=?", (cuenta_id,))
+    row = cur.fetchone()
+    if not row:
+        conn.close()
+        return None
+    cuenta = dict(row)
+    monto = round(float(monto), 2)
+    nuevo_pagado = round(cuenta["MontoPagado"] + monto, 2)
+    nuevo_pendiente = round(cuenta["MontoTotal"] - nuevo_pagado, 2)
+    estado = "PAGADO" if nuevo_pendiente <= 0 else "PAGADO_PARCIAL"
+    cur.execute("UPDATE CuentaCobrar SET MontoPagado=?, MontoPendiente=?, Estado=? WHERE Id=?",
+        (nuevo_pagado, max(nuevo_pendiente, 0), estado, cuenta_id))
+    cur.execute("INSERT INTO PagoCuenta (CuentaId, Monto, MetodoPago, Notas) VALUES (?,?,?,?)",
+        (cuenta_id, monto, metodo_pago, notas))
+    conn.commit()
+    conn.close()
+    return {"cuenta_id": cuenta_id, "monto_pagado": nuevo_pagado, "monto_pendiente": max(nuevo_pendiente, 0), "estado": estado}
+
+
+def registrar_pago_cliente(cliente_id, monto, metodo_pago="efectivo"):
+    """'Juan Perez pago Q100' (tools/cuenta_cobrar_tool.py) no dice a que cuenta
+    especifica aplica el abono, asi que se reparte FIFO: primero a la cuenta pendiente
+    mas antigua, y lo que sobre a la siguiente, hasta agotar el monto o las cuentas.
+    Retorna None si el cliente no tiene ninguna cuenta pendiente."""
+    marcar_cuentas_vencidas()
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""SELECT * FROM CuentaCobrar
+        WHERE ClienteId=? AND Estado IN ('PENDIENTE','PAGADO_PARCIAL','VENCIDO') AND MontoPendiente > 0
+        ORDER BY FechaCreada ASC""", (cliente_id,))
+    cuentas = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    if not cuentas:
+        return None
+
+    restante = round(float(monto), 2)
+    aplicados = []
+    for c in cuentas:
+        if restante <= 0:
+            break
+        a_aplicar = round(min(restante, c["MontoPendiente"]), 2)
+        if a_aplicar <= 0:
+            continue
+        resultado = registrar_pago_cuenta(c["Id"], a_aplicar, metodo_pago=metodo_pago)
+        aplicados.append({
+            "cuenta_id": c["Id"], "descripcion": c["Descripcion"],
+            "monto": a_aplicar, "estado": resultado["estado"]
+        })
+        restante = round(restante - a_aplicar, 2)
+    return {"aplicados": aplicados, "sobrante": restante}
+
+
+def get_cuentas_cobrar(estado=None, limit=100):
+    marcar_cuentas_vencidas()
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    query = "SELECT * FROM CuentaCobrar WHERE MontoPendiente > 0"
+    params = []
+    if estado:
+        query += " AND Estado=?"
+        params.append(estado)
+    query += " ORDER BY FechaVencimiento ASC LIMIT ?"
+    params.append(limit)
+    cur.execute(query, params)
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+def get_cuentas_cliente(query, solo_pendientes=True):
+    marcar_cuentas_vencidas()
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    sql = "SELECT * FROM CuentaCobrar WHERE (ClienteNombre LIKE ? OR ClienteTelefono LIKE ?)"
+    params = [f"%{query}%", f"%{query}%"]
+    if solo_pendientes:
+        sql += " AND MontoPendiente > 0"
+    sql += " ORDER BY FechaCreada DESC"
+    cur.execute(sql, params)
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+def get_cuentas_por_vencer(dias=3):
+    marcar_cuentas_vencidas()
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""SELECT * FROM CuentaCobrar
+        WHERE Estado IN ('PENDIENTE','PAGADO_PARCIAL') AND MontoPendiente > 0
+        AND date(FechaVencimiento) BETWEEN date('now') AND date('now', '+' || ? || ' days')
+        ORDER BY FechaVencimiento ASC""", (dias,))
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+def get_resumen_cuentas_cobrar():
+    """Alimenta el widget de Dashboard: total por cobrar, cuentas vencidas (rojo) y
+    proximas a vencer en 3 dias (naranja) - ver /api/cuentascobrar/resumen."""
+    marcar_cuentas_vencidas()
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT COALESCE(SUM(MontoPendiente),0) as total, COUNT(*) as cnt FROM CuentaCobrar WHERE MontoPendiente > 0")
+    r = cur.fetchone()
+    total_por_cobrar, cantidad_total = r["total"], r["cnt"]
+    cur.execute("SELECT COALESCE(SUM(MontoPendiente),0) as total, COUNT(*) as cnt FROM CuentaCobrar WHERE Estado='VENCIDO'")
+    r = cur.fetchone()
+    vencidas_total, vencidas_cantidad = r["total"], r["cnt"]
+    conn.close()
+
+    proximas = get_cuentas_por_vencer(dias=3)
+    proximas_total = round(sum(c["MontoPendiente"] for c in proximas), 2)
+
+    return {
+        "total_por_cobrar": round(total_por_cobrar, 2),
+        "cantidad_total": cantidad_total,
+        "vencidas_total": round(vencidas_total, 2),
+        "vencidas_cantidad": vencidas_cantidad,
+        "proximas_total": proximas_total,
+        "proximas_cantidad": len(proximas)
+    }

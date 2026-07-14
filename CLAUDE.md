@@ -620,6 +620,65 @@ Usuario escribe mensaje
   - Grupo visible tambien en cliente.buscar, cliente.historial y cliente.resumen (via
     _estadisticas_cliente/_texto_estadisticas en tools/cliente_tool.py), no solo en
     "grupo de X".
+- Cuentas por cobrar: 2 tablas en nimbo.db. CuentaCobrar (Id, ClienteId, ClienteNombre,
+  ClienteTelefono denormalizados igual que Cotizacion/GarantiaVenta, Descripcion, MontoTotal,
+  MontoPagado, MontoPendiente, FechaCreada, FechaVencimiento, Estado, Notas, VentaId - esta
+  ultima no estaba en el pedido original, se agrego para poder vincular una cuenta a la venta
+  a credito que la genero, igual que OrdenServicioId en GarantiaVenta) + PagoCuenta (historial
+  de abonos: Id, CuentaId, Monto, MetodoPago, Fecha, Notas). database.aronium.
+  DIAS_VENCIMIENTO_CUENTA_DEFAULT = 30 (no especificado en el pedido, mismo criterio que el
+  resto de defaults del sistema - GarantiaProducto 30 dias propios, Cotizacion 15 dias) se usa
+  cuando se crea una cuenta sin fecha de vencimiento explicita (comando "X debe QN") o cuando
+  el step de fecha en el flujo de venta a credito no logra interpretar la respuesta.
+  - Estado (PENDIENTE/PAGADO_PARCIAL/PAGADO/VENCIDO): database.aronium.
+    marcar_cuentas_vencidas() es lazy (igual que marcar_cotizaciones_vencidas()/
+    marcar_garantias_vencidas() - se corre cada vez que se consultan cuentas) y marca VENCIDO
+    cualquier cuenta PENDIENTE o PAGADO_PARCIAL cuya FechaVencimiento ya paso. Un abono sobre
+    una cuenta VENCIDO no le quita el estado directamente (registrar_pago_cuenta solo mira
+    MontoPendiente para decidir PAGADO/PAGADO_PARCIAL); si queda saldada pasa a PAGADO, pero si
+    queda con saldo la siguiente llamada a marcar_cuentas_vencidas() la vuelve a marcar VENCIDO
+    porque la fecha sigue en el pasado.
+  - "Juan Perez pago Q100" (cuentacobrar.pagar, tools/cuenta_cobrar_tool.py) no especifica a
+    que cuenta aplica el abono si el cliente tiene varias pendientes: database.aronium.
+    registrar_pago_cliente() lo reparte FIFO (la cuenta pendiente mas antigua primero) hasta
+    agotar el monto o las cuentas; el sobrante (si el abono es mayor a toda la deuda) se
+    reporta en la respuesta sin aplicarse a nada.
+  - "Juan Perez debe Q200 por licuadora" (cuentacobrar.crear) / "Juan Perez debe Q200" (sin
+    descripcion, usa "Deuda general") buscan el cliente con buscar_cliente_completo (mismo
+    fuzzy match que el resto del sistema) - si no existe, piden registrarlo primero en vez de
+    crearlo sobre la marcha (a diferencia de la venta simple del chat, una deuda nueva sin
+    cliente identificado no tiene a quien cobrarsele). "cuentas por cobrar" (cuentacobrar.
+    listar) lista todo lo que tenga MontoPendiente > 0 sin importar el estado; "cuentas
+    vencidas" (cuentacobrar.vencidas) filtra solo Estado='VENCIDO'; "cuanto debe Juan Perez" /
+    "deuda de Juan Perez" (cuentacobrar.consultar) trae solo las cuentas pendientes de ese
+    cliente (database.aronium.get_cuentas_cliente(query, solo_pendientes=True) por defecto).
+  - Detector core/detectors/cuenta_cobrar_detector.py - se revisa antes que ClienteDetector/
+    VentaDetector en core/intent_detector.py, aunque en la practica no hay ambiguedad real: a
+    diferencia de "Juan Perez es mayorista" (ClienteDetector), los patrones de esta categoria
+    empiezan con nombre+verbo ("X debe Q...", "X pago/abono Q...") que ningun otro detector
+    reconoce. "cuanto debe X" se revisa antes que "X debe QN..." dentro del propio detector
+    para que una consulta no se confunda con una deuda nueva (aunque en la practica nunca
+    chocan: la regex de crear exige un numero justo despues de "debe").
+  - Categoria "cuentacobrar" SI es de empleado (CATEGORIAS_EMPLEADO en
+    core/action_engine.py) - cobrar y anotar deudas de clientes es una operacion de venta
+    normal en mostrador, igual que puntos, no una decision de precios como descuento/garantia.
+  - Integracion con la venta simple del chat: el step venta_waiting_pago (core/nimbo.py) ahora
+    acepta "credito"/"fiado" ademas de efectivo/tarjeta/transferencia/mixto. Exige un cliente
+    ya identificado (no permite "Consumidor Final" a credito, no hay a quien cobrarle despues)
+    y arranca 2 pasos nuevos: venta_waiting_credito_enganche (monto que paga de una vez, puede
+    ser 0) y venta_waiting_credito_fecha (cuando vence el resto - acepta un numero de dias o
+    una fecha dd/mm/aaaa; si no logra interpretarla cae a DIAS_VENCIMIENTO_CUENTA_DEFAULT con
+    aviso en la respuesta). Al terminar registra la Venta igual que cualquier otro metodo de
+    pago (_registrar_venta_chat, con su garantia y puntos) y ademas crea la CuentaCobrar por el
+    saldo pendiente (MontoTotal=total_final, MontoPagado=enganche). Esta integracion solo se
+    implemento en el flujo de venta del chat (igual que el canje interactivo de puntos, ver
+    seccion Programa de lealtad) - Caja y Cotizaciones no tienen "credito" como metodo de pago.
+  - Recordatorios: get_recordatorios() agrega un recordatorio por cada cuenta que vence en
+    los proximos 3 dias (get_cuentas_por_vencer(dias=3), urgencia alta).
+  - Widget en el dashboard (/api/cuentascobrar/resumen, admin-only igual que el resto de
+    widgets financieros del Dashboard - ver seccion "Login y roles"): total por cobrar,
+    cuentas vencidas (rojo) y proximas a vencer en 3 dias (naranja, mismo color --accent que
+    usa badge-orange en el resto del dashboard, no hay una variable --orange separada).
 
 ## Tablas nimbo.db
 Cliente, OrdenServicio, HistorialOrden, Kardex, StockMinimo, ProductoFoto, ProductoInfo,
@@ -629,7 +688,7 @@ Gasto, ResumenContable, Proveedor, ContactoProveedor, ProductoProveedor,
 OrdenCompra, ItemOrdenCompra, HistorialPrecio, Usuario, PasswordResetToken, Configuracion,
 Cotizacion, CajaTurno, MovimientoCaja, ItemCarrito, Descuento, GarantiaProducto, GarantiaVenta,
 ProductoCombo, ItemCombo, UnidadMedida, PuntosCliente, MovimientoPuntos, CodigoBarrasGenerado,
-GrupoDescuento
+GrupoDescuento, CuentaCobrar, PagoCuenta
 
 ## Variables de entorno (.env)
 GEMINI_API_KEY, FB_PAGE_TOKEN, FB_PAGE_ID, WA_TOKEN, WA_PHONE_ID, IG_ACCOUNT_ID,
@@ -643,14 +702,16 @@ MAIL_SERVER, MAIL_PORT, MAIL_USERNAME, MAIL_PASSWORD, ADMIN_EMAIL
 ## Pendientes
 1. Instagram API (esperando aprobacion Meta)
 2. TikTok API (en revision)
-3. Deudas/pagos a plazos
-4. Metas semanales
-5. Nimbo accesible desde telefono (afecta a Cotizaciones: el link del PDF en el mensaje
+3. Metas semanales
+4. Nimbo accesible desde telefono (afecta a Cotizaciones: el link del PDF en el mensaje
    de WhatsApp solo abre en la red local hasta que el dashboard sea accesible publicamente)
-6. App movil
-7. Mejorar OpenClaw vs Gemini deteccion
-8. Comando de chat para marcar una garantia como RECLAMADA (integracion futura con
+5. App movil
+6. Mejorar OpenClaw vs Gemini deteccion
+7. Comando de chat para marcar una garantia como RECLAMADA (integracion futura con
    Servicio Tecnico)
+8. Cuentas por cobrar en Caja/Cotizaciones: "credito" como metodo de pago solo se
+   implemento en el flujo de venta simple del chat (ver seccion Cuentas por cobrar), no
+   en /api/caja/cobrar ni en cotizacion.aceptar
 
 FLUJO EN TIENDA (pendiente):
 - Calculo automatico de comision POS solo cuando paga con tarjeta (Caja ya distingue

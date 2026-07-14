@@ -9,7 +9,7 @@ from core.intent_detector import IntentDetector
 # descuento, garantia, combo, tarifa) es solo admin.
 CATEGORIAS_EMPLEADO = {
     "inventory", "venta", "cliente", "customer", "caja", "unidadmedida", "puntos",
-    "codigobarras", "etiqueta"
+    "codigobarras", "etiqueta", "cuentacobrar"
 }
 
 # El tecnico solo ve Servicio Tecnico (crear/consultar ordenes, informes de revision,

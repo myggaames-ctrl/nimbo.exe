@@ -696,7 +696,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
                 return (f"Cliente encontrado: {clientes[0]['Nombre']}. Tiene {saldo} puntos disponibles "
                         f"(Q{valor} en descuentos). Quiere canjearlos en esta compra? (si/no)"), context
             context["step"] = "venta_waiting_pago"
-            return f"Cliente encontrado: {clientes[0]['Nombre']}. Metodo de pago? (efectivo, tarjeta, transferencia, mixto):", context
+            return f"Cliente encontrado: {clientes[0]['Nombre']}. Metodo de pago? (efectivo, tarjeta, transferencia, mixto, credito):", context
         context["venta_cliente_nombre"] = message.strip().title()
         context["step"] = "venta_waiting_telefono"
         return f"Cliente nuevo. Telefono (o 'sin telefono'):", context
@@ -716,7 +716,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
             else:
                 aviso = f" Canjeaste {puntos_a_usar} puntos por Q{resultado['credito']} de descuento en esta compra."
         context["step"] = "venta_waiting_pago"
-        return f"Metodo de pago? (efectivo, tarjeta, transferencia, mixto):{aviso}", context
+        return f"Metodo de pago? (efectivo, tarjeta, transferencia, mixto, credito):{aviso}", context
 
     if step == "venta_waiting_telefono":
         tel = message.strip()
@@ -738,7 +738,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
             cliente_id, _ = crear_cliente_completo(nombre, tel, nit=nit)
             context["venta_cliente_id"] = cliente_id
         context["step"] = "venta_waiting_pago"
-        return "Metodo de pago? (efectivo, tarjeta, transferencia, mixto):", context
+        return "Metodo de pago? (efectivo, tarjeta, transferencia, mixto, credito):", context
 
     if step == "venta_waiting_pago":
         pago = message.strip().lower()
@@ -771,6 +771,23 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
                 "venta_ajuste_puntos": ajuste_puntos
             }
             return "Cuanto en efectivo?", context
+
+        if pago in ["credito", "a credito", "fiado", "al fiado"]:
+            if not cliente_id:
+                return ("Para vender a credito necesito un cliente registrado (no puede ser "
+                        "'Consumidor Final'). Escribe el metodo de pago (efectivo, tarjeta, "
+                        "transferencia, mixto) o vuelve a iniciar la venta con el nombre del cliente."), context
+            context = {
+                "step": "venta_waiting_credito_enganche",
+                "venta_ctx": ctx,
+                "venta_cliente_id": cliente_id,
+                "venta_cliente_nombre": cliente_nombre,
+                "venta_cliente_tel": cliente_tel,
+                "venta_total_final": total_final,
+                "venta_descuento": descuento,
+                "venta_ajuste_puntos": ajuste_puntos
+            }
+            return "Cuanto de enganche paga ahora? (puede ser 0)", context
 
         from database.aronium import formatear_nota_ajuste_puntos, consumir_credito_puntos_pendiente, ganar_puntos
 
@@ -892,6 +909,100 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         if cliente_tel:
             factura_opts = f"\nFactura para {cliente_nombre}. Como enviarla? (whatsapp, imprimir, ninguna)"
             context = {"step": "venta_waiting_factura", "venta_id": venta_id, "cliente_tel": cliente_tel, "cliente_nombre": cliente_nombre, "venta_ctx": ctx, "pago": "mixto", "venta_garantia": garantia}
+            return resumen + factura_opts, context
+
+        context = {}
+        return resumen, context
+
+    # Flujo de venta a credito (enganche + fecha de pago) para la venta simple del chat
+    if step == "venta_waiting_credito_enganche":
+        try:
+            enganche = round(float(message.strip().replace(",", "").replace("Q", "").replace("q", "").strip()), 2)
+            if enganche < 0:
+                raise ValueError()
+        except (TypeError, ValueError):
+            return "Escribe solo el monto del enganche (0 si no da nada ahorita). Ejemplo: 50", context
+
+        total_final = context.get("venta_total_final", 0)
+        if enganche > total_final:
+            return f"El enganche (Q{enganche}) no puede ser mayor al total (Q{total_final}). Cuanto de enganche?", context
+
+        context["venta_credito_enganche"] = enganche
+        context["step"] = "venta_waiting_credito_fecha"
+        return "Para cuando queda de pagar el resto? (escribe una fecha dd/mm/aaaa o los dias, ej: 30)", context
+
+    if step == "venta_waiting_credito_fecha":
+        from datetime import datetime, timedelta
+        from database.aronium import (
+            DIAS_VENCIMIENTO_CUENTA_DEFAULT, formatear_nota_ajuste_puntos,
+            consumir_credito_puntos_pendiente, ganar_puntos, crear_cuenta_cobrar
+        )
+        txt = message.strip()
+        fecha_vencimiento = None
+        if txt.isdigit():
+            fecha_vencimiento = (datetime.now() + timedelta(days=int(txt))).strftime("%Y-%m-%d")
+        else:
+            for fmt in ("%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d"):
+                try:
+                    fecha_vencimiento = datetime.strptime(txt, fmt).strftime("%Y-%m-%d")
+                    break
+                except ValueError:
+                    continue
+        aviso_fecha = ""
+        if not fecha_vencimiento:
+            fecha_vencimiento = (datetime.now() + timedelta(days=DIAS_VENCIMIENTO_CUENTA_DEFAULT)).strftime("%Y-%m-%d")
+            aviso_fecha = f" No entendi la fecha, se dejo por defecto a {DIAS_VENCIMIENTO_CUENTA_DEFAULT} dias ({fecha_vencimiento})."
+
+        ctx = context.get("venta_ctx", {})
+        cliente_id = context.get("venta_cliente_id")
+        cliente_nombre = context.get("venta_cliente_nombre", "Consumidor Final")
+        cliente_tel = context.get("venta_cliente_tel", "")
+        total_final = context.get("venta_total_final", 0)
+        descuento = context.get("venta_descuento")
+        ajuste_puntos = context.get("venta_ajuste_puntos", {"credito_puntos": 0, "descuento_oro": 0})
+        enganche = context.get("venta_credito_enganche", 0)
+
+        descripcion = f"{ctx['cantidad']}x {ctx['producto']} a Q{ctx['precio_unit']}"
+        if descuento:
+            descripcion += f" | Descuento {descuento['nombre']}: -Q{descuento['monto_descuento']}"
+        descripcion += formatear_nota_ajuste_puntos(ajuste_puntos)
+        descripcion += f" | Credito: enganche Q{enganche}, resto vence {fecha_vencimiento}"
+
+        venta_id, garantia = _registrar_venta_chat(
+            cliente_id, descripcion, total_final,
+            producto_id=ctx.get("producto_id"), producto_nombre=ctx.get("producto", ""),
+            cliente_nombre=cliente_nombre, cliente_tel=cliente_tel
+        )
+
+        crear_cuenta_cobrar(
+            cliente_id, cliente_nombre, cliente_tel,
+            f"Venta #{venta_id}: {ctx['cantidad']}x {ctx['producto']}",
+            total_final, monto_pagado=enganche, fecha_vencimiento=fecha_vencimiento, venta_id=venta_id
+        )
+
+        puntos_info = None
+        if cliente_id:
+            consumir_credito_puntos_pendiente(cliente_id, venta_id)
+            puntos_info = ganar_puntos(cliente_id, cliente_nombre, total_final, venta_id)
+
+        pendiente = round(total_final - enganche, 2)
+        resumen = f"Venta #{venta_id} registrada a credito. {ctx['cantidad']}x {ctx['producto']} = Q{ctx['total']}."
+        if descuento:
+            resumen += f" Descuento {descuento['nombre']} ({descuento['tipo']}): -Q{descuento['monto_descuento']}."
+        resumen += f" Total: Q{total_final}. Enganche: Q{enganche}. Pendiente: Q{pendiente}, vence {fecha_vencimiento}."
+        resumen += f" Cuenta por cobrar creada para {cliente_nombre}."
+        if garantia:
+            resumen += f" Garantia {garantia['numero']} hasta {garantia['vencimiento_propia']}."
+        if puntos_info:
+            resumen += (f" {cliente_nombre} gano {puntos_info['puntos_ganados']} puntos. "
+                        f"Total acumulado: {puntos_info['saldo_disponible']} puntos "
+                        f"(Q{puntos_info['valor_disponible']} en descuentos).")
+        resumen += aviso_fecha
+
+        factura_opts = ""
+        if cliente_tel:
+            factura_opts = f"\nFactura para {cliente_nombre}. Como enviarla? (whatsapp, imprimir, ninguna)"
+            context = {"step": "venta_waiting_factura", "venta_id": venta_id, "cliente_tel": cliente_tel, "cliente_nombre": cliente_nombre, "venta_ctx": ctx, "pago": "credito", "venta_garantia": garantia}
             return resumen + factura_opts, context
 
         context = {}

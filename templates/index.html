@@ -711,6 +711,10 @@
           <div id="cotizaciones-widget"><div class="text-muted">Cargando...</div></div>
         </div>
         <div class="card">
+          <div class="card-title">💳 Cuentas por cobrar</div>
+          <div id="cuentascobrar-widget"><div class="text-muted">Cargando...</div></div>
+        </div>
+        <div class="card">
           <div class="card-title">Accesos rápidos</div>
           <div style="display:flex;flex-direction:column;gap:8px">
             <button class="btn btn-ghost w-full" onclick="showPanel('chat')">💬 Abrir Chat IA</button>
@@ -1482,6 +1486,36 @@ async function loadCotizaciones() {
         </div>`;
       }).join('');
     }
+    el.innerHTML = html;
+  } catch(e) {}
+}
+
+async function loadCuentasCobrar() {
+  try {
+    const r = await fetch('/api/cuentascobrar/resumen');
+    const d = await r.json();
+    const el = document.getElementById('cuentascobrar-widget');
+    if (!el) return;
+    if (!d.cantidad_total) {
+      el.innerHTML = '<span class="badge badge-green">✓ Sin cuentas por cobrar</span>';
+      return;
+    }
+    let html = `
+      <div style="display:flex;gap:8px;margin-bottom:10px">
+        <div style="flex:1;text-align:center;padding:8px;background:var(--bg-alt,rgba(255,255,255,0.03));border-radius:6px">
+          <div style="font-size:18px;font-weight:600">Q${d.total_por_cobrar}</div>
+          <div style="font-size:11px;color:var(--text-muted)">Total por cobrar</div>
+        </div>
+        <div style="flex:1;text-align:center;padding:8px;background:var(--bg-alt,rgba(255,255,255,0.03));border-radius:6px">
+          <div style="font-size:18px;font-weight:600;color:var(--red)">Q${d.vencidas_total}</div>
+          <div style="font-size:11px;color:var(--text-muted)">Vencidas (${d.vencidas_cantidad})</div>
+        </div>
+        <div style="flex:1;text-align:center;padding:8px;background:var(--bg-alt,rgba(255,255,255,0.03));border-radius:6px">
+          <div style="font-size:18px;font-weight:600;color:var(--accent)">Q${d.proximas_total}</div>
+          <div style="font-size:11px;color:var(--text-muted)">Por vencer (${d.proximas_cantidad})</div>
+        </div>
+      </div>
+    `;
     el.innerHTML = html;
   } catch(e) {}
 }
@@ -2618,6 +2652,7 @@ loadAlertasPrecios();
 loadRecordatorios();
 loadEquilibrio();
 loadCotizaciones();
+loadCuentasCobrar();
 setInterval(refreshStatus, 30000);
 
 async function addStock(id, nombre) {

@@ -37,6 +37,9 @@ VOCABULARIO = [
     "mano", "obra", "presupuesto", "tecnico", "tecnicos", "informe", "informes",
     "tarifa", "tarifas", "aprobo", "rechazo", "asigna", "asignada", "asignado",
     "necesita", "revision",
+    "debe", "debo", "pago", "pagos", "abono", "abonos", "cobrar", "cobro",
+    "deuda", "deudas", "vencida", "vencidas", "pendiente", "pendientes",
+    "credito", "enganche", "fiado",
     # electrodomesticos y repuestos comunes en la tienda
     "licuadora", "licuadoras", "refrigerador", "refrigeradores", "cuchilla", "cuchillas",
     "empaque", "empaques", "adaptador", "adaptadores", "regulador", "reguladores",

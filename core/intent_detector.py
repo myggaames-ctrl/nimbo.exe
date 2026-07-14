@@ -18,6 +18,7 @@ from core.detectors.cotizacion_detector import CotizacionDetector
 from core.detectors.caja_detector import CajaDetector
 from core.detectors.descuento_detector import DescuentoDetector
 from core.detectors.garantia_detector import GarantiaDetector
+from core.detectors.cuenta_cobrar_detector import CuentaCobrarDetector
 from core.detectors.combo_detector import ComboDetector
 from core.detectors.unidad_medida_detector import UnidadMedidaDetector
 from core.detectors.puntos_detector import PuntosDetector
@@ -37,6 +38,7 @@ class IntentDetector:
             CajaDetector(),
             DescuentoDetector(),
             GarantiaDetector(),
+            CuentaCobrarDetector(),
             ComboDetector(),
             UnidadMedidaDetector(),
             PuntosDetector(),
