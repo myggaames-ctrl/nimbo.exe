@@ -99,7 +99,9 @@
       "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:5000/producto/9999999999999)",
       "Bash(curl -s http://localhost:5000/producto/9999999999999)",
       "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" http://localhost:5000/login)",
-      "Bash(git stash *)"
+      "Bash(git stash *)",
+      "Bash(sqlite3 nimbo.db \".schema PagoFijo\")",
+      "Bash(git check-ignore *)"
     ]
   }
 }

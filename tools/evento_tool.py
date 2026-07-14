@@ -140,10 +140,26 @@ def listar_pagos_tool(data):
         return "No hay pagos fijos registrados. Di 'agregar pago renta' para agregar uno."
     resp = f"{len(pagos)} pagos fijos registrados:\n"
     for p in pagos:
-        resp += f"- {p['Nombre']} | Dia {p['DiaPago']} | {p['Frecuencia']}\n"
+        monto = f"Q{p['Monto']:.2f}" if p["Monto"] else "sin monto"
+        resp += f"- {p['Nombre']} | Dia {p['DiaPago']} | {p['Frecuencia']} | {monto}\n"
     return resp
 
 register("pago.listar", listar_pagos_tool)
+
+def monto_pago_tool(data):
+    if isinstance(data, str): return "Error: datos invalidos"
+    from database.aronium import set_monto_pago_fijo
+    nombre = data.get("query", "")
+    monto = data.get("monto", 0)
+    coincidencias = set_monto_pago_fijo(nombre, monto)
+    if not coincidencias:
+        return f"No encontre ningun pago fijo activo llamado '{nombre}'."
+    if len(coincidencias) > 1:
+        nombres = ", ".join(c["Nombre"] for c in coincidencias)
+        return f"'{nombre}' coincide con varios pagos fijos ({nombres}). Se mas especifico."
+    return f"Monto de '{coincidencias[0]['Nombre']}' actualizado a Q{monto:.2f}."
+
+register("pago.monto", monto_pago_tool)
 
 def agregar_recordatorio_tool(data):
     query = data.get("query", "") if isinstance(data, dict) else str(data)

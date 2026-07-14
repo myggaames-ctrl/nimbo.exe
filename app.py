@@ -95,6 +95,9 @@ init_cuentas_cobrar()
 from database.aronium import init_cuentas_pagar
 init_cuentas_pagar()
 
+from database.aronium import init_pagos_fijos_ext
+init_pagos_fijos_ext()
+
 # Instalaciones que ya tenian usuarios antes de que existiera el wizard de
 # onboarding (o que lo completaron con el /setup viejo de un solo paso) se
 # marcan como completas automaticamente, para no forzar el wizard nuevo.
@@ -1291,6 +1294,13 @@ def get_resumen_cuentas_cobrar_route():
 def get_resumen_cuentas_pagar_route():
     from database.aronium import get_resumen_cuentas_pagar
     return jsonify(get_resumen_cuentas_pagar())
+
+
+@app.route("/api/contabilidad/flujo-caja-proyectado")
+@admin_required
+def get_flujo_caja_proyectado_route():
+    from database.aronium import get_flujo_caja_proyectado
+    return jsonify(get_flujo_caja_proyectado())
 
 
 # ── CAJA REGISTRADORA ──────────────────────────────────────

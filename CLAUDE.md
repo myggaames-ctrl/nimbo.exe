@@ -725,6 +725,48 @@ Usuario escribe mensaje
   - Widget en el dashboard (/api/cuentaspagar/resumen, admin-only): total por pagar, pagos
     vencidos (rojo) y proximos a vencer en 3 dias (naranja) - misma estructura visual que el
     widget de Cuentas por cobrar.
+- Flujo de caja proyectado: database.aronium.get_flujo_caja_proyectado() calcula ingresos,
+  egresos y flujo neto proyectados para el mes calendario siguiente. Admin-only (categoria
+  "contabilidad" no esta en CATEGORIAS_EMPLEADO).
+  - Ingresos = promedio de ventas de los ultimos 3 meses YA CERRADOS (excluye el mes actual,
+    todavia incompleto - toma get_comparacion_meses(meses=4) y descarta el ultimo) + un
+    ajuste por tendencia (variacion promedio mes a mes de esos 3 meses, proyectada un paso
+    mas hacia adelante sobre el promedio; positiva si suben, negativa si bajan) + cuentas por
+    cobrar pendientes que vencen en los proximos 30 dias (get_cuentas_por_vencer(dias=30)).
+  - Egresos = pagos fijos activos (get_pagos_fijos(), suma de PagoFijo.Monto) + cuentas por
+    pagar pendientes que vencen en los proximos 30 dias (get_pagos_por_vencer(dias=30)) +
+    estimado de compras a proveedores por reabastecimiento de stock minimo (suma de
+    costo_total en get_pedidos_sugeridos(), que ahora tambien devuelve costo_unitario/
+    costo_total por item usando Product.Cost de Aronium - antes solo traia cantidades).
+  - "vencen el proximo mes" se aproxima como "vencen en los proximos 30 dias" en vez de
+    acotar por el mes calendario exacto (mismo criterio que ya usa el resto del sistema,
+    ver DIAS_VENCIMIENTO_CUENTA_DEFAULT/DIAS_VENCIMIENTO_PAGAR_DEFAULT = 30 dias).
+  - PagoFijo (renta, luz, telefono, salarios, patente, etc.) no tenia columna de monto -
+    solo se usaba como recordatorio (nombre, dia, frecuencia), sin monto en quetzales
+    (equilibrio_tool en tools/contabilidad_tool.py ya traia un comentario explicito "No
+    tenemos montos, solo recordatorios" y sumaba Q0 de pagos fijos al punto de equilibrio).
+    Se agrego la columna Monto (migracion database.aronium.init_pagos_fijos_ext(), ALTER
+    TABLE con try/except OperationalError, mismo patron que Cliente.GrupoCliente) - ahora es
+    obligatorio pedirla al crear un pago fijo nuevo por chat (step nuevo pago_waiting_monto
+    en core/nimbo.py, entre pago_waiting_frecuencia y el guardado final) y se corrigio
+    equilibrio_tool para sumar el monto real en vez de Q0. Los pagos fijos creados ANTES de
+    esta migracion quedan en Q0 hasta que se les fije un monto manualmente: "pago fijo renta
+    es Q1500" / "monto del pago fijo de renta es 1500" (intent pago.monto,
+    core/detectors/evento_detector.py + tools/evento_tool.py monto_pago_tool,
+    database.aronium.set_monto_pago_fijo - busca por nombre con LIKE, si coincide con mas de
+    un pago fijo activo pide ser mas especifico en vez de actualizar el primero al azar).
+    "ver pagos" (pago.listar) ahora tambien muestra el monto de cada uno.
+  - Desde el chat: "flujo de caja" / "flujo de caja proyectado" / "cuanto dinero tendre el
+    proximo mes" (contabilidad.flujo_proyectado) da el resumen (ingresos/egresos/neto);
+    "proyeccion financiera" (contabilidad.flujo_proyectado_detalle) da el desglose completo.
+    Se movio el patron `flujo de caja` de PATTERNS_BALANCE a un set de patrones nuevo
+    (core/detectors/contabilidad_detector.py) porque antes ese texto exacto caia en
+    contabilidad.balance (balance del mes actual, no una proyeccion) - no pueden coexistir
+    los dos intents con el mismo texto.
+  - Widget en el dashboard (/api/contabilidad/flujo-caja-proyectado, admin-only): monto neto
+    proyectado (verde si positivo, rojo si negativo) + totales de ingresos/egresos, con boton
+    "Ver detalle completo" que abre un modal (modal-flujo-caja en templates/index.html) con el
+    desglose linea por linea (mismo patron de fetch-on-click que verFotosServicio()).
 
 ## Tablas nimbo.db
 Cliente, OrdenServicio, HistorialOrden, Kardex, StockMinimo, ProductoFoto, ProductoInfo,

@@ -923,12 +923,15 @@ def get_pedidos_sugeridos():
                 (f"%{p['Name'].strip()}%", p["Id"]))
             proveedores = [dict(r) for r in cur.fetchall()]
             cantidad_sugerida = max(minimo * 2 - int(p["Stock"]), minimo)
+            costo_unitario = float(p["Cost"] or 0)
             sugeridos.append({
                 "producto": p["Name"].strip(),
                 "stock_actual": int(p["Stock"]),
                 "minimo": minimo,
                 "cantidad_sugerida": cantidad_sugerida,
-                "proveedores": proveedores
+                "proveedores": proveedores,
+                "costo_unitario": costo_unitario,
+                "costo_total": round(costo_unitario * cantidad_sugerida, 2)
             })
     conn.close()
     return sugeridos
@@ -2832,11 +2835,24 @@ def get_recordatorios():
 
 # ── PAGOS FIJOS ───────────────────────────────────────
 
-def agregar_pago_fijo(nombre, frecuencia="mensual", dia_pago=1, dias_antes=2):
+def init_pagos_fijos_ext():
+    """Migracion: PagoFijo ya existia sin monto (solo guardaba nombre/dia/frecuencia
+    como recordatorio) - se necesita el monto en quetzales para el flujo de caja
+    proyectado (ver contabilidad.flujo_proyectado)."""
     conn = nimbo_connect()
     cur = conn.cursor()
-    cur.execute("""INSERT INTO PagoFijo (Nombre, Frecuencia, DiaPago, DiasAntes)
-        VALUES (?,?,?,?)""", (nombre, frecuencia, dia_pago, dias_antes))
+    try:
+        cur.execute("ALTER TABLE PagoFijo ADD COLUMN Monto NUMERIC DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+    conn.commit()
+    conn.close()
+
+def agregar_pago_fijo(nombre, frecuencia="mensual", dia_pago=1, dias_antes=2, monto=0):
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""INSERT INTO PagoFijo (Nombre, Frecuencia, DiaPago, DiasAntes, Monto)
+        VALUES (?,?,?,?,?)""", (nombre, frecuencia, dia_pago, dias_antes, monto))
     conn.commit()
     conn.close()
 
@@ -2847,6 +2863,19 @@ def get_pagos_fijos():
     rows = [dict(r) for r in cur.fetchall()]
     conn.close()
     return rows
+
+def set_monto_pago_fijo(nombre, monto):
+    """Fija/corrige el monto de un pago fijo ya registrado (los creados antes de
+    que existiera la columna Monto quedaron en Q0)."""
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT Id, Nombre FROM PagoFijo WHERE Activo=1 AND Nombre LIKE ?", (f"%{nombre}%",))
+    coincidencias = [dict(r) for r in cur.fetchall()]
+    if len(coincidencias) == 1:
+        cur.execute("UPDATE PagoFijo SET Monto=? WHERE Id=?", (monto, coincidencias[0]["Id"]))
+        conn.commit()
+    conn.close()
+    return coincidencias
 
 def get_pagos_proximos(dias=7):
     from datetime import datetime, timedelta
@@ -3198,9 +3227,90 @@ def get_comparacion_meses(meses=6):
             "gastos": round(gastos, 2),
             "utilidad": round(utilidad, 2)
         })
-    
+
     conn.close()
     return resultados
+
+
+def get_flujo_caja_proyectado():
+    """Proyecta ingresos, egresos y flujo neto del proximo mes calendario.
+
+    "vencen el proximo mes" para cuentas por cobrar/pagar se aproxima como
+    "vencen en los proximos 30 dias" (mismo criterio de DIAS_VENCIMIENTO_CUENTA_DEFAULT/
+    DIAS_VENCIMIENTO_PAGAR_DEFAULT que ya usa el resto del sistema), en vez de acotar
+    por el mes calendario exacto."""
+    import calendar
+    now = datetime.now()
+    mes_prox = now.month + 1
+    anio_prox = now.year
+    if mes_prox > 12:
+        mes_prox = 1
+        anio_prox += 1
+    nombre_mes_prox = f"{calendar.month_abbr[mes_prox]} {anio_prox}"
+
+    # ── Ingresos proyectados ──
+    # Ultimos 3 meses ya cerrados (se excluye el mes actual, todavia incompleto).
+    historico = get_comparacion_meses(meses=4)
+    meses_completos = historico[:-1]
+    ventas_meses = [m["total"] for m in meses_completos]
+    promedio_ventas = sum(ventas_meses) / len(ventas_meses)
+
+    # Tendencia: variacion promedio mes a mes en esos 3 meses, proyectada un paso
+    # mas hacia adelante sobre el promedio (positiva si las ventas suben, negativa
+    # si bajan).
+    variaciones = []
+    for i in range(1, len(ventas_meses)):
+        anterior = ventas_meses[i - 1]
+        if anterior > 0:
+            variaciones.append((ventas_meses[i] - anterior) / anterior)
+    tendencia_pct = sum(variaciones) / len(variaciones) if variaciones else 0
+    ajuste_tendencia = round(promedio_ventas * tendencia_pct, 2)
+    ventas_proyectadas = round(promedio_ventas + ajuste_tendencia, 2)
+
+    cuentas_cobrar_prox = get_cuentas_por_vencer(dias=30)
+    total_cobrar_prox = round(sum(c["MontoPendiente"] for c in cuentas_cobrar_prox), 2)
+
+    ingresos_total = round(ventas_proyectadas + total_cobrar_prox, 2)
+
+    # ── Egresos proyectados ──
+    pagos_fijos = get_pagos_fijos()
+    total_pagos_fijos = round(sum(float(p["Monto"] or 0) for p in pagos_fijos), 2)
+    pagos_fijos_sin_monto = sum(1 for p in pagos_fijos if not p["Monto"])
+
+    cuentas_pagar_prox = get_pagos_por_vencer(dias=30)
+    total_pagar_prox = round(sum(c["MontoPendiente"] for c in cuentas_pagar_prox), 2)
+
+    pedidos_sugeridos = get_pedidos_sugeridos()
+    total_compras_estimadas = round(sum(p["costo_total"] for p in pedidos_sugeridos), 2)
+
+    egresos_total = round(total_pagos_fijos + total_pagar_prox + total_compras_estimadas, 2)
+
+    flujo_neto = round(ingresos_total - egresos_total, 2)
+
+    return {
+        "mes_proyectado": nombre_mes_prox,
+        "ingresos": {
+            "promedio_ventas_3_meses": round(promedio_ventas, 2),
+            "tendencia_pct": round(tendencia_pct * 100, 1),
+            "ajuste_tendencia": ajuste_tendencia,
+            "ventas_proyectadas": ventas_proyectadas,
+            "cuentas_por_cobrar": total_cobrar_prox,
+            "cantidad_cuentas_cobrar": len(cuentas_cobrar_prox),
+            "total": ingresos_total
+        },
+        "egresos": {
+            "pagos_fijos": total_pagos_fijos,
+            "cantidad_pagos_fijos": len(pagos_fijos),
+            "pagos_fijos_sin_monto": pagos_fijos_sin_monto,
+            "cuentas_por_pagar": total_pagar_prox,
+            "cantidad_cuentas_pagar": len(cuentas_pagar_prox),
+            "compras_estimadas": total_compras_estimadas,
+            "cantidad_productos_reabastecer": len(pedidos_sugeridos),
+            "total": egresos_total
+        },
+        "flujo_neto": flujo_neto,
+        "positivo": flujo_neto >= 0
+    }
 
 
 def hacer_backup():

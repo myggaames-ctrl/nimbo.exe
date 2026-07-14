@@ -719,6 +719,10 @@
           <div id="cuentaspagar-widget"><div class="text-muted">Cargando...</div></div>
         </div>
         <div class="card">
+          <div class="card-title">📈 Flujo de caja proyectado</div>
+          <div id="flujocaja-widget"><div class="text-muted">Cargando...</div></div>
+        </div>
+        <div class="card">
           <div class="card-title">Accesos rápidos</div>
           <div style="display:flex;flex-direction:column;gap:8px">
             <button class="btn btn-ghost w-full" onclick="showPanel('chat')">💬 Abrir Chat IA</button>
@@ -1089,6 +1093,16 @@
         <div id="modal-fotos-servicio-grid" style="display:flex;flex-wrap:wrap;gap:8px;margin:10px 0"></div>
         <div class="flex gap-2" style="margin-top:8px">
           <button class="btn btn-ghost" onclick="cerrarModal('modal-fotos-servicio')">Cerrar</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="modal-flujo-caja" style="display:none">
+      <div class="modal-box">
+        <div class="card-title">📈 Proyeccion de flujo de caja</div>
+        <div id="modal-flujo-caja-body" style="font-size:13px;line-height:1.9"></div>
+        <div class="flex gap-2" style="margin-top:8px">
+          <button class="btn btn-ghost" onclick="cerrarModal('modal-flujo-caja')">Cerrar</button>
         </div>
       </div>
     </div>
@@ -1551,6 +1565,63 @@ async function loadCuentasPagar() {
       </div>
     `;
     el.innerHTML = html;
+  } catch(e) {}
+}
+
+async function loadFlujoCaja() {
+  try {
+    const r = await fetch('/api/contabilidad/flujo-caja-proyectado');
+    const d = await r.json();
+    const el = document.getElementById('flujocaja-widget');
+    if (!el) return;
+    const positivo = d.flujo_neto >= 0;
+    const color = positivo ? 'var(--green,#2e9e5b)' : 'var(--red)';
+    const badge = positivo ? 'badge-green' : 'badge-red';
+    const etiqueta = positivo ? 'Sobrante estimado' : 'Faltante estimado';
+    el.innerHTML = `
+      <div style="text-align:center;padding:8px;margin-bottom:10px">
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">${d.mes_proyectado}</div>
+        <div style="font-size:22px;font-weight:700;color:${color}">${positivo ? '+' : '-'}Q${Math.abs(d.flujo_neto).toFixed(2)}</div>
+        <span class="badge ${badge}">${etiqueta}</span>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:10px">
+        <div style="flex:1;text-align:center;padding:8px;background:var(--bg-alt,rgba(255,255,255,0.03));border-radius:6px">
+          <div style="font-size:16px;font-weight:600">Q${d.ingresos.total.toFixed(2)}</div>
+          <div style="font-size:11px;color:var(--text-muted)">Ingresos proyectados</div>
+        </div>
+        <div style="flex:1;text-align:center;padding:8px;background:var(--bg-alt,rgba(255,255,255,0.03));border-radius:6px">
+          <div style="font-size:16px;font-weight:600">Q${d.egresos.total.toFixed(2)}</div>
+          <div style="font-size:11px;color:var(--text-muted)">Egresos proyectados</div>
+        </div>
+      </div>
+      <button class="btn btn-ghost w-full btn-sm" onclick="verFlujoCajaDetalle()">Ver detalle completo</button>
+    `;
+  } catch(e) {}
+}
+
+async function verFlujoCajaDetalle() {
+  try {
+    const r = await fetch('/api/contabilidad/flujo-caja-proyectado');
+    const d = await r.json();
+    const positivo = d.flujo_neto >= 0;
+    const color = positivo ? 'var(--green,#2e9e5b)' : 'var(--red)';
+    const body = document.getElementById('modal-flujo-caja-body');
+    body.innerHTML = `
+      <div style="font-weight:600;margin-bottom:6px">${d.mes_proyectado}</div>
+      <div style="font-weight:600;margin-top:8px">Ingresos proyectados</div>
+      <div>Promedio ventas (3 meses): Q${d.ingresos.promedio_ventas_3_meses.toFixed(2)}</div>
+      <div>Ajuste por tendencia (${d.ingresos.tendencia_pct.toFixed(1)}%): Q${d.ingresos.ajuste_tendencia.toFixed(2)}</div>
+      <div>Ventas proyectadas: Q${d.ingresos.ventas_proyectadas.toFixed(2)}</div>
+      <div>Cuentas por cobrar (${d.ingresos.cantidad_cuentas_cobrar}): Q${d.ingresos.cuentas_por_cobrar.toFixed(2)}</div>
+      <div style="font-weight:600">Total ingresos: Q${d.ingresos.total.toFixed(2)}</div>
+      <div style="font-weight:600;margin-top:10px">Egresos proyectados</div>
+      <div>Pagos fijos (${d.egresos.cantidad_pagos_fijos}): Q${d.egresos.pagos_fijos.toFixed(2)}${d.egresos.pagos_fijos_sin_monto ? ' <span class="text-muted">(' + d.egresos.pagos_fijos_sin_monto + ' sin monto)</span>' : ''}</div>
+      <div>Cuentas por pagar (${d.egresos.cantidad_cuentas_pagar}): Q${d.egresos.cuentas_por_pagar.toFixed(2)}</div>
+      <div>Compras estimadas (${d.egresos.cantidad_productos_reabastecer} productos): Q${d.egresos.compras_estimadas.toFixed(2)}</div>
+      <div style="font-weight:600">Total egresos: Q${d.egresos.total.toFixed(2)}</div>
+      <div style="font-weight:700;margin-top:10px;color:${color}">Flujo neto: ${positivo ? '+' : '-'}Q${Math.abs(d.flujo_neto).toFixed(2)}</div>
+    `;
+    document.getElementById('modal-flujo-caja').style.display = 'flex';
   } catch(e) {}
 }
 
@@ -2688,6 +2759,7 @@ loadEquilibrio();
 loadCotizaciones();
 loadCuentasCobrar();
 loadCuentasPagar();
+loadFlujoCaja();
 setInterval(refreshStatus, 30000);
 
 async function addStock(id, nombre) {

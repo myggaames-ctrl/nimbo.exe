@@ -179,12 +179,9 @@ def equilibrio_tool(data):
     
     # Pagos fijos mensuales
     pagos = get_pagos_fijos()
-    total_pagos_fijos = 0
-    for p in pagos:
-        if p["Frecuencia"] == "mensual":
-            total_pagos_fijos += 0  # No tenemos montos, solo recordatorios
-    
-    total_costos_fijos = total_gastos_variables
+    total_pagos_fijos = sum(float(p["Monto"] or 0) for p in pagos if p["Frecuencia"] == "mensual")
+
+    total_costos_fijos = total_gastos_variables + total_pagos_fijos
     
     # Margen promedio de productos
     productos = get_margen_productos()
@@ -210,6 +207,7 @@ def equilibrio_tool(data):
     
     resp = "Punto de equilibrio del mes:\n"
     resp += f"Gastos operativos registrados: Q{total_gastos_variables:.2f}\n"
+    resp += f"Pagos fijos mensuales: Q{total_pagos_fijos:.2f}\n"
     resp += f"Precio promedio de venta: Q{precio_promedio:.2f}\n"
     resp += f"Costo promedio de producto: Q{costo_promedio:.2f}\n"
     resp += f"Contribucion por unidad: Q{contribucion_unitaria:.2f}\n"
@@ -386,3 +384,57 @@ def comparacion_meses_tool(data):
     return resp
 
 register("contabilidad.comparacion", comparacion_meses_tool)
+
+
+def flujo_proyectado_tool(data):
+    from database.aronium import get_flujo_caja_proyectado
+    f = get_flujo_caja_proyectado()
+    signo = "sobraran" if f["positivo"] else "faltaran"
+    resp = f"Proyeccion de flujo de caja para {f['mes_proyectado']}:\n\n"
+    resp += f"Ingresos proyectados: Q{f['ingresos']['total']:.2f}\n"
+    resp += f"Egresos proyectados: Q{f['egresos']['total']:.2f}\n"
+    resp += "---\n"
+    if f["positivo"]:
+        resp += f"Flujo neto proyectado: +Q{f['flujo_neto']:.2f} ({signo} Q{abs(f['flujo_neto']):.2f})"
+    else:
+        resp += f"Flujo neto proyectado: -Q{abs(f['flujo_neto']):.2f}\n"
+        resp += f"ALERTA: te {signo} Q{abs(f['flujo_neto']):.2f} para cubrir los egresos del mes."
+    return resp
+
+register("contabilidad.flujo_proyectado", flujo_proyectado_tool)
+
+
+def flujo_proyectado_detalle_tool(data):
+    from database.aronium import get_flujo_caja_proyectado
+    f = get_flujo_caja_proyectado()
+    ing = f["ingresos"]
+    egr = f["egresos"]
+
+    resp = f"Proyeccion financiera detallada para {f['mes_proyectado']}:\n\n"
+
+    resp += "INGRESOS PROYECTADOS:\n"
+    resp += f"- Promedio de ventas (ultimos 3 meses): Q{ing['promedio_ventas_3_meses']:.2f}\n"
+    tendencia_txt = "subiendo" if ing["tendencia_pct"] > 0 else ("bajando" if ing["tendencia_pct"] < 0 else "estable")
+    resp += f"- Tendencia: {tendencia_txt} ({ing['tendencia_pct']:+.1f}% promedio mensual, ajuste Q{ing['ajuste_tendencia']:+.2f})\n"
+    resp += f"- Ventas proyectadas: Q{ing['ventas_proyectadas']:.2f}\n"
+    resp += f"- Cuentas por cobrar que vencen el proximo mes: Q{ing['cuentas_por_cobrar']:.2f} ({ing['cantidad_cuentas_cobrar']} cuentas)\n"
+    resp += f"Total ingresos: Q{ing['total']:.2f}\n\n"
+
+    resp += "EGRESOS PROYECTADOS:\n"
+    resp += f"- Pagos fijos ({egr['cantidad_pagos_fijos']}): Q{egr['pagos_fijos']:.2f}\n"
+    if egr["pagos_fijos_sin_monto"]:
+        resp += f"  ({egr['pagos_fijos_sin_monto']} sin monto registrado, no incluidos - usa 'pago fijo X es QN' para fijarlo)\n"
+    resp += f"- Cuentas por pagar que vencen el proximo mes: Q{egr['cuentas_por_pagar']:.2f} ({egr['cantidad_cuentas_pagar']} cuentas)\n"
+    resp += f"- Compras estimadas por stock minimo: Q{egr['compras_estimadas']:.2f} ({egr['cantidad_productos_reabastecer']} productos)\n"
+    resp += f"Total egresos: Q{egr['total']:.2f}\n\n"
+
+    resp += "---\n"
+    if f["positivo"]:
+        resp += f"Flujo neto proyectado: +Q{f['flujo_neto']:.2f}\n"
+        resp += f"Te sobraran aproximadamente Q{f['flujo_neto']:.2f} el proximo mes."
+    else:
+        resp += f"Flujo neto proyectado: -Q{abs(f['flujo_neto']):.2f}\n"
+        resp += f"ALERTA: te faltaran aproximadamente Q{abs(f['flujo_neto']):.2f} para cubrir los egresos del proximo mes."
+    return resp
+
+register("contabilidad.flujo_proyectado_detalle", flujo_proyectado_detalle_tool)

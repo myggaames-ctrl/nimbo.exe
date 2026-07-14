@@ -46,6 +46,12 @@ class EventoDetector:
             match = re.search(r"^cumpleanos\s+(?:de\s+)?(.+?)\s+(?:es\s+)?(?:el\s+)?(\d{1,2}[/\-]\d{1,2})$", text)
             return {"intent": "cumpleanos.agregar", "query": match.group(1).strip(), "fecha": match.group(2).strip()}
 
+        for pattern in (r"^(?:el\s+)?pago\s+fijo\s+(?:de\s+)?(.+?)\s+es\s+[Qq]?(\d+\.?\d*)$",
+                        r"^monto\s+(?:del?\s+)?pago\s+fijo\s+(?:de\s+)?(.+?)\s+(?:es\s+)?[Qq]?(\d+\.?\d*)$"):
+            match = re.search(pattern, text)
+            if match:
+                return {"intent": "pago.monto", "query": match.group(1).strip(), "monto": float(match.group(2))}
+
         if re.search(r"^(?:agregar?|nuevo)\s+pago\s+(.+)$", text):
             match = re.search(r"^(?:agregar?|nuevo)\s+pago\s+(.+)$", text)
             return {"intent": "pago.agregar", "query": match.group(1).strip()}

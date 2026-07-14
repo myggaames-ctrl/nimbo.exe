@@ -475,13 +475,23 @@ def send(message: str, context: dict = None, role: str = "admin") -> tuple:
             return "Escribe solo el numero del dia. Ejemplo: 5", context
 
     if step == "pago_waiting_frecuencia":
-        from database.aronium import agregar_pago_fijo
         frecuencia = message.strip().lower()
+        context["pago_frecuencia"] = frecuencia
+        context["step"] = "pago_waiting_monto"
+        return "¿De cuanto es el pago (en quetzales)?", context
+
+    if step == "pago_waiting_monto":
+        from database.aronium import agregar_pago_fijo
         nombre = context.get("pago_nombre", "")
         dia = context.get("pago_dia", 1)
-        agregar_pago_fijo(nombre, frecuencia, dia)
+        frecuencia = context.get("pago_frecuencia", "mensual")
+        try:
+            monto = float(message.strip().replace("Q", "").replace("q", ""))
+        except ValueError:
+            return "Escribe solo el monto en quetzales. Ejemplo: 1500", context
+        agregar_pago_fijo(nombre, frecuencia, dia, monto=monto)
         context = {}
-        return f"Pago '{nombre}' registrado. Te recordare el dia {dia} de cada {frecuencia}.", context
+        return f"Pago '{nombre}' registrado: Q{monto:.2f} el dia {dia} de cada {frecuencia}.", context
 
     # Flujo de generacion de video
     if step == "video_waiting_estilo":

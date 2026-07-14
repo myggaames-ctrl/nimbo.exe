@@ -20,9 +20,22 @@ class ContabilidadDetector:
     PATTERNS_BALANCE = [
         r"^balance\s+(?:del?\s+)?mes$",
         r"^(?:como\s+)?(?:vamos|estamos)\s+(?:de\s+)?(?:dinero|caja|balance)$",
-        r"^flujo\s+(?:de\s+)?caja$",
         r"^estado\s+(?:de\s+)?cuenta$",
         r"^contabilidad\s+(?:del?\s+)?mes$",
+    ]
+
+    PATTERNS_FLUJO_PROYECTADO = [
+        r"^flujo\s+(?:de\s+)?caja$",
+        r"^flujo\s+(?:de\s+)?caja\s+proyectad[oa]$",
+        r"^proyeccion\s+(?:de\s+)?(?:flujo\s+de\s+)?caja$",
+        r"^cuanto\s+dinero\s+(?:tendre|voy\s+a\s+tener)\s+(?:el\s+)?(?:proximo|siguiente)\s+mes$",
+        r"^cuanto\s+(?:tendremos|vamos\s+a\s+tener)\s+(?:el\s+)?(?:proximo|siguiente)\s+mes$",
+    ]
+
+    PATTERNS_FLUJO_DETALLE = [
+        r"^proyeccion\s+financiera$",
+        r"^flujo\s+(?:de\s+)?caja\s+detallad[oa]$",
+        r"^detalle\s+(?:de\s+)?(?:la\s+)?proyeccion\s+(?:de\s+)?(?:flujo\s+de\s+)?caja$",
     ]
 
     PATTERNS_GASTOS_LIST = [
@@ -95,6 +108,14 @@ class ContabilidadDetector:
         for pattern in self.PATTERNS_BALANCE:
             if re.search(pattern, text):
                 return {"intent": "contabilidad.balance"}
+
+        for pattern in self.PATTERNS_FLUJO_DETALLE:
+            if re.search(pattern, text):
+                return {"intent": "contabilidad.flujo_proyectado_detalle"}
+
+        for pattern in self.PATTERNS_FLUJO_PROYECTADO:
+            if re.search(pattern, text):
+                return {"intent": "contabilidad.flujo_proyectado"}
 
         for pattern in self.PATTERNS_GASTOS_LIST:
             if re.search(pattern, text):
