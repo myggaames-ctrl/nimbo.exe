@@ -3153,6 +3153,40 @@ def get_recordatorios():
             "urgencia": "alta"
         })
 
+    # Meta semanal de ventas: lunes anuncia la semana nueva (o invita a definir
+    # una meta si todavia no hay), miercoles avisa si se va atrasado, domingo
+    # cierra con el resultado final (ver seccion Metas semanales).
+    dia_semana_iso = hoy.isoweekday()  # 1=lunes ... 7=domingo
+    meta_semanal = get_progreso_meta_semanal()
+    if dia_semana_iso == 1:
+        if meta_semanal:
+            recordatorios.append({
+                "tipo": "meta_semanal",
+                "mensaje": f"Nueva semana. Meta: Q{meta_semanal['meta_q']:.2f}. Vamos!",
+                "urgencia": "media"
+            })
+        else:
+            recordatorios.append({
+                "tipo": "meta_semanal",
+                "mensaje": "Nueva semana y todavia no has definido una meta de ventas. "
+                           "Escribe 'meta semanal Q[monto]' para definirla.",
+                "urgencia": "media"
+            })
+    elif dia_semana_iso == 3 and meta_semanal and meta_semanal["atrasado"]:
+        recordatorios.append({
+            "tipo": "meta_semanal",
+            "mensaje": (f"Llevas {meta_semanal['porcentaje']:.0f}% de la meta semanal, "
+                        f"quedan {meta_semanal['dias_restantes']} dia(s)"),
+            "urgencia": "alta"
+        })
+    elif dia_semana_iso == 7 and meta_semanal:
+        recordatorios.append({
+            "tipo": "meta_semanal",
+            "mensaje": (f"Esta semana vendiste Q{meta_semanal['ventas_actuales']:.2f} de "
+                        f"Q{meta_semanal['meta_q']:.2f} ({meta_semanal['porcentaje']:.0f}%)"),
+            "urgencia": "media"
+        })
+
     conn.close()
     return recordatorios
 
@@ -4275,4 +4309,164 @@ def get_resumen_cuentas_pagar():
         "vencidos_cantidad": vencidos_cantidad,
         "proximos_total": proximos_total,
         "proximos_cantidad": len(proximos)
+    }
+
+
+# ── METAS SEMANALES ────────────────────────────────────
+
+# Semana ISO (lunes a domingo, ver _semana_actual). Si a partir del miercoles
+# (isoweekday 3) en adelante se lleva menos de este porcentaje de la meta, se
+# considera "atrasado" (ver get_progreso_meta_semanal).
+PORCENTAJE_ALERTA_MIERCOLES = 0.40
+# Sugerencia de nueva meta al cumplir la actual: se sube un 15%, redondeado a
+# multiplos de Q50 para que quede un numero limpio.
+FACTOR_NUEVA_META_SUGERIDA = 1.15
+
+
+def init_metas_semanales():
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS MetaSemanal (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            Semana INTEGER NOT NULL,
+            Anio INTEGER NOT NULL,
+            MetaQ NUMERIC NOT NULL,
+            VentasActuales NUMERIC DEFAULT 0,
+            Estado TEXT DEFAULT 'EN_CURSO',
+            FechaInicio TEXT,
+            FechaFin TEXT,
+            UNIQUE(Semana, Anio)
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def _semana_actual():
+    """(anio_iso, semana_iso, fecha_inicio, fecha_fin) de la semana ISO actual -
+    lunes a domingo. Se usa el calendario ISO (date.isocalendar()) en vez del
+    calendario natural para que la semana siempre empiece en lunes y no se corte
+    a la mitad entre un mes/anio y otro."""
+    from datetime import date, timedelta
+    hoy = date.today()
+    anio_iso, semana_iso, _ = hoy.isocalendar()
+    lunes = hoy - timedelta(days=hoy.isoweekday() - 1)
+    domingo = lunes + timedelta(days=6)
+    return anio_iso, semana_iso, lunes, domingo
+
+
+def _ventas_en_rango(fecha_inicio, fecha_fin):
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""SELECT IFNULL(SUM(Total),0) as total FROM Venta
+        WHERE DATE(Fecha) >= DATE(?) AND DATE(Fecha) <= DATE(?)""",
+        (fecha_inicio.isoformat(), fecha_fin.isoformat()))
+    total = float(cur.fetchone()["total"])
+    conn.close()
+    return round(total, 2)
+
+
+def _marcar_metas_semanales_vencidas():
+    """Cierra (lazy, mismo patron que marcar_cotizaciones_vencidas/
+    marcar_garantias_vencidas) cualquier MetaSemanal de una semana ya terminada
+    que siga en EN_CURSO: recalcula las ventas finales de esa semana y la marca
+    CUMPLIDA o NO_CUMPLIDA segun corresponda."""
+    from datetime import date
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM MetaSemanal WHERE Estado='EN_CURSO' AND date(FechaFin) < date('now')")
+    pendientes = [dict(r) for r in cur.fetchall()]
+    for m in pendientes:
+        fecha_inicio = date.fromisoformat(m["FechaInicio"])
+        fecha_fin = date.fromisoformat(m["FechaFin"])
+        ventas = _ventas_en_rango(fecha_inicio, fecha_fin)
+        estado = "CUMPLIDA" if m["MetaQ"] > 0 and ventas >= m["MetaQ"] else "NO_CUMPLIDA"
+        cur.execute("UPDATE MetaSemanal SET VentasActuales=?, Estado=? WHERE Id=?", (ventas, estado, m["Id"]))
+    conn.commit()
+    conn.close()
+
+
+def set_meta_semanal(monto_q):
+    """Define (o redefine) la meta de ventas de la semana ISO actual. Si ya
+    existia una meta para esta semana solo se actualiza el monto, sin tocar
+    VentasActuales/Estado (se recalculan de todos modos en la siguiente
+    consulta, ver get_progreso_meta_semanal)."""
+    anio, semana, lunes, domingo = _semana_actual()
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT Id FROM MetaSemanal WHERE Semana=? AND Anio=?", (semana, anio))
+    existente = cur.fetchone()
+    if existente:
+        cur.execute("UPDATE MetaSemanal SET MetaQ=? WHERE Id=?", (monto_q, existente["Id"]))
+    else:
+        cur.execute("""INSERT INTO MetaSemanal (Semana, Anio, MetaQ, VentasActuales, Estado, FechaInicio, FechaFin)
+            VALUES (?,?,?,0,'EN_CURSO',?,?)""",
+            (semana, anio, monto_q, lunes.isoformat(), domingo.isoformat()))
+    conn.commit()
+    conn.close()
+    return get_progreso_meta_semanal()
+
+
+def get_progreso_meta_semanal():
+    """Recalcula (lazy) VentasActuales/Estado de la meta de la semana ISO ACTUAL
+    desde Venta y retorna el progreso completo. None si el admin todavia no ha
+    definido una meta esta semana."""
+    _marcar_metas_semanales_vencidas()
+
+    from datetime import date
+    anio, semana, lunes, domingo = _semana_actual()
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM MetaSemanal WHERE Semana=? AND Anio=?", (semana, anio))
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return None
+    meta = dict(row)
+
+    fecha_inicio = date.fromisoformat(meta["FechaInicio"])
+    fecha_fin = date.fromisoformat(meta["FechaFin"])
+    ventas_actuales = _ventas_en_rango(fecha_inicio, fecha_fin)
+
+    hoy = date.today()
+    dias_restantes = max((fecha_fin - hoy).days, 0)
+
+    meta_q = float(meta["MetaQ"])
+    porcentaje = round((ventas_actuales / meta_q) * 100, 1) if meta_q else 0.0
+
+    cumplida = meta_q > 0 and ventas_actuales >= meta_q
+    estado = "CUMPLIDA" if cumplida else "EN_CURSO"
+
+    # "Atrasado": a partir del miercoles (isoweekday 3) y mientras la semana
+    # siga en curso, si se lleva menos de PORCENTAJE_ALERTA_MIERCOLES de la meta.
+    atrasado = (
+        not cumplida
+        and hoy.isoweekday() >= 3
+        and meta_q > 0
+        and (ventas_actuales / meta_q) < PORCENTAJE_ALERTA_MIERCOLES
+    )
+
+    nueva_meta_sugerida = round((meta_q * FACTOR_NUEVA_META_SUGERIDA) / 50) * 50 if meta_q else 0
+
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("UPDATE MetaSemanal SET VentasActuales=?, Estado=? WHERE Id=?",
+        (ventas_actuales, estado, meta["Id"]))
+    conn.commit()
+    conn.close()
+
+    return {
+        "meta_q": round(meta_q, 2),
+        "ventas_actuales": ventas_actuales,
+        "porcentaje": porcentaje,
+        "falta_q": round(max(meta_q - ventas_actuales, 0), 2),
+        "estado": estado,
+        "atrasado": atrasado,
+        "dias_restantes": dias_restantes,
+        "nueva_meta_sugerida": nueva_meta_sugerida,
+        "semana": meta["Semana"],
+        "anio": meta["Anio"],
+        "fecha_inicio": meta["FechaInicio"],
+        "fecha_fin": meta["FechaFin"],
     }

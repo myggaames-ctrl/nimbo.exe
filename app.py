@@ -98,6 +98,9 @@ init_cuentas_pagar()
 from database.aronium import init_pagos_fijos_ext
 init_pagos_fijos_ext()
 
+from database.aronium import init_metas_semanales
+init_metas_semanales()
+
 # Instalaciones que ya tenian usuarios antes de que existiera el wizard de
 # onboarding (o que lo completaron con el /setup viejo de un solo paso) se
 # marcan como completas automaticamente, para no forzar el wizard nuevo.
@@ -1462,6 +1465,22 @@ def get_resumen_cuentas_pagar_route():
 def get_flujo_caja_proyectado_route():
     from database.aronium import get_flujo_caja_proyectado
     return jsonify(get_flujo_caja_proyectado())
+
+
+@app.route("/api/reportes/meta-semanal", methods=["GET", "POST"])
+@admin_required
+def meta_semanal_route():
+    from database.aronium import get_progreso_meta_semanal, set_meta_semanal
+    if request.method == "POST":
+        data = request.json or {}
+        try:
+            monto = float(data.get("monto"))
+            if monto <= 0:
+                raise ValueError()
+        except (TypeError, ValueError):
+            return jsonify({"error": "Monto invalido"}), 400
+        return jsonify(set_meta_semanal(monto))
+    return jsonify(get_progreso_meta_semanal() or {})
 
 
 # ── CAJA REGISTRADORA ──────────────────────────────────────

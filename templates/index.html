@@ -740,6 +740,10 @@
           <div id="flujocaja-widget"><div class="text-muted">Cargando...</div></div>
         </div>
         <div class="card">
+          <div class="card-title">🎯 Meta semanal</div>
+          <div id="meta-semanal-widget"><div class="text-muted">Cargando...</div></div>
+        </div>
+        <div class="card">
           <div class="card-title">Accesos rápidos</div>
           <div style="display:flex;flex-direction:column;gap:8px">
             <button class="btn btn-ghost w-full" onclick="showPanel('chat')">💬 Abrir Chat IA</button>
@@ -1751,6 +1755,53 @@ async function verFlujoCajaDetalle() {
     `;
     document.getElementById('modal-flujo-caja').style.display = 'flex';
   } catch(e) {}
+}
+
+async function loadMetaSemanal() {
+  try {
+    const r = await fetch('/api/reportes/meta-semanal');
+    const d = await r.json();
+    const el = document.getElementById('meta-semanal-widget');
+    if (!el) return;
+    if (!d.meta_q) {
+      el.innerHTML = `
+        <div class="text-muted" style="margin-bottom:8px">Todavia no has definido una meta esta semana.</div>
+        <button class="btn btn-ghost btn-sm" onclick="promptMetaSemanal()">Definir meta</button>
+      `;
+      return;
+    }
+    const pct = Math.min(d.porcentaje, 100);
+    const color = d.estado === 'CUMPLIDA' ? 'var(--green,#2e9e5b)' : (d.atrasado ? 'var(--red)' : 'var(--accent)');
+    let alerta = '';
+    if (d.estado === 'CUMPLIDA') {
+      alerta = `<div style="margin-top:8px"><span class="badge badge-green">🎉 Meta cumplida</span>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px">Sugerencia para la proxima semana: Q${d.nueva_meta_sugerida.toFixed(2)}</div></div>`;
+    } else if (d.atrasado) {
+      alerta = `<div style="margin-top:8px"><span class="badge badge-red">⚠️ Vas atrasado</span></div>`;
+    }
+    el.innerHTML = `
+      <div style="font-size:13px;margin-bottom:6px">Llevas <b>Q${d.ventas_actuales.toFixed(2)}</b> de <b>Q${d.meta_q.toFixed(2)}</b> (${d.porcentaje}%)</div>
+      <div style="background:var(--bg-alt,rgba(255,255,255,0.06));border-radius:6px;height:10px;overflow:hidden;margin-bottom:6px">
+        <div style="height:100%;width:${pct}%;background:${color};transition:width .3s"></div>
+      </div>
+      <div style="font-size:11px;color:var(--text-muted)">${d.dias_restantes} dia(s) restantes de la semana</div>
+      ${alerta}
+      <button class="btn btn-ghost btn-sm w-full mt-2" onclick="promptMetaSemanal()">Redefinir meta</button>
+    `;
+  } catch(e) {}
+}
+
+async function promptMetaSemanal() {
+  const monto = parseFloat(prompt("Meta de ventas para esta semana (Q):"));
+  if (!monto || monto <= 0) return;
+  try {
+    await fetch('/api/reportes/meta-semanal', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({monto})
+    });
+  } catch(e) {}
+  loadMetaSemanal();
 }
 
 async function loadAlertasPrecios() {
@@ -2995,6 +3046,7 @@ loadCotizaciones();
 loadCuentasCobrar();
 loadCuentasPagar();
 loadFlujoCaja();
+loadMetaSemanal();
 setInterval(refreshStatus, 30000);
 
 async function addStock(id, nombre) {

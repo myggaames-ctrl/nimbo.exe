@@ -73,8 +73,45 @@ class ReporteDetector:
         r"^cuando\s+compra\s+de\s+nuevo\s+(.+)$",
     ]
 
+    # Metas semanales de ventas (ver database.aronium.set_meta_semanal /
+    # get_progreso_meta_semanal). Se revisa antes que PATTERNS_META_PROGRESO
+    # porque este exige un monto (digitos) y es mas especifico.
+    PATTERNS_META_DEFINIR = [
+        r"^meta\s+semanal\s+(?:de\s+|es\s+)?q?\s*(\d+(?:\.\d+)?)$",
+        r"^(?:define|definir|pon|establece)\s+(?:la\s+)?meta\s+semanal\s+(?:de\s+|en\s+)?q?\s*(\d+(?:\.\d+)?)$",
+        r"^nueva\s+meta\s+semanal\s+(?:de\s+)?q?\s*(\d+(?:\.\d+)?)$",
+    ]
+
+    PATTERNS_META_FALTA = [
+        r"^cuanto\s+me\s+falta\s+para\s+(?:la\s+)?meta(?:\s+semanal)?$",
+        r"^cuanto\s+falta\s+para\s+(?:la\s+)?meta(?:\s+semanal)?$",
+        r"^que\s+me\s+falta\s+para\s+(?:la\s+)?meta(?:\s+semanal)?$",
+    ]
+
+    PATTERNS_META_PROGRESO = [
+        r"^como\s+voy\s+esta\s+semana$",
+        r"^como\s+vamos\s+esta\s+semana$",
+        r"^meta\s+(?:de\s+)?(?:la\s+)?semana$",
+        r"^meta\s+semanal$",
+        r"^progreso\s+(?:de\s+)?(?:la\s+)?meta(?:\s+semanal)?$",
+        r"^como\s+voy\s+(?:con\s+)?(?:la\s+)?meta(?:\s+semanal)?$",
+    ]
+
     def detect(self, text: str):
         text = normalize(text)
+
+        for pattern in self.PATTERNS_META_DEFINIR:
+            match = re.search(pattern, text)
+            if match:
+                return {"intent": "reporte.meta_definir", "monto": float(match.group(1))}
+
+        for pattern in self.PATTERNS_META_FALTA:
+            if re.search(pattern, text):
+                return {"intent": "reporte.meta_falta"}
+
+        for pattern in self.PATTERNS_META_PROGRESO:
+            if re.search(pattern, text):
+                return {"intent": "reporte.meta_progreso"}
 
         for pattern in self.PATTERNS_PROXIMA_COMPRA:
             match = re.search(pattern, text)

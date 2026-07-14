@@ -296,3 +296,54 @@ def proxima_compra_tool(query):
     return resp
 
 register("reporte.proxima_compra", proxima_compra_tool)
+
+
+def _texto_progreso_meta(p):
+    resp = f"Llevas Q{p['ventas_actuales']:.2f} de Q{p['meta_q']:.2f} esta semana ({p['porcentaje']}%)."
+    if p["estado"] == "CUMPLIDA":
+        resp += (f"\n🎉 Meta cumplida! Te sugiero una nueva meta de Q{p['nueva_meta_sugerida']:.2f} "
+                 f"para la proxima semana.")
+    elif p["atrasado"]:
+        resp += f"\n⚠️ Vas atrasado: llevas {p['porcentaje']}% y quedan {p['dias_restantes']} dia(s) de la semana."
+    else:
+        resp += f"\nQuedan {p['dias_restantes']} dia(s) de la semana."
+    return resp
+
+
+def meta_semanal_definir_tool(data):
+    monto = data.get("monto") if isinstance(data, dict) else None
+    if monto is None:
+        return "No entendi el monto de la meta. Escribe 'meta semanal Q[monto]'."
+    monto = float(monto)
+    if monto <= 0:
+        return "La meta semanal debe ser un monto positivo."
+
+    from database.aronium import set_meta_semanal
+    p = set_meta_semanal(monto)
+    return (f"Meta semanal definida: Q{p['meta_q']:.2f} (semana del {p['fecha_inicio']} al {p['fecha_fin']}).\n"
+            + _texto_progreso_meta(p))
+
+register("reporte.meta_definir", meta_semanal_definir_tool)
+
+
+def meta_semanal_progreso_tool(data):
+    from database.aronium import get_progreso_meta_semanal
+    p = get_progreso_meta_semanal()
+    if not p:
+        return "No has definido una meta de ventas para esta semana. Escribe 'meta semanal Q[monto]' para definirla."
+    return _texto_progreso_meta(p)
+
+register("reporte.meta_progreso", meta_semanal_progreso_tool)
+
+
+def meta_semanal_falta_tool(data):
+    from database.aronium import get_progreso_meta_semanal
+    p = get_progreso_meta_semanal()
+    if not p:
+        return "No has definido una meta de ventas para esta semana. Escribe 'meta semanal Q[monto]' para definirla."
+    if p["estado"] == "CUMPLIDA":
+        return (f"Ya cumpliste la meta de esta semana! Llevas Q{p['ventas_actuales']:.2f} de Q{p['meta_q']:.2f}. "
+                f"Te sugiero una nueva meta de Q{p['nueva_meta_sugerida']:.2f} para la proxima semana.")
+    return f"Te faltan Q{p['falta_q']:.2f} para llegar a la meta de Q{p['meta_q']:.2f} esta semana."
+
+register("reporte.meta_falta", meta_semanal_falta_tool)
