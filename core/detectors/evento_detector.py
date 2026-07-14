@@ -46,6 +46,17 @@ class EventoDetector:
             match = re.search(r"^cumpleanos\s+(?:de\s+)?(.+?)\s+(?:es\s+)?(?:el\s+)?(\d{1,2}[/\-]\d{1,2})$", text)
             return {"intent": "cumpleanos.agregar", "query": match.group(1).strip(), "fecha": match.group(2).strip()}
 
+        # Consulta (sin fecha al final, a diferencia del registro de arriba, que
+        # se revisa primero para no perder "cumpleanos de X es DD/MM").
+        for pattern in (
+            r"^cuando\s+es\s+el\s+cumpleanos\s+de\s+(.+)$",
+            r"^cumpleanos\s+de\s+(.+)$",
+            r"^cumpleanos\s+(.+)$",
+        ):
+            match = re.search(pattern, text)
+            if match:
+                return {"intent": "cumpleanos.consultar", "query": match.group(1).strip()}
+
         for pattern in (r"^(?:el\s+)?pago\s+fijo\s+(?:de\s+)?(.+?)\s+es\s+[Qq]?(\d+\.?\d*)$",
                         r"^monto\s+(?:del?\s+)?pago\s+fijo\s+(?:de\s+)?(.+?)\s+(?:es\s+)?[Qq]?(\d+\.?\d*)$"):
             match = re.search(pattern, text)

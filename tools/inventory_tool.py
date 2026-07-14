@@ -55,7 +55,18 @@ register(
     "inventory.list",
     list_products
 )
+import re
 from database.aronium import add_stock, remove_stock, get_products, connect
+
+
+def _quitar_articulo(query):
+    """Quita el articulo inicial (el/la/los/las) de una busqueda de producto.
+    'cambia el precio de la cuchilla a 100' captura 'la cuchilla' como query, y el
+    LIKE directo contra Product.Name (sin el fallback fuzzy que si tiene
+    get_products()) nunca matcheaba porque el nombre real del producto no trae el
+    articulo pegado ('Cuchilla oster original', no 'la Cuchilla oster original')."""
+    return re.sub(r"^(el|la|los|las)\s+", "", query.strip(), flags=re.IGNORECASE).strip()
+
 
 def add_stock_tool(data):
     query = data.get("query", "")
@@ -84,7 +95,7 @@ def remove_stock_tool(data):
 register("inventory.remove_stock", remove_stock_tool)
 
 def update_price_tool(data):
-    query = data.get("query", "")
+    query = _quitar_articulo(data.get("query", ""))
     price = data.get("price", 0)
     conn = connect()
     cur = conn.cursor()
@@ -152,7 +163,7 @@ register("inventory.set_min_stock", set_min_stock_tool)
 
 def update_cost_tool(data):
     from database.aronium import connect
-    query = data.get("query", "")
+    query = _quitar_articulo(data.get("query", ""))
     cost = data.get("cost", 0)
     conn = connect()
     cur = conn.cursor()
@@ -207,3 +218,31 @@ def prediccion_producto_tool(query):
     return base
 
 register("inventory.prediccion_producto", prediccion_producto_tool)
+
+
+def kardex_tool(data):
+    from database.aronium import get_kardex, get_products
+    query = data.get("query", "") if isinstance(data, dict) else str(data)
+
+    if query:
+        productos = get_products(search=query)
+        if not productos:
+            return f"No encontre producto '{query}'."
+        p = productos[0]
+        movimientos = get_kardex(product_id=p["Id"], limit=15)
+        titulo = f"Kardex de {p['Name']}"
+    else:
+        movimientos = get_kardex(limit=15)
+        titulo = "Kardex (ultimos movimientos)"
+
+    if not movimientos:
+        return f"{titulo}: sin movimientos registrados."
+
+    resp = f"{titulo}:\n"
+    for m in movimientos:
+        signo = "+" if m["Tipo"] == "ENTRADA" else "-"
+        resp += (f"- {m['Fecha'][:16]} | {m['Tipo']} {signo}{m['Cantidad']} {m['ProductName']} "
+                 f"({m['StockAntes']}->{m['StockDespues']}) | {m['Razon']}\n")
+    return resp.strip()
+
+register("inventory.kardex", kardex_tool)

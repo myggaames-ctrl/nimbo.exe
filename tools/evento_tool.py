@@ -189,3 +189,19 @@ def agregar_cumpleanos_tool(data):
     return f"Cumpleanos de {c['Nombre']} registrado el {fecha}. Te avisare 3 dias antes."
 
 register("cumpleanos.agregar", agregar_cumpleanos_tool)
+
+
+def consultar_cumpleanos_tool(data):
+    from database.aronium import buscar_cliente_completo
+    query = data.get("query", "") if isinstance(data, dict) else str(data)
+    clientes = buscar_cliente_completo(query)
+    if not clientes:
+        return f"No encontre cliente '{query}'."
+    c = clientes[0]
+    if not c.get("FechaCumpleanos"):
+        return f"{c['Nombre']} no tiene cumpleanos registrado. Escribe 'cumpleanos de {c['Nombre']} es DD/MM' para registrarlo."
+    partes = c["FechaCumpleanos"].split("-")
+    fecha_legible = f"{partes[2]}/{partes[1]}" if len(partes) == 3 else c["FechaCumpleanos"]
+    return f"El cumpleanos de {c['Nombre']} es el {fecha_legible}."
+
+register("cumpleanos.consultar", consultar_cumpleanos_tool)

@@ -42,13 +42,13 @@ class InventoryDetector:
     ]
 
     PRICE_PATTERNS = [
-        r"^actualiza[r]?\s+precio\s+(?:de\s+)?(.+?)\s+a\s+(\d+\.?\d*)$",
-        r"^cambia[r]?\s+precio\s+(?:de\s+)?(.+?)\s+a\s+(\d+\.?\d*)$",
+        r"^actualiza[r]?\s+(?:el\s+)?precio\s+(?:de\s+)?(.+?)\s+a\s+(\d+\.?\d*)$",
+        r"^cambia[r]?\s+(?:el\s+)?precio\s+(?:de\s+)?(.+?)\s+a\s+(\d+\.?\d*)$",
     ]
 
     COST_PATTERNS = [
-        r"^actualiza[r]?\s+costo\s+(?:de\s+)?(.+?)\s+a\s+(\d+\.?\d*)$",
-        r"^cambia[r]?\s+costo\s+(?:de\s+)?(.+?)\s+a\s+(\d+\.?\d*)$",
+        r"^actualiza[r]?\s+(?:el\s+)?costo\s+(?:de\s+)?(.+?)\s+a\s+(\d+\.?\d*)$",
+        r"^cambia[r]?\s+(?:el\s+)?costo\s+(?:de\s+)?(.+?)\s+a\s+(\d+\.?\d*)$",
         r"^(?:el\s+)?costo\s+de\s+(.+?)\s+es\s+(\d+\.?\d*)$",
     ]
 
@@ -67,6 +67,20 @@ class InventoryDetector:
         "alertas de inventario", "alertas predictivas", "alerta predictiva",
         "prediccion de inventario", "predicciones de inventario",
         "cuando se acaba el stock", "cuando se acaba el inventario",
+    ]
+
+    KARDEX_EXACT = [
+        "kardex", "ver kardex", "historial de movimientos", "historial de inventario",
+        "movimientos de inventario", "movimientos de stock", "movimientos",
+    ]
+
+    KARDEX_PATTERNS = [
+        r"^kardex\s+(?:de\s+|del?\s+)?(?:el|la|los|las)\s+(.+)$",
+        r"^kardex\s+(?:de\s+|del?\s+)?(.+)$",
+        r"^historial\s+de\s+movimientos\s+(?:de\s+|del?\s+)?(?:el|la|los|las)\s+(.+)$",
+        r"^historial\s+de\s+movimientos\s+(?:de\s+|del?\s+)?(.+)$",
+        r"^movimientos\s+(?:de\s+|del?\s+)?(?:el|la|los|las)\s+(.+)$",
+        r"^movimientos\s+(?:de\s+|del?\s+)?(.+)$",
     ]
 
     # Los patrones "con articulo" van primero (mas especificos) para que (.+) no
@@ -88,6 +102,14 @@ class InventoryDetector:
 
         if text in self.ALERTAS_PREDICTIVAS_EXACT:
             return {"intent": "inventory.alertas_predictivas"}
+
+        if text in self.KARDEX_EXACT:
+            return {"intent": "inventory.kardex", "query": ""}
+
+        for pattern in self.KARDEX_PATTERNS:
+            match = re.search(pattern, text)
+            if match:
+                return {"intent": "inventory.kardex", "query": singularize(match.group(1).strip())}
 
         for pattern in self.PREDICCION_PRODUCTO_PATTERNS:
             match = re.search(pattern, text)

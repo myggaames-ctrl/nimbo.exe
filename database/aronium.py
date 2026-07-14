@@ -2565,7 +2565,7 @@ def get_reporte_dia():
             COUNT(*) as total_ventas,
             IFNULL(SUM(Total), 0) as total_vendido
         FROM Venta 
-        WHERE DATE(Fecha) >= DATE('now', '-1 day')
+        WHERE DATE(Fecha) = DATE('now')
         AND Mes=? AND Anio=?
     """, (datetime.now().month, datetime.now().year))
     row = dict(cur.fetchone())
@@ -2581,7 +2581,7 @@ def get_reporte_dia():
     cur3 = nimbo_conn.cursor()
     cur3.execute("""
         SELECT Descripcion, Total FROM Venta 
-        WHERE DATE(Fecha) >= DATE('now', '-1 day')
+        WHERE DATE(Fecha) = DATE('now')
         AND Mes=? AND Anio=?
     """, (datetime.now().month, datetime.now().year))
     ventas = cur3.fetchall()
@@ -2621,31 +2621,37 @@ def get_reporte_periodo(mes=None, trimestre=None, anio=None, semestre=None):
         anio = datetime.now().year
     conn = nimbo_connect()
     cur = conn.cursor()
-    
+
     if mes:
-        cur.execute("SELECT COUNT(*) as ventas, SUM(Total) as total FROM Venta WHERE Mes=? AND Anio=?", (mes, anio))
+        condicion = "Mes=? AND Anio=?"
+        params = (mes, anio)
     elif trimestre:
         meses = {1:[1,2,3], 2:[4,5,6], 3:[7,8,9], 4:[10,11,12]}
         m = meses.get(trimestre, [1,2,3])
-        cur.execute("SELECT COUNT(*) as ventas, SUM(Total) as total FROM Venta WHERE Mes IN (?,?,?) AND Anio=?", (*m, anio))
+        condicion = "Mes IN (?,?,?) AND Anio=?"
+        params = (*m, anio)
     elif semestre:
-        if semestre == 1:
-            cur.execute("SELECT COUNT(*) as ventas, SUM(Total) as total FROM Venta WHERE Mes BETWEEN 1 AND 6 AND Anio=?", (anio,))
-        else:
-            cur.execute("SELECT COUNT(*) as ventas, SUM(Total) as total FROM Venta WHERE Mes BETWEEN 7 AND 12 AND Anio=?", (anio,))
+        condicion = "Mes BETWEEN 1 AND 6 AND Anio=?" if semestre == 1 else "Mes BETWEEN 7 AND 12 AND Anio=?"
+        params = (anio,)
     else:
-        cur.execute("SELECT COUNT(*) as ventas, SUM(Total) as total FROM Venta WHERE Anio=?", (anio,))
-    
+        condicion = "Anio=?"
+        params = (anio,)
+
+    cur.execute(f"SELECT COUNT(*) as ventas, SUM(Total) as total FROM Venta WHERE {condicion}", params)
     row = dict(cur.fetchone())
-    
-    cur.execute("""
+
+    # Mismo periodo (mes/trimestre/semestre/anio) que la consulta de arriba - antes
+    # esta subconsulta ignoraba mes/trimestre/semestre y siempre traia los mejores
+    # clientes del ANIO completo sin importar el periodo pedido por el caller.
+    condicion_v = condicion.replace("Mes", "v.Mes").replace("Anio", "v.Anio")
+    cur.execute(f"""
         SELECT c.Nombre, COUNT(*) as compras, SUM(v.Total) as total
         FROM Venta v JOIN Cliente c ON v.ClienteId=c.Id
-        WHERE v.Anio=?
+        WHERE {condicion_v}
         GROUP BY v.ClienteId ORDER BY total DESC LIMIT 5
-    """, (anio,))
+    """, params)
     mejores = [dict(r) for r in cur.fetchall()]
-    
+
     conn.close()
     
     total = float(row["total"] or 0)

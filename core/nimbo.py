@@ -433,7 +433,19 @@ def send(message: str, context: dict = None, role: str = "admin") -> tuple:
     # respuesta esperada). Solo aplica si hay un step activo - sin flujo en curso,
     # "cancelar" sigue el camino normal (detectores -> Gemini -> OpenClaw).
     if context and context.get("step") and _es_cancelacion(message):
-        return "De acuerdo, empecemos de nuevo. ¿En que te puedo ayudar?", {}
+        # Si el flujo llego a arrancar con VENTA_INICIO, registrar_venta_tool (y el
+        # resto de caminos que reusan el mismo marcador: seleccion entre varios
+        # productos, venta por unidad de medida) ya le hicieron remove_stock() al
+        # producto ANTES de esta conversacion multi-paso (venta_waiting_nombre en
+        # adelante) - si se cancela a mitad de camino, ese stock nunca se revertia,
+        # dejando el inventario descontado sin ninguna Venta real detras.
+        venta_ctx = context.get("venta_ctx")
+        aviso_stock = ""
+        if venta_ctx and venta_ctx.get("producto_id"):
+            from database.aronium import add_stock
+            add_stock(venta_ctx["producto_id"], venta_ctx["cantidad"])
+            aviso_stock = f" Se repuso el stock de {venta_ctx['producto']} ({venta_ctx['cantidad']} unidad(es))."
+        return f"De acuerdo, empecemos de nuevo. ¿En que te puedo ayudar?{aviso_stock}", {}
 
     if context is None:
         context = {}

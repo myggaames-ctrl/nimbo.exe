@@ -170,7 +170,7 @@ register("contabilidad.sugerencias_precios", sugerencias_precios_tool)
 
 
 def equilibrio_tool(data):
-    from database.aronium import get_gastos, get_pagos_fijos, get_margen_productos
+    from database.aronium import get_gastos, get_pagos_fijos, get_margen_productos, get_balance_mes
     from datetime import datetime
     
     # Gastos operativos del mes
@@ -214,7 +214,8 @@ def equilibrio_tool(data):
     resp += f"---\n"
     resp += f"Necesitas vender {unidades_equilibrio:.0f} unidades para cubrir gastos\n"
     resp += f"O generar Q{ventas_equilibrio:.2f} en ventas\n"
-    resp += f"Llevas Q570.00 vendidos este mes"
+    ventas_mes_actual = get_balance_mes()["ingresos"]
+    resp += f"Llevas Q{ventas_mes_actual:.2f} vendidos este mes"
     return resp
 
 register("contabilidad.equilibrio", equilibrio_tool)
