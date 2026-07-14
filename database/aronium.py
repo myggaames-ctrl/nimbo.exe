@@ -290,6 +290,93 @@ def get_alertas_stock():
     return alertas
 
 
+# ── ALERTAS PREDICTIVAS DE INVENTARIO ─────────────────
+
+DIAS_HISTORIAL_CONSUMO = 30
+DIAS_CRITICO_STOCK = 7
+DIAS_ADVERTENCIA_STOCK = 21
+
+
+def _consumo_diario_por_producto(dias=DIAS_HISTORIAL_CONSUMO, product_id=None):
+    """Promedio de unidades de salida (ventas + salidas manuales, cualquier
+    egreso real de Kardex) por dia en los ultimos `dias` dias, por producto."""
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    sql = """SELECT ProductId, SUM(Cantidad) as total_salida FROM Kardex
+        WHERE Tipo='SALIDA' AND date(Fecha) >= date('now', ?)"""
+    params = [f"-{dias} days"]
+    if product_id is not None:
+        sql += " AND ProductId=?"
+        params.append(product_id)
+    sql += " GROUP BY ProductId"
+    cur.execute(sql, params)
+    consumo = {r["ProductId"]: float(r["total_salida"]) / dias for r in cur.fetchall()}
+    conn.close()
+    return consumo
+
+
+def _clasificar_urgencia_stock(dias_restantes):
+    if dias_restantes is None:
+        return "SIN_DATOS"
+    if dias_restantes < DIAS_CRITICO_STOCK:
+        return "CRITICO"
+    if dias_restantes <= DIAS_ADVERTENCIA_STOCK:
+        return "ADVERTENCIA"
+    return "OK"
+
+
+def get_alertas_predictivas(dias_historial=DIAS_HISTORIAL_CONSUMO):
+    """Para cada producto calcula el promedio de unidades de salida por dia en
+    los ultimos `dias_historial` dias (Kardex) y proyecta cuantos dias de stock
+    quedan (stock_actual / promedio_diario). Productos sin ninguna salida en el
+    periodo quedan con dias_restantes=None y urgencia SIN_DATOS (no hay tasa de
+    consumo con la que proyectar agotamiento). Ordenado de mas a menos urgente."""
+    consumo = _consumo_diario_por_producto(dias_historial)
+    productos = get_products()
+    resultado = []
+    for p in productos:
+        promedio_diario = consumo.get(p["Id"], 0)
+        stock = float(p["Stock"])
+        dias_restantes = round(stock / promedio_diario, 1) if promedio_diario > 0 else None
+        resultado.append({
+            "producto_id": p["Id"],
+            "producto": p["Name"].strip(),
+            "stock_actual": stock,
+            "promedio_diario": round(promedio_diario, 2),
+            "dias_restantes": dias_restantes,
+            "urgencia": _clasificar_urgencia_stock(dias_restantes)
+        })
+
+    orden_urgencia = {"CRITICO": 0, "ADVERTENCIA": 1, "OK": 2, "SIN_DATOS": 3}
+    resultado.sort(key=lambda r: (
+        orden_urgencia[r["urgencia"]],
+        r["dias_restantes"] if r["dias_restantes"] is not None else float("inf")
+    ))
+    return resultado
+
+
+def get_prediccion_producto(query, dias_historial=DIAS_HISTORIAL_CONSUMO):
+    """Prediccion de agotamiento de un solo producto (busqueda fuzzy por nombre,
+    get_products(), mismo criterio que el resto del sistema). None si no se
+    encuentra ningun producto."""
+    productos = get_products(search=query)
+    if not productos:
+        return None
+    p = productos[0]
+    consumo = _consumo_diario_por_producto(dias_historial, product_id=p["Id"])
+    promedio_diario = consumo.get(p["Id"], 0)
+    stock = float(p["Stock"])
+    dias_restantes = round(stock / promedio_diario, 1) if promedio_diario > 0 else None
+    return {
+        "producto_id": p["Id"],
+        "producto": p["Name"].strip(),
+        "stock_actual": stock,
+        "promedio_diario": round(promedio_diario, 2),
+        "dias_restantes": dias_restantes,
+        "urgencia": _clasificar_urgencia_stock(dias_restantes)
+    }
+
+
 # ── SERVICIO TECNICO ──────────────────────────────────
 
 def init_servicio_tecnico_ext():
@@ -2826,6 +2913,17 @@ def get_recordatorios():
         recordatorios.append({
             "tipo": "cuentapagar",
             "mensaje": f"Le debes Q{c['MontoPendiente']} a {c['ProveedorNombre']} ({c['Descripcion']}) - vence pronto",
+            "urgencia": "alta"
+        })
+
+    # Productos con menos de DIAS_CRITICO_STOCK dias de stock proyectado
+    alertas_predictivas = get_alertas_predictivas()
+    for a in alertas_predictivas:
+        if a["urgencia"] != "CRITICO":
+            continue
+        recordatorios.append({
+            "tipo": "stock_predictivo",
+            "mensaje": f"CRITICO: a este ritmo, {a['producto']} se agota en {a['dias_restantes']} dia(s) (stock: {a['stock_actual']:.0f}, vende {a['promedio_diario']:.1f}/dia)",
             "urgencia": "alta"
         })
 

@@ -117,6 +117,32 @@ Usuario escribe mensaje
 
 ## Modulos completados
 - Inventario: CRUD, kardex, alertas stock, fotos, descripcion
+  - Alertas predictivas: database.aronium.get_alertas_predictivas() calcula, para cada
+    producto, el promedio de unidades de SALIDA por dia en el Kardex de los ultimos 30 dias
+    (DIAS_HISTORIAL_CONSUMO - incluye ventas y salidas manuales, cualquier egreso real de
+    stock, no solo Razon='Venta') y proyecta dias_restantes = stock_actual / promedio_diario.
+    Clasifica en CRITICO (<7 dias, DIAS_CRITICO_STOCK), ADVERTENCIA (7-21 dias,
+    DIAS_ADVERTENCIA_STOCK) u OK (>21 dias); un producto sin ninguna salida en el periodo
+    queda en SIN_DATOS (dias_restantes=None, no hay tasa de consumo con la que proyectar) en
+    vez de asumir que nunca se agota. Lista ordenada de mas a menos urgente.
+    database.aronium.get_prediccion_producto(query) hace lo mismo para un solo producto
+    (busqueda fuzzy con get_products(), mismo criterio que el resto del sistema).
+  - Desde el chat: "alertas de inventario" / "alertas predictivas" (inventory.
+    alertas_predictivas) lista los productos CRITICO/ADVERTENCIA agrupados; "cuando se acaban
+    las cuchillas" / "en cuantos dias se acaban los empaques" (inventory.prediccion_producto,
+    core/detectors/inventory_detector.py) da la prediccion de un producto especifico ("A este
+    ritmo, [producto] se agota en N dia(s)..."). Los patrones con articulo (el/la/los/las) se
+    revisan antes que los patrones sin articulo, y exigen `\s+` (no `\s*`) despues del
+    articulo - con `?` opcional y `\s*` la alternancia "la" matcheaba como prefijo de "las" y
+    dejaba una "s" suelta pegada al nombre del producto buscado.
+  - Categoria "inventory" ya era de empleado (CATEGORIAS_EMPLEADO en core/action_engine.py),
+    asi que estos comandos nuevos tambien quedan disponibles para el rol empleado sin cambios
+    adicionales.
+  - Recordatorios: get_recordatorios() agrega un recordatorio tipo "stock_predictivo" (urgencia
+    alta) por cada producto CRITICO.
+  - Widget en el dashboard (/api/inventario/alertas-predictivas, @login_required igual que
+    /api/db/alertas - visible para empleado y admin): muestra solo los productos CRITICO con
+    sus dias estimados; si no hay ninguno muestra "Sin productos criticos".
 - Ventas: flujo completo, WhatsApp, descuento stock automatico
 - Clientes: historial completo, Excel, cumpleanos. "historial de Juan Perez" (cliente.historial,
   tools/cliente_tool.py) muestra todo desde el primer dia: datos (telefono/email/NIT/fecha de

@@ -63,11 +63,36 @@ class InventoryDetector:
         r"^borra[r]?\s+(?:producto\s+)?(.+)$",
     ]
 
+    ALERTAS_PREDICTIVAS_EXACT = [
+        "alertas de inventario", "alertas predictivas", "alerta predictiva",
+        "prediccion de inventario", "predicciones de inventario",
+        "cuando se acaba el stock", "cuando se acaba el inventario",
+    ]
+
+    # Los patrones "con articulo" van primero (mas especificos) para que (.+) no
+    # termine capturando el articulo como si fuera parte del nombre del producto -
+    # requieren \s+ (no \s*) despues del articulo para que "la" no matchee como
+    # prefijo de "las" y deje una "s" suelta pegada al nombre.
+    PREDICCION_PRODUCTO_PATTERNS = [
+        r"^cuando\s+se\s+acaba[n]?\s+(?:el|la|los|las)\s+(.+)$",
+        r"^cuando\s+se\s+acaba[n]?\s+(.+)$",
+        r"^en\s+cuantos\s+dias\s+se\s+acaba[n]?\s+(?:el|la|los|las)\s+(.+)$",
+        r"^en\s+cuantos\s+dias\s+se\s+acaba[n]?\s+(.+)$",
+    ]
+
     def detect(self, text: str):
         text = normalize(text)
 
         if text in self.EXACT:
             return {"intent": "inventory.list", "query": ""}
+
+        if text in self.ALERTAS_PREDICTIVAS_EXACT:
+            return {"intent": "inventory.alertas_predictivas"}
+
+        for pattern in self.PREDICCION_PRODUCTO_PATTERNS:
+            match = re.search(pattern, text)
+            if match:
+                return {"intent": "inventory.prediccion_producto", "query": singularize(match.group(1).strip())}
 
         for pattern in self.CREATE_PATTERNS:
             match = re.search(pattern, text)

@@ -691,6 +691,10 @@
           <div id="alertas-stock"><div class="text-muted">Cargando...</div></div>
         </div>
         <div class="card">
+          <div class="card-title">📉 Alertas predictivas</div>
+          <div id="alertas-predictivas-widget"><div class="text-muted">Cargando...</div></div>
+        </div>
+        <div class="card">
           <div class="card-title">🔔 Recordatorios</div>
           <div id="recordatorios-widget"><div class="text-muted">Cargando...</div></div>
         </div>
@@ -1659,6 +1663,28 @@ async function loadAlertas() {
       <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)">
         <span style="font-size:13px">${a.Name}</span>
         <span class="badge ${a.Stock === 0 ? 'badge-red' : 'badge-orange'}">${a.Stock === 0 ? 'AGOTADO' : 'Stock: ' + a.Stock}</span>
+      </div>`).join('');
+  } catch(e) {}
+}
+
+async function loadAlertasPredictivas() {
+  try {
+    const r = await fetch('/api/inventario/alertas-predictivas');
+    const alertas = await r.json();
+    const el = document.getElementById('alertas-predictivas-widget');
+    if (!el) return;
+    const criticos = alertas.filter(a => a.urgencia === 'CRITICO');
+    if (!criticos.length) {
+      el.innerHTML = '<span class="badge badge-green">✓ Sin productos criticos</span>';
+      return;
+    }
+    el.innerHTML = criticos.map(a => `
+      <div style="padding:6px 0;border-bottom:1px solid var(--border)">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span style="font-size:13px">${a.producto}</span>
+          <span class="badge badge-red">${a.dias_restantes} dia(s)</span>
+        </div>
+        <div style="font-size:11px;color:var(--text-muted)">A este ritmo se agota en ${a.dias_restantes} dia(s) (stock: ${a.stock_actual}, vende ${a.promedio_diario}/dia)</div>
       </div>`).join('');
   } catch(e) {}
 }
@@ -2753,6 +2779,7 @@ async function confirmarCobro() {
 refreshStatus();
 loadStats();
 loadAlertas();
+loadAlertasPredictivas();
 loadAlertasPrecios();
 loadRecordatorios();
 loadEquilibrio();

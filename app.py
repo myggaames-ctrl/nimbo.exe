@@ -1079,6 +1079,12 @@ def db_alertas():
     from database.aronium import get_alertas_stock
     return jsonify(get_alertas_stock())
 
+@app.route("/api/inventario/alertas-predictivas")
+@login_required
+def db_alertas_predictivas():
+    from database.aronium import get_alertas_predictivas
+    return jsonify(get_alertas_predictivas())
+
 @app.route("/api/db/stock-minimo", methods=["POST"])
 @login_required
 def db_set_stock_minimo():

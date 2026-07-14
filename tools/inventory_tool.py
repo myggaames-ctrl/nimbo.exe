@@ -165,3 +165,45 @@ def update_cost_tool(data):
     return f"Costo actualizado a Q{cost}."
 
 register("inventory.update_cost", update_cost_tool)
+
+
+def alertas_predictivas_tool(data):
+    from database.aronium import get_alertas_predictivas
+    alertas = get_alertas_predictivas()
+    criticos = [a for a in alertas if a["urgencia"] == "CRITICO"]
+    advertencias = [a for a in alertas if a["urgencia"] == "ADVERTENCIA"]
+
+    if not criticos and not advertencias:
+        return "Todos los productos tienen stock para mas de 21 dias al ritmo actual de ventas."
+
+    resp = "Alertas predictivas de inventario:\n\n"
+    if criticos:
+        resp += f"CRITICO ({len(criticos)}):\n"
+        for a in criticos:
+            resp += f"- {a['producto']}: se agota en {a['dias_restantes']} dia(s) (stock {a['stock_actual']:.0f}, vende {a['promedio_diario']:.1f}/dia)\n"
+    if advertencias:
+        resp += f"\nADVERTENCIA ({len(advertencias)}):\n"
+        for a in advertencias:
+            resp += f"- {a['producto']}: se agota en {a['dias_restantes']} dia(s) (stock {a['stock_actual']:.0f}, vende {a['promedio_diario']:.1f}/dia)\n"
+    return resp.strip()
+
+register("inventory.alertas_predictivas", alertas_predictivas_tool)
+
+
+def prediccion_producto_tool(query):
+    from database.aronium import get_prediccion_producto
+    p = get_prediccion_producto(query)
+    if not p:
+        return f"No encontre productos con '{query}'."
+
+    if p["dias_restantes"] is None:
+        return (f"{p['producto']} tiene {p['stock_actual']:.0f} en stock, pero no ha tenido "
+                f"salidas en los ultimos 30 dias - no se puede predecir cuando se agota.")
+
+    base = (f"A este ritmo, {p['producto']} se agota en {p['dias_restantes']} dia(s) "
+            f"(stock: {p['stock_actual']:.0f}, vende {p['promedio_diario']:.1f}/dia).")
+    if p["urgencia"] == "CRITICO":
+        return base + " CRITICO - reabastece pronto."
+    return base
+
+register("inventory.prediccion_producto", prediccion_producto_tool)
