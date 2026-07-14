@@ -34,7 +34,9 @@ class ProveedorDetector:
     ]
 
     PATTERNS_ORDEN_COMPRA = [
-        r"^pedi[r]?\s+(?:a\s+)?(.+?)\s+(\d+)\s+(.+?)\s+(?:a\s+)?Q?(\d+\.?\d*)$",
+        # Nota: el texto llega en minusculas (ver normalize()), por eso "q?" va en
+        # minuscula - con "Q?" mayuscula este patron nunca matcheaba el precio.
+        r"^pedi[r]?\s+(?:a\s+)?(.+?)\s+(\d+)\s+(.+?)\s+(?:a\s+)?q?(\d+\.?\d*)$",
         r"^orden\s+(?:de\s+)?compra\s+(?:a\s+)?(.+)",
         r"^compra[r]?\s+(?:a\s+)?(.+?)\s+(\d+)\s+(.+)",
     ]
@@ -69,6 +71,15 @@ class ProveedorDetector:
     def detect(self, text: str):
         text = normalize(text)
 
+        # Se revisa ANTES que ORDEN_GENERAR: "pedir a X N producto a QN" es una forma
+        # estructurada (proveedor+cantidad+producto[+precio]) mas especifica que el
+        # catch-all "pedir a X" de ORDEN_GENERAR, que de otro modo la interceptaria
+        # primero y "proveedor.orden_compra" nunca se alcanzaria (ver auditoria).
+        for pattern in self.PATTERNS_ORDEN_COMPRA:
+            match = re.search(pattern, text)
+            if match:
+                return {"intent": "proveedor.orden_compra", "query": text}
+
         for pattern in self.PATTERNS_ORDEN_GENERAR:
             match = re.search(pattern, text)
             if match:
@@ -99,11 +110,6 @@ class ProveedorDetector:
                     "nombre": match.group(1).strip().title(),
                     "whatsapp": match.group(2).strip() if match.group(2) else ""
                 }
-
-        for pattern in self.PATTERNS_ORDEN_COMPRA:
-            match = re.search(pattern, text)
-            if match:
-                return {"intent": "proveedor.orden_compra", "query": text}
 
         for pattern in self.PATTERNS_HISTORIAL:
             match = re.search(pattern, text)

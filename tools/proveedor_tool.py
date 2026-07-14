@@ -1,6 +1,7 @@
 """
 Herramienta de Proveedores
 """
+import re
 from core.tool_registry import register
 from database.aronium import crear_proveedor, buscar_proveedor, get_todos_proveedores, get_historial_proveedor, get_alertas_precios
 
@@ -78,7 +79,48 @@ def alertas_precios_tool(data):
 register("proveedor.alertas", alertas_precios_tool)
 
 def orden_compra_tool(data):
-    return "PROVEEDOR_ORDEN_INICIO:" + (data.get("query", "") if isinstance(data, dict) else str(data))
+    """Crea una orden de compra a partir de una frase estructurada
+    ("pedir/comprar a [proveedor] [cantidad] [producto] [a Q[precio]]"). El detector
+    (core/detectors/proveedor_detector.py PATTERNS_ORDEN_COMPRA) solo confirma que el
+    mensaje matchea el formato pero no pasa los grupos capturados, asi que se
+    re-parsea aqui el texto completo. Reutiliza el mismo marcador ORDEN_COMPRA_PAGO_INICIO
+    que ya usa generar_orden_tool (core/nimbo.py ya sabe manejarlo: pregunta si se pago
+    de una vez o queda pendiente)."""
+    text = (data.get("query", "") if isinstance(data, dict) else str(data)).strip()
+
+    # Con precio explicito: "pedir a Distribuidora Oster 5 licuadoras a Q200"
+    m = re.search(r"^(?:pedi[r]?|compra[r]?)\s+(?:a\s+)?(.+?)\s+(\d+)\s+(.+?)\s+(?:a\s+)?q?\s*(\d+\.?\d*)$", text)
+    precio = None
+    if m:
+        proveedor_query, cantidad, producto_nombre, precio = m.group(1), int(m.group(2)), m.group(3).strip(), float(m.group(4))
+    else:
+        # Sin precio: "comprar a Distribuidora Oster 5 licuadoras"
+        m = re.search(r"^(?:pedi[r]?|compra[r]?)\s+(?:a\s+)?(.+?)\s+(\d+)\s+(.+)$", text)
+        if m:
+            proveedor_query, cantidad, producto_nombre = m.group(1), int(m.group(2)), m.group(3).strip()
+        else:
+            return ("No entendi la orden de compra. Usa el formato: "
+                    "'pedir a [proveedor] [cantidad] [producto] a Q[precio]'.")
+
+    proveedores = buscar_proveedor(proveedor_query)
+    if not proveedores:
+        return f"No encontre proveedor '{proveedor_query}'."
+    p = proveedores[0]
+
+    from database.aronium import get_products, crear_orden_compra
+    productos = get_products(search=producto_nombre)
+    producto_id = productos[0]["Id"] if productos else 0
+    nombre_final = productos[0]["Name"] if productos else producto_nombre.title()
+    if precio is None:
+        precio = productos[0]["Cost"] if productos and productos[0].get("Cost") else 0
+
+    items = [{"nombre": nombre_final, "producto_id": producto_id, "cantidad": cantidad, "precio": precio}]
+    numero, orden_id = crear_orden_compra(p["Id"], items)
+    total = round(cantidad * precio, 2)
+    resp = (f"Orden {numero} creada para {p['Nombre']}:\n"
+            f"  - {nombre_final} x{cantidad} a Q{precio} c/u\n\n"
+            f"Contacta a {p['Nombre']} al WA: {p.get('WhatsApp') or 'sin numero'}")
+    return f"ORDEN_COMPRA_PAGO_INICIO:{orden_id}|{numero}|{p['Id']}|{p['Nombre']}|{p.get('WhatsApp') or ''}|{total}|{resp}"
 
 register("proveedor.orden_compra", orden_compra_tool)
 

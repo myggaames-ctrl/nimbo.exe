@@ -29,15 +29,15 @@ class CuentaCobrarDetector:
     ]
 
     PATTERNS_PAGO = [
-        r"^(.+?)\s+(?:pago|abono)\s+q?\s*(\d+(?:\.\d+)?)$",
-        r"^(?:pago|abono)\s+de\s+(.+?)\s+(?:por\s+)?q?\s*(\d+(?:\.\d+)?)$",
+        r"^(.+?)\s+(?:pago|abono|pagaron|abonaron|pagamos)\s+q?\s*(\d+(?:\.\d+)?)$",
+        r"^(?:pago|abono|pagaron|abonaron|pagamos)\s+de\s+(.+?)\s+(?:por\s+)?q?\s*(\d+(?:\.\d+)?)$",
     ]
 
     # Con descripcion ("... por licuadora") y sin ella. Se revisan al final: son las
-    # mas genericas (cualquier "X debe Q..." que no matcheo arriba cae aqui).
+    # mas genericas (cualquier "X debe/deben Q..." que no matcheo arriba cae aqui).
     PATTERNS_CREAR = [
-        r"^(.+?)\s+debe\s+q?\s*(\d+(?:\.\d+)?)\s+por\s+(.+)$",
-        r"^(.+?)\s+debe\s+q?\s*(\d+(?:\.\d+)?)$",
+        r"^(.+?)\s+(?:debe|deben)\s+q?\s*(\d+(?:\.\d+)?)\s+por\s+(.+)$",
+        r"^(.+?)\s+(?:debe|deben)\s+q?\s*(\d+(?:\.\d+)?)$",
     ]
 
     def detect(self, text: str):

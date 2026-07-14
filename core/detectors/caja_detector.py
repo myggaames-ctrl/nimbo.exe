@@ -9,15 +9,15 @@ def normalize(text):
 class CajaDetector:
 
     PATTERNS_ABRIR = [
-        r"^abrir\s+caja$",
-        r"^abrir\s+turno$",
-        r"^iniciar\s+(?:caja|turno)$",
+        r"^(?:abrir|abre)\s+(?:la\s+)?caja$",
+        r"^(?:abrir|abre)\s+(?:el\s+)?turno$",
+        r"^iniciar\s+(?:la\s+)?(?:caja|turno)$",
     ]
 
     PATTERNS_CERRAR = [
-        r"^cerrar\s+caja$",
-        r"^cerrar\s+turno$",
-        r"^terminar\s+(?:caja|turno)$",
+        r"^(?:cerrar|cierra)\s+(?:la\s+)?caja$",
+        r"^(?:cerrar|cierra)\s+(?:el\s+)?turno$",
+        r"^terminar\s+(?:la\s+)?(?:caja|turno)$",
     ]
 
     PATTERNS_RETIRAR = [
@@ -31,7 +31,7 @@ class CajaDetector:
     ]
 
     PATTERNS_ANULAR = [
-        r"^anular\s+(?:el\s+)?(?:turno|caja)(?:\s+(?:por|porque|motivo)\s+(.+))?$",
+        r"^(?:anular|anula)\s+(?:el\s+|la\s+)?(?:turno|caja)(?:\s+(?:por|porque|motivo)\s+(.+))?$",
     ]
 
     def detect(self, text: str):

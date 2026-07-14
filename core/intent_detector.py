@@ -3,9 +3,6 @@ Intent Detector
 """
 
 from core.detectors.inventory_detector import InventoryDetector
-from core.detectors.windows_detector import WindowsDetector
-from core.detectors.customer_detector import CustomerDetector
-from core.detectors.budget_detector import BudgetDetector
 from core.detectors.service_detector import ServiceDetector
 from core.detectors.cliente_detector import ClienteDetector
 from core.detectors.venta_detector import VentaDetector
@@ -46,18 +43,16 @@ class IntentDetector:
             PuntosDetector(),
             CodigoBarrasDetector(),
             CotizacionDetector(),
+            ReporteDetector(),
             VentaDetector(),
             ProveedorDetector(),
-            ReporteDetector(),
             EventoDetector(),
             ContabilidadDetector(),
             ContenidoDetector(),
             ClienteDetector(),
             TarifaDetector(),
             ServiceDetector(),
-            InventoryDetector(),
-            BudgetDetector(),
-            WindowsDetector()
+            InventoryDetector()
 
         ]
 

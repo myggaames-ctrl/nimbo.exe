@@ -5,13 +5,13 @@ from core.tool_registry import get
 from core.intent_detector import IntentDetector
 
 # Categorias de intent (prefijo antes del punto) permitidas para el rol empleado.
-# Todo lo demas (proveedor, contabilidad, contenido, reporte, evento, service, budget, windows,
+# Todo lo demas (proveedor, contabilidad, contenido, reporte, evento, service,
 # descuento, garantia, combo, tarifa, cuentapagar) es solo admin. cuentapagar queda fuera de
 # CATEGORIAS_EMPLEADO a proposito (a diferencia de cuentacobrar): pagar/endeudarse con
 # proveedores es una decision financiera, no una operacion de mostrador como cobrar a un
 # cliente - mismo criterio que "proveedor", que tambien es admin-only.
 CATEGORIAS_EMPLEADO = {
-    "inventory", "venta", "cliente", "customer", "caja", "unidadmedida", "puntos",
+    "inventory", "venta", "cliente", "caja", "unidadmedida", "puntos",
     "codigobarras", "etiqueta", "cuentacobrar"
 }
 

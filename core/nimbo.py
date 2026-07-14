@@ -5,6 +5,7 @@ from openclaw_bridge import send_to_openclaw
 from google import genai
 import os
 import re
+import unicodedata
 
 _engine = ActionEngine()
 
@@ -105,6 +106,21 @@ def _analizar_intencion_vaga(message: str, contexto: str = "") -> str:
         return texto
     except:
         return None
+
+
+# Frases que, escritas a mitad de cualquier flujo conversacional, cancelan ese flujo
+# en vez de interpretarse como el dato que el step actual esperaba (ver salida
+# universal en send()).
+_PALABRAS_CANCELACION = ["cancelar", "cancela", "salir", "olvida", "olvidalo", "mejor no", "stop"]
+
+
+def _es_cancelacion(message: str) -> bool:
+    texto = unicodedata.normalize("NFD", message or "").encode("ascii", "ignore").decode("utf-8").lower().strip()
+    texto = texto.rstrip(".!?")
+    for palabra in _PALABRAS_CANCELACION:
+        if texto == palabra or texto.startswith(palabra + " ") or texto.startswith(palabra + ","):
+            return True
+    return False
 
 
 def _intentar_detectar(message: str, role: str, context: dict, contexto_historial: str = ""):
@@ -419,6 +435,15 @@ def send(message: str, context: dict = None, role: str = "admin") -> tuple:
     contexto_historial = resumen_texto(obtener_historial_reciente())
 
     step = context.get("step")
+
+    # Salida universal de cualquier flujo conversacional activo: si el usuario esta a
+    # mitad de un paso (venta, cotizacion, caja, orden de servicio, etc.) y escribe una
+    # palabra de cancelacion, se limpia el contexto de una sola vez en vez de que el
+    # texto se interprete como dato del step actual (ver auditoria: varios steps de
+    # texto libre absorbian cualquier mensaje, incluida una cancelacion, como si fuera
+    # la respuesta esperada).
+    if step and _es_cancelacion(message):
+        return "De acuerdo, empecemos de nuevo. ¿En que te puedo ayudar?", {}
 
     # Flujo de aclaracion de intencion vaga (ver _analizar_intencion_vaga)
     if step == "clarificando":
@@ -813,6 +838,18 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
 
     if step == "venta_waiting_pago":
         pago = message.strip().lower()
+
+        _PAGO_MIXTO = ["mixto", "mixta", "combinado", "los dos", "efectivo y tarjeta"]
+        _PAGO_CREDITO = ["credito", "a credito", "fiado", "al fiado"]
+        _PAGO_DIRECTO = ["efectivo", "tarjeta", "transferencia"]
+
+        # Validacion del metodo de pago: cualquier texto que no sea uno de los
+        # reconocidos (o una pregunta ajena a mitad del flujo) se rechaza sin cerrar
+        # la venta, en vez de registrarse tal cual como "metodo de pago" (ver
+        # auditoria - este step no validaba nada antes).
+        if pago not in _PAGO_MIXTO and pago not in _PAGO_CREDITO and pago not in _PAGO_DIRECTO:
+            return "Por favor escribe: efectivo, tarjeta, transferencia, mixto o credito", context
+
         ctx = context.get("venta_ctx", {})
         cliente_id = context.get("venta_cliente_id")
         cliente_nombre = context.get("venta_cliente_nombre", "Consumidor Final")
@@ -830,7 +867,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         ajuste_puntos = calcular_ajuste_puntos(cliente_id, total_final)
         total_final = ajuste_puntos["total_final"]
 
-        if pago in ["mixto", "mixta", "combinado", "los dos", "efectivo y tarjeta"]:
+        if pago in _PAGO_MIXTO:
             context = {
                 "step": "venta_waiting_pago_mixto_efectivo",
                 "venta_ctx": ctx,
@@ -843,7 +880,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
             }
             return "Cuanto en efectivo?", context
 
-        if pago in ["credito", "a credito", "fiado", "al fiado"]:
+        if pago in _PAGO_CREDITO:
             if not cliente_id:
                 return ("Para vender a credito necesito un cliente registrado (no puede ser "
                         "'Consumidor Final'). Escribe el metodo de pago (efectivo, tarjeta, "

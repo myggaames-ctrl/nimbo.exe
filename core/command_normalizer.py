@@ -41,10 +41,16 @@ VOCABULARIO = [
     "codigo", "codigos", "barras", "etiqueta", "etiquetas", "imprimir",
     "mano", "obra", "presupuesto", "tecnico", "tecnicos", "informe", "informes",
     "tarifa", "tarifas", "aprobo", "rechazo", "asigna", "asignada", "asignado",
-    "necesita", "revision",
-    "debe", "debo", "pago", "pagos", "pague", "pagar", "abono", "abonos", "cobrar", "cobro",
+    "necesita", "necesito", "revision",
+    "debe", "debo", "deben", "debemos", "pago", "pagos", "pague", "paga", "pagar",
+    "pagamos", "pagaron", "abono", "abonos", "abonaron", "cobrar", "cobro",
     "deuda", "deudas", "vencida", "vencidas", "vencido", "vencidos", "pendiente", "pendientes",
-    "credito", "enganche", "fiado",
+    "credito", "enganche", "fiado", "monto", "renta",
+    # palabras muy comunes del espanol que, sin esta entrada, quedaban a merced del
+    # fuzzy match contra una palabra del vocabulario de negocio con alta similitud de
+    # cadena (ej. "esta" -> "estufa", "como" -> "combo", "monto" -> "motor",
+    # detectado en auditoria) y corrompian cualquier frase que las usara.
+    "esta", "esto", "eso", "como", "disponible",
     # electrodomesticos y repuestos comunes en la tienda
     "repuesto", "repuestos",
     "licuadora", "licuadoras", "refrigerador", "refrigeradores", "cuchilla", "cuchillas",
@@ -111,21 +117,42 @@ def _corregir_palabra(palabra: str) -> str:
     return palabra
 
 
-def corregir_texto(texto: str) -> str:
+def corregir_texto(texto: str, protegidas: set = None) -> str:
     """Corrige errores tipograficos comunes palabra por palabra. No toca numeros,
-    precios ni codigos de producto (se conservan tal cual)."""
+    precios ni codigos de producto (se conservan tal cual). `protegidas` son indices
+    de palabras que no se deben tocar (ver _palabras_protegidas)."""
     if not texto:
         return texto
-    return " ".join(_corregir_palabra(p) for p in texto.split(" "))
+    protegidas = protegidas or set()
+    return " ".join(
+        p if i in protegidas else _corregir_palabra(p)
+        for i, p in enumerate(texto.split(" "))
+    )
+
+
+def _palabras_protegidas(text_original: str) -> set:
+    """Indices de palabras que empiezan en mayuscula en el mensaje ORIGINAL (antes de
+    lower()), excluyendo la primera palabra (que suele ir en mayuscula solo por estilo
+    de escritura, no por ser un nombre propio). Son probables nombres propios (de
+    cliente, proveedor, etc.) y no deben pasar por el corrector fuzzy: un nombre real
+    con alta similitud de cadena contra el VOCABULARIO de negocio (ej. hipotetico
+    "Vento" -> "venta") se corromperia igual que cualquier otra palabra."""
+    palabras = text_original.strip().split(" ")
+    return {
+        i for i, p in enumerate(palabras)
+        if i > 0 and p and p[0].isalpha() and p[0].isupper()
+    }
 
 
 class CommandNormalizer:
 
     def normalize(self, text: str):
 
+        protegidas = _palabras_protegidas(text)
+
         text = text.lower().strip()
         text = _sin_acentos(text)
-        text = corregir_texto(text)
+        text = corregir_texto(text, protegidas)
 
         replacements = {
 

@@ -20,6 +20,8 @@ class PuntosDetector:
     # Catch-all: se revisa al final para no comerse "puntos disponibles".
     PATTERNS_VER = [
         r"^puntos\s+(?:de\s+)?(.+)$",
+        r"^(?:cuantos|que)\s+puntos\s+tiene\s+(.+)$",
+        r"^(.+?)\s+tiene\s+cuantos\s+puntos$",
     ]
 
     def detect(self, text: str):

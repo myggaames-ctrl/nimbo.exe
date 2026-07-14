@@ -24,19 +24,25 @@ class CuentaPagarDetector:
     PATTERNS_CONSULTA = [
         r"^cuanto\s+le\s+debo\s+a\s+(.+)$",
         r"^cuanto\s+debo\s+a\s+(.+)$",
+        r"^cuanto\s+le\s+debemos\s+a\s+(.+)$",
+        r"^cuanto\s+debemos\s+a\s+(.+)$",
         r"^deuda\s+con\s+(.+)$",
         r"^cuentas?\s+por\s+pagar\s+a\s+(.+)$",
     ]
 
     PATTERNS_PAGO = [
         r"^(?:le\s+)?pague\s+q?\s*(\d+(?:\.\d+)?)\s+a\s+(.+)$",
+        r"^(?:le\s+)?pagamos\s+q?\s*(\d+(?:\.\d+)?)\s+a\s+(.+)$",
         r"^pago\s+de\s+q?\s*(\d+(?:\.\d+)?)\s+a\s+(.+)$",
     ]
 
-    # Con descripcion ("... por repuestos") y sin ella.
+    # Con descripcion ("... por repuestos") y sin ella. Incluye 1ra persona singular
+    # ("debo") y plural ("debemos", hablando en nombre del negocio).
     PATTERNS_CREAR = [
         r"^(?:le\s+)?debo\s+q?\s*(\d+(?:\.\d+)?)\s+a\s+(.+?)\s+por\s+(.+)$",
         r"^(?:le\s+)?debo\s+q?\s*(\d+(?:\.\d+)?)\s+a\s+(.+)$",
+        r"^(?:le\s+)?debemos\s+q?\s*(\d+(?:\.\d+)?)\s+a\s+(.+?)\s+por\s+(.+)$",
+        r"^(?:le\s+)?debemos\s+q?\s*(\d+(?:\.\d+)?)\s+a\s+(.+)$",
     ]
 
     def detect(self, text: str):

@@ -938,7 +938,7 @@ def crear_orden_compra(proveedor_id, items, contacto_id=None, notas=""):
             WHERE o.ProveedorId=? AND i.ProductoNombre LIKE ?
             ORDER BY o.Fecha DESC LIMIT 1 OFFSET 1""", (proveedor_id, f"%{item['nombre']}%"))
         precio_anterior = cur.fetchone()
-        if precio_anterior and precio_anterior["PrecioUnitario"] != item["precio"]:
+        if precio_anterior and precio_anterior["PrecioUnitario"] and precio_anterior["PrecioUnitario"] != item["precio"]:
             diff = item["precio"] - precio_anterior["PrecioUnitario"]
             pct = (diff / precio_anterior["PrecioUnitario"]) * 100
             cur.execute("INSERT INTO HistorialPrecio (ProveedorId, ProductoNombre, PrecioAnterior, PrecioNuevo, Diferencia, PorcentajeCambio) VALUES (?,?,?,?,?,?)",
