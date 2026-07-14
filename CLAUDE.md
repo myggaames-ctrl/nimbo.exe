@@ -59,20 +59,49 @@ Usuario escribe mensaje
   que el tecnico solo veria esas tarjetas vacias/con error si entrara al Dashboard, no datos
   reales; no se considero necesario ocultar tambien esas tarjetas.
 - Primera instalacion: mientras Configuracion.onboarding_completado != "1", cualquier
-  ruta redirige a /setup, que a su vez redirige a /setup/<paso> (wizard de 6 pasos,
-  progreso guardado en Configuracion.onboarding_step):
-  1. Bienvenida (nombre del negocio, tipo, pais)
+  ruta redirige a /setup, que a su vez redirige a /setup/<paso> (wizard de 7 pasos,
+  progreso guardado en Configuracion.onboarding_step, templates/setup.html):
+  1. Bienvenida (nombre del negocio*, tipo*, pais* -default Guatemala-, NIT, telefono,
+     correo, direccion - solo nombre/tipo/pais son obligatorios). Guarda negocio_nombre/
+     negocio_tipo/negocio_pais/negocio_nit/negocio_telefono/negocio_correo/
+     negocio_direccion.
   2. Cuenta admin (nombre, usuario, contrasena, correo) -> crea el usuario admin
-  3. Configuracion inicial (moneda, horario de apertura/cierre, dias laborales)
-  4. Primer producto (opcional, se puede saltar) -> crea Product+Stock en Aronium
-  5. Primer cliente (opcional, se puede saltar) -> crea Cliente en nimbo.db
-  6. Resumen + boton "Entrar al dashboard" -> marca onboarding_completado="1" y
-     redirige a /login
+     (crear_usuario(..., "admin")). El correo se guarda como admin_email (antes se
+     guardaba como "negocio_email" - se renombro porque paso 1 ahora tiene su propio
+     correo de negocio separado; admin_email es solo informativo/para el resumen, la
+     recuperacion de contrasena real sigue usando la env var ADMIN_EMAIL, sin relacion
+     con este campo).
+  3. Configuracion financiera: moneda (default Q), cobra_iva si/no (si -> iva_porcentaje
+     fijo en "12"), usa_pos si/no (si -> muestra el campo comision_pos, default 6%,
+     oculto con JS si no), isr_trimestral si/no (si -> isr_porcentaje fijo en "5"). Estos
+     valores quedan en Configuracion solo como referencia/resumen - el 12%/6%/5% que ya
+     usa el resto del sistema (declaracion de IVA, sugerencias de precio, punto de
+     equilibrio, balance mensual - ver esas secciones) sigue hardcodeado en Python en
+     vez de leer estas claves nuevas, no se rewireo ese calculo como parte de este
+     feature.
+  4. Horario del negocio: dias laborales (lunes a sabado por defecto), hora apertura
+     (08:00 default), hora cierre (18:00 default).
+  5. Configuracion de caja (opcional, se puede saltar): fondo inicial de caja en Q. Si
+     se da un monto, ademas de guardarlo en caja_fondo_inicial se escribe tambien en
+     Configuracion.caja_fondo_sugerido - la misma clave que database.aronium.
+     cerrar_turno() usa para sugerir el fondo del turno siguiente (ver seccion Caja
+     Registradora) - asi el primer "abrir caja" del negocio (por chat o desde la UI) ya
+     llega con este monto sugerido en vez de pedir contar denominacion por denominacion.
+  6. Primer empleado (opcional, se puede saltar): nombre, usuario, contrasena, rol
+     (empleado/tecnico), telefono -> crea el usuario con crear_usuario(). El telefono es
+     obligatorio en el frontend si el rol es tecnico (mismo criterio que el panel
+     "Usuarios" del dashboard, sin validacion equivalente en el backend).
+  7. Resumen (incluye NIT/telefono/correo/direccion del negocio, IVA/POS/ISR, fondo de
+     caja y primer empleado solo si se llenaron) + boton "Comenzar a usar Nimbo" ->
+     marca onboarding_completado="1" y redirige a /login.
   No se puede saltar a un paso mas adelante del progreso guardado (antes-request
   rebota al paso actual); si se completa, /setup redirige directo a /login.
   Instalaciones que ya tenian usuarios antes de que existiera el wizard se marcan
   como completas automaticamente al arrancar (ver app.py, justo despues de
   init_usuarios()/init_configuracion()).
+  Cada campo no obvio tiene un icono ℹ️ con un tooltip en espanol (CSS puro, sin
+  librerias - macro Jinja `tip()` en templates/setup.html) explicando que es y por que
+  se pide (ej. NIT, comision POS, ISR, fondo de caja).
 - Gestion de usuarios: panel "Usuarios" en el dashboard (solo admin) -> listar, crear,
   activar/desactivar, y cambiar contrasena de cualquier usuario sin pedir la actual.
   Backend: /api/usuarios (GET/POST), /api/usuarios/<id>/toggle, /api/usuarios/<id>/password.

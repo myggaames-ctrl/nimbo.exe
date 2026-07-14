@@ -115,7 +115,7 @@ def load_user(user_id):
 
 
 # ── Onboarding (primera instalación) ───────────────────────
-ONBOARDING_PASOS = (1, 2, 3, 4, 5, 6)
+ONBOARDING_PASOS = (1, 2, 3, 4, 5, 6, 7)
 _setup_completado = False
 
 
@@ -227,12 +227,20 @@ def setup_paso(paso):
             negocio_nombre = request.form.get("negocio_nombre", "").strip()
             tipo_negocio = request.form.get("tipo_negocio", "").strip()
             pais = request.form.get("pais", "").strip()
+            negocio_nit = request.form.get("negocio_nit", "").strip()
+            negocio_telefono = request.form.get("negocio_telefono", "").strip()
+            negocio_correo = request.form.get("negocio_correo", "").strip()
+            negocio_direccion = request.form.get("negocio_direccion", "").strip()
             if not negocio_nombre or not tipo_negocio or not pais:
                 error = "Nombre del negocio, tipo de negocio y pais son obligatorios."
             else:
                 set_config("negocio_nombre", negocio_nombre)
                 set_config("negocio_tipo", tipo_negocio)
                 set_config("negocio_pais", pais)
+                set_config("negocio_nit", negocio_nit)
+                set_config("negocio_telefono", negocio_telefono)
+                set_config("negocio_correo", negocio_correo)
+                set_config("negocio_direccion", negocio_direccion)
                 return _avanzar_onboarding(2)
 
         elif paso == 2:
@@ -251,87 +259,108 @@ def setup_paso(paso):
                 try:
                     crear_usuario(username, password, dueno_nombre, "admin")
                     set_config("dueno_nombre", dueno_nombre)
-                    set_config("negocio_email", email)
+                    set_config("admin_email", email)
                     return _avanzar_onboarding(3)
                 except Exception as e:
                     error = str(e)
 
         elif paso == 3:
             moneda = request.form.get("moneda", "").strip() or "Q"
-            apertura = request.form.get("horario_apertura", "").strip()
-            cierre = request.form.get("horario_cierre", "").strip()
-            dias = request.form.getlist("dias_laborales")
+            cobra_iva = "si" if request.form.get("cobra_iva") == "si" else "no"
+            usa_pos = "si" if request.form.get("usa_pos") == "si" else "no"
+            isr_trimestral = "si" if request.form.get("isr_trimestral") == "si" else "no"
+            comision_pos = request.form.get("comision_pos", "").strip() or "6"
+            if usa_pos == "si":
+                try:
+                    comision_pos = str(round(float(comision_pos), 2))
+                except ValueError:
+                    comision_pos = "6"
             set_config("moneda", moneda)
-            set_config("horario_apertura", apertura)
-            set_config("horario_cierre", cierre)
-            set_config("dias_laborales", ",".join(dias))
+            set_config("cobra_iva", cobra_iva)
+            set_config("iva_porcentaje", "12" if cobra_iva == "si" else "0")
+            set_config("usa_pos", usa_pos)
+            set_config("comision_pos", comision_pos if usa_pos == "si" else "0")
+            set_config("isr_trimestral", isr_trimestral)
+            set_config("isr_porcentaje", "5" if isr_trimestral == "si" else "0")
             return _avanzar_onboarding(4)
 
         elif paso == 4:
-            if saltar:
-                return _avanzar_onboarding(5)
-            nombre = request.form.get("producto_nombre", "").strip()
-            precio = request.form.get("producto_precio", "").strip()
-            costo = request.form.get("producto_costo", "").strip()
-            cantidad = request.form.get("producto_cantidad", "").strip()
-            if not nombre or not precio:
-                error = "Escribe al menos el nombre y el precio, o salta este paso."
-            else:
-                try:
-                    from database.aronium import connect, add_stock
-                    conn = connect()
-                    cur = conn.cursor()
-                    cur.execute(
-                        "INSERT INTO Product (Name, Code, Price, Cost, IsEnabled) VALUES (?, ?, ?, ?, 1)",
-                        (nombre, "", float(precio), float(costo or 0))
-                    )
-                    conn.commit()
-                    product_id = cur.lastrowid
-                    conn.close()
-                    qty = int(float(cantidad or 0))
-                    if qty > 0:
-                        add_stock(product_id, qty)
-                    set_config("onboarding_producto_nombre", nombre)
-                    return _avanzar_onboarding(5)
-                except Exception as e:
-                    error = f"No se pudo guardar el producto ({e}). Puedes saltarte este paso y agregarlo despues desde Inventario."
+            apertura = request.form.get("horario_apertura", "").strip() or "08:00"
+            cierre = request.form.get("horario_cierre", "").strip() or "18:00"
+            dias = request.form.getlist("dias_laborales")
+            set_config("horario_apertura", apertura)
+            set_config("horario_cierre", cierre)
+            set_config("dias_laborales", ",".join(dias))
+            return _avanzar_onboarding(5)
 
         elif paso == 5:
             if saltar:
                 return _avanzar_onboarding(6)
-            nombre = request.form.get("cliente_nombre", "").strip()
-            telefono = request.form.get("cliente_telefono", "").strip()
-            email_cliente = request.form.get("cliente_email", "").strip()
-            if not nombre:
-                error = "Escribe al menos el nombre, o salta este paso."
-            else:
-                try:
-                    from database.aronium import crear_cliente_completo
-                    crear_cliente_completo(nombre, telefono, email_cliente)
-                    set_config("onboarding_cliente_nombre", nombre)
-                    return _avanzar_onboarding(6)
-                except Exception as e:
-                    error = f"No se pudo guardar el cliente ({e})."
+            fondo = request.form.get("caja_fondo_inicial", "").strip()
+            if not fondo:
+                return _avanzar_onboarding(6)
+            try:
+                monto = round(float(fondo), 2)
+                if monto < 0:
+                    raise ValueError()
+                set_config("caja_fondo_inicial", str(monto))
+                # Reutiliza el mismo mecanismo que el cierre de turno usa para
+                # sugerir el fondo del dia siguiente (ver database.aronium.
+                # get_fondo_sugerido) - asi el primer "abrir caja" del negocio
+                # ya llega prellenado con este monto, en vez de pedirlo nuevo.
+                set_config("caja_fondo_sugerido", str(monto))
+                return _avanzar_onboarding(6)
+            except ValueError:
+                error = "El fondo de caja debe ser un numero valido, o salta este paso."
 
         elif paso == 6:
+            if saltar:
+                return _avanzar_onboarding(7)
+            emp_nombre = request.form.get("empleado_nombre", "").strip()
+            emp_username = request.form.get("empleado_username", "").strip()
+            emp_password = request.form.get("empleado_password", "")
+            emp_rol = request.form.get("empleado_rol", "empleado").strip()
+            emp_telefono = request.form.get("empleado_telefono", "").strip()
+            if not emp_nombre or not emp_username or not emp_password:
+                error = "Escribe nombre, usuario y contraseña, o salta este paso."
+            elif len(emp_password) < 6:
+                error = "La contraseña debe tener al menos 6 caracteres."
+            elif emp_rol not in ("empleado", "tecnico"):
+                error = "Rol invalido."
+            else:
+                try:
+                    crear_usuario(emp_username, emp_password, emp_nombre, emp_rol, emp_telefono)
+                    set_config("onboarding_empleado_nombre", emp_nombre)
+                    return _avanzar_onboarding(7)
+                except Exception as e:
+                    error = str(e)
+
+        elif paso == 7:
             set_config("onboarding_completado", "1")
             _setup_completado = True
             return redirect(url_for("login"))
 
     resumen = None
-    if paso == 6:
+    if paso == 7:
         resumen = {
             "negocio_nombre": get_config("negocio_nombre", ""),
             "negocio_tipo": get_config("negocio_tipo", ""),
             "negocio_pais": get_config("negocio_pais", ""),
+            "negocio_nit": get_config("negocio_nit", ""),
+            "negocio_telefono": get_config("negocio_telefono", ""),
+            "negocio_correo": get_config("negocio_correo", ""),
+            "negocio_direccion": get_config("negocio_direccion", ""),
             "dueno_nombre": get_config("dueno_nombre", ""),
-            "negocio_email": get_config("negocio_email", ""),
             "moneda": get_config("moneda", "Q"),
+            "cobra_iva": get_config("cobra_iva", "no"),
+            "usa_pos": get_config("usa_pos", "no"),
+            "comision_pos": get_config("comision_pos", "0"),
+            "isr_trimestral": get_config("isr_trimestral", "no"),
             "horario_apertura": get_config("horario_apertura", ""),
             "horario_cierre": get_config("horario_cierre", ""),
             "dias_laborales": get_config("dias_laborales", ""),
-            "producto_nombre": get_config("onboarding_producto_nombre", ""),
-            "cliente_nombre": get_config("onboarding_cliente_nombre", ""),
+            "caja_fondo_inicial": get_config("caja_fondo_inicial", ""),
+            "empleado_nombre": get_config("onboarding_empleado_nombre", ""),
         }
 
     return render_template("setup.html", paso=paso, total_pasos=len(ONBOARDING_PASOS),

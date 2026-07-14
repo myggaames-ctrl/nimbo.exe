@@ -115,6 +115,70 @@
     margin-bottom: 6px;
   }
 
+  /* ── ETIQUETA + TOOLTIP ───────────────── */
+  .label-with-tip {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-bottom: 6px;
+  }
+
+  .label-with-tip .input-label { margin-bottom: 0; }
+
+  .tip {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    font-size: 11px;
+    line-height: 1;
+    cursor: help;
+    color: var(--accent2);
+    flex-shrink: 0;
+  }
+
+  .tip .tip-bubble {
+    visibility: hidden;
+    opacity: 0;
+    position: absolute;
+    left: 50%;
+    bottom: 145%;
+    transform: translate(-50%, 4px);
+    width: 210px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-weight: 400;
+    font-size: 11.5px;
+    line-height: 1.45;
+    padding: 9px 11px;
+    border-radius: 8px;
+    box-shadow: 0 10px 24px rgba(0,0,0,0.45);
+    z-index: 30;
+    transition: opacity 0.15s ease, transform 0.15s ease;
+    pointer-events: none;
+  }
+
+  .tip .tip-bubble::after {
+    content: "";
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 5px solid transparent;
+    border-top-color: var(--border);
+  }
+
+  .tip:hover .tip-bubble,
+  .tip:focus .tip-bubble,
+  .tip:focus-visible .tip-bubble {
+    visibility: visible;
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+
   .input, select.input {
     width: 100%;
     background: var(--surface2);
@@ -157,6 +221,27 @@
   }
 
   .dia-check input { accent-color: var(--accent); }
+
+  /* ── TOGGLE SI/NO ──────────────────────── */
+  .toggle-group {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .toggle-opt {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 9px 10px;
+    cursor: pointer;
+  }
+
+  .toggle-opt input { accent-color: var(--accent); }
 
   .btn-primary {
     width: 100%;
@@ -209,7 +294,7 @@
     margin-bottom: 16px;
   }
 
-  /* ── RESUMEN (paso 6) ─────────────────── */
+  /* ── RESUMEN (paso 7) ─────────────────── */
   .resumen-list { margin-bottom: 20px; }
 
   .resumen-row {
@@ -240,6 +325,8 @@
 </style>
 </head>
 <body>
+
+{% macro tip(texto) %}<span class="tip" tabindex="0">ℹ️<span class="tip-bubble">{{ texto }}</span></span>{% endmacro %}
 
 <div class="setup-wrap">
 
@@ -277,6 +364,7 @@
           <option value="Tienda de ropa">
           <option value="Farmacia">
           <option value="Restaurante / Comida">
+          <option value="Taller">
           <option value="Otro">
         </datalist>
       </div>
@@ -293,6 +381,39 @@
           <option value="México">
           <option value="Otro">
         </datalist>
+      </div>
+
+      <div class="input-group">
+        <div class="label-with-tip">
+          <label class="input-label">NIT del negocio</label>
+          {{ tip("Numero de Identificacion Tributaria de tu empresa. Lo encuentras en tu patente de comercio.") }}
+        </div>
+        <input class="input" type="text" name="negocio_nit" placeholder="Ej: 1234567-8">
+      </div>
+
+      <div class="input-row">
+        <div class="input-group">
+          <div class="label-with-tip">
+            <label class="input-label">Teléfono</label>
+            {{ tip("Numero de contacto principal del negocio, visible para tus clientes.") }}
+          </div>
+          <input class="input" type="text" name="negocio_telefono" placeholder="Ej: 5555-5555">
+        </div>
+        <div class="input-group">
+          <div class="label-with-tip">
+            <label class="input-label">Correo</label>
+            {{ tip("Correo de contacto del negocio. Distinto al correo de tu cuenta de administrador.") }}
+          </div>
+          <input class="input" type="email" name="negocio_correo" placeholder="negocio@ejemplo.com">
+        </div>
+      </div>
+
+      <div class="input-group">
+        <div class="label-with-tip">
+          <label class="input-label">Dirección</label>
+          {{ tip("Direccion fisica de tu negocio o local.") }}
+        </div>
+        <input class="input" type="text" name="negocio_direccion" placeholder="Ej: 5a avenida 10-20 zona 1, Guatemala">
       </div>
 
       <button class="btn-primary" type="submit">Continuar →</button>
@@ -321,9 +442,11 @@
       </div>
 
       <div class="input-group">
-        <label class="input-label">Correo</label>
+        <div class="label-with-tip">
+          <label class="input-label">Correo</label>
+          {{ tip("Se usara para recuperar tu contraseña si la olvidas.") }}
+        </div>
         <input class="input" type="email" name="email" placeholder="correo@ejemplo.com">
-        <div class="hint">Se usará para la recuperación de contraseña del administrador.</div>
       </div>
 
       <button class="btn-primary" type="submit">Continuar →</button>
@@ -331,10 +454,10 @@
     <a class="back-link" href="{{ url_for('setup_paso', paso=1) }}">← Regresar</a>
     {% endif %}
 
-    {# ══ PASO 3: CONFIGURACION INICIAL ══ #}
+    {# ══ PASO 3: CONFIGURACION FINANCIERA ══ #}
     {% if paso == 3 %}
-    <div class="logo-name">Configuración inicial</div>
-    <div class="subtitle">Ajusta la moneda y el horario de atención de tu negocio.</div>
+    <div class="logo-name">Configuración financiera</div>
+    <div class="subtitle">Estos datos los usa Nimbo para calcular impuestos, comisiones y margenes.</div>
 
     <form method="POST" action="{{ url_for('setup_paso', paso=3) }}">
       <div class="input-group">
@@ -343,17 +466,65 @@
         <div class="hint">Simbolo que se usara en precios y reportes. Ej: Q, $</div>
       </div>
 
-      <div class="input-row">
-        <div class="input-group">
-          <label class="input-label">Hora de apertura</label>
-          <input class="input" type="time" name="horario_apertura" value="08:00">
+      <div class="input-group">
+        <div class="label-with-tip">
+          <label class="input-label">¿Cobras IVA?</label>
+          {{ tip("El IVA es el Impuesto al Valor Agregado del 12%. En Guatemala la mayoria de negocios lo cobran incluido en el precio.") }}
         </div>
-        <div class="input-group">
-          <label class="input-label">Hora de cierre</label>
-          <input class="input" type="time" name="horario_cierre" value="18:00">
+        <div class="toggle-group">
+          <label class="toggle-opt"><input type="radio" name="cobra_iva" value="si" checked> Si (12%)</label>
+          <label class="toggle-opt"><input type="radio" name="cobra_iva" value="no"> No</label>
         </div>
       </div>
 
+      <div class="input-group">
+        <div class="label-with-tip">
+          <label class="input-label">¿Usas POS/tarjeta?</label>
+          {{ tip("Indica si aceptas pagos con tarjeta de credito o debito ademas de efectivo.") }}
+        </div>
+        <div class="toggle-group">
+          <label class="toggle-opt"><input type="radio" name="usa_pos" value="si" onchange="actualizarComisionPOS()"> Si</label>
+          <label class="toggle-opt"><input type="radio" name="usa_pos" value="no" checked onchange="actualizarComisionPOS()"> No</label>
+        </div>
+      </div>
+
+      <div class="input-group" id="comision-pos-wrap" style="display:none">
+        <div class="label-with-tip">
+          <label class="input-label">Comisión POS</label>
+          {{ tip("Porcentaje que cobra el banco por cada pago con tarjeta. El BI y Visanet cobran entre 3% y 6%.") }}
+        </div>
+        <input class="input" type="number" step="0.1" min="0" max="100" name="comision_pos" id="comision_pos" value="6">
+      </div>
+
+      <div class="input-group">
+        <div class="label-with-tip">
+          <label class="input-label">¿ISR trimestral?</label>
+          {{ tip("Impuesto Sobre la Renta. Se paga cada 3 meses a la SAT. Si eres pequeño contribuyente es el 5% de tus ingresos.") }}
+        </div>
+        <div class="toggle-group">
+          <label class="toggle-opt"><input type="radio" name="isr_trimestral" value="si" checked> Si (5%)</label>
+          <label class="toggle-opt"><input type="radio" name="isr_trimestral" value="no"> No</label>
+        </div>
+      </div>
+
+      <button class="btn-primary" type="submit">Continuar →</button>
+    </form>
+    <a class="back-link" href="{{ url_for('setup_paso', paso=2) }}">← Regresar</a>
+
+    <script>
+      function actualizarComisionPOS() {
+        var usaPos = document.querySelector('input[name="usa_pos"]:checked').value;
+        document.getElementById('comision-pos-wrap').style.display = (usaPos === 'si') ? 'block' : 'none';
+      }
+    </script>
+    {% endif %}
+
+    {# ══ PASO 4: HORARIO DEL NEGOCIO ══ #}
+    {% if paso == 4 %}
+    <div class="logo-name">Horario del negocio</div>
+    <div class="subtitle">Nimbo usa estos datos para los recordatorios y reportes del dia.</div>
+
+    <form method="POST" action="{{ url_for('setup_paso', paso=4) }}">
       <div class="input-group">
         <label class="input-label">Días laborales</label>
         <div class="dias-grid">
@@ -366,71 +537,121 @@
         </div>
       </div>
 
+      <div class="input-row">
+        <div class="input-group">
+          <div class="label-with-tip">
+            <label class="input-label">Hora apertura</label>
+            {{ tip("A que hora abres tu negocio. Nimbo usara este dato para los recordatorios del dia.") }}
+          </div>
+          <input class="input" type="time" name="horario_apertura" value="08:00" autofocus>
+        </div>
+        <div class="input-group">
+          <div class="label-with-tip">
+            <label class="input-label">Hora cierre</label>
+            {{ tip("A que hora cierras tu negocio.") }}
+          </div>
+          <input class="input" type="time" name="horario_cierre" value="18:00">
+        </div>
+      </div>
+
       <button class="btn-primary" type="submit">Continuar →</button>
     </form>
-    <a class="back-link" href="{{ url_for('setup_paso', paso=2) }}">← Regresar</a>
+    <a class="back-link" href="{{ url_for('setup_paso', paso=3) }}">← Regresar</a>
     {% endif %}
 
-    {# ══ PASO 4: PRIMER PRODUCTO ══ #}
-    {% if paso == 4 %}
-    <div class="logo-name">Tu primer producto</div>
-    <div class="subtitle">Opcional. Agrega un producto de ejemplo para ver como funciona el inventario, o sáltate este paso.</div>
+    {# ══ PASO 5: CONFIGURACION DE CAJA ══ #}
+    {% if paso == 5 %}
+    <div class="logo-name">Configuración de caja</div>
+    <div class="subtitle">Opcional. Define el fondo inicial de efectivo para dar cambio, o sáltate este paso.</div>
 
-    <form method="POST" action="{{ url_for('setup_paso', paso=4) }}">
+    <form method="POST" action="{{ url_for('setup_paso', paso=5) }}">
       <div class="input-group">
-        <label class="input-label">Nombre del producto</label>
-        <input class="input" type="text" name="producto_nombre" placeholder="Ej: Licuadora Oster" autofocus>
+        <div class="label-with-tip">
+          <label class="input-label">Fondo de caja</label>
+          {{ tip("Dinero en efectivo que dejas en la caja para dar cambio. Recomendado: Q300-500 en billetes pequeños.") }}
+        </div>
+        <input class="input" type="number" step="0.01" min="0" name="caja_fondo_inicial" placeholder="0.00" autofocus>
+        <div class="hint">Se usara como sugerencia al abrir tu primer turno de caja.</div>
+      </div>
+
+      <button class="btn-primary" type="submit">Guardar y continuar →</button>
+      <button class="btn-ghost" type="submit" name="accion" value="saltar" formnovalidate>Saltar este paso</button>
+    </form>
+    {% endif %}
+
+    {# ══ PASO 6: PRIMER EMPLEADO ══ #}
+    {% if paso == 6 %}
+    <div class="logo-name">Tu primer empleado</div>
+    <div class="subtitle">Opcional. Crea una cuenta de empleado o tecnico, o sáltate este paso.</div>
+
+    <form method="POST" action="{{ url_for('setup_paso', paso=6) }}" onsubmit="return validarEmpleadoPaso6(event)">
+      <div class="input-group">
+        <label class="input-label">Nombre completo</label>
+        <input class="input" type="text" name="empleado_nombre" id="empleado_nombre" placeholder="Ej: Ana Gómez" autofocus>
       </div>
 
       <div class="input-row">
         <div class="input-group">
-          <label class="input-label">Precio de venta</label>
-          <input class="input" type="number" step="0.01" min="0" name="producto_precio" placeholder="0.00">
+          <label class="input-label">Usuario</label>
+          <input class="input" type="text" name="empleado_username" id="empleado_username" autocomplete="off" placeholder="Ej: ana">
         </div>
         <div class="input-group">
-          <label class="input-label">Costo</label>
-          <input class="input" type="number" step="0.01" min="0" name="producto_costo" placeholder="0.00">
+          <label class="input-label">Contraseña</label>
+          <input class="input" type="password" name="empleado_password" id="empleado_password" autocomplete="new-password" placeholder="Mínimo 6 caracteres">
         </div>
       </div>
 
       <div class="input-group">
-        <label class="input-label">Cantidad inicial en stock</label>
-        <input class="input" type="number" step="1" min="0" name="producto_cantidad" placeholder="0">
+        <div class="label-with-tip">
+          <label class="input-label">Rol</label>
+          {{ tip("Empleado puede vender y manejar inventario/clientes. Tecnico solo ve Servicio Tecnico.") }}
+        </div>
+        <select class="input" name="empleado_rol" id="empleado_rol" onchange="actualizarTelefonoEmpleado()">
+          <option value="empleado" selected>Empleado</option>
+          <option value="tecnico">Técnico</option>
+        </select>
+      </div>
+
+      <div class="input-group">
+        <div class="label-with-tip">
+          <label class="input-label">Teléfono</label>
+          {{ tip("Obligatorio si es tecnico: Nimbo le avisa por WhatsApp cuando le asignan una orden de servicio.") }}
+        </div>
+        <input class="input" type="text" name="empleado_telefono" id="empleado_telefono" placeholder="Ej: 5555-5555">
       </div>
 
       <button class="btn-primary" type="submit">Guardar y continuar →</button>
       <button class="btn-ghost" type="submit" name="accion" value="saltar" formnovalidate>Saltar este paso</button>
     </form>
+
+    <script>
+      function actualizarTelefonoEmpleado() {
+        var rol = document.getElementById('empleado_rol').value;
+        document.getElementById('empleado_telefono').required = (rol === 'tecnico');
+      }
+      function validarEmpleadoPaso6(ev) {
+        if (ev.submitter && ev.submitter.value === 'saltar') return true;
+        var nombre = document.getElementById('empleado_nombre').value.trim();
+        var username = document.getElementById('empleado_username').value.trim();
+        var password = document.getElementById('empleado_password').value;
+        var rol = document.getElementById('empleado_rol').value;
+        var telefono = document.getElementById('empleado_telefono').value.trim();
+        if (!nombre && !username && !password) {
+          alert('Escribe los datos del empleado, o usa el boton "Saltar este paso".');
+          return false;
+        }
+        if (rol === 'tecnico' && !telefono) {
+          alert('El teléfono es obligatorio para técnicos (Nimbo lo usa para avisarles por WhatsApp).');
+          return false;
+        }
+        return true;
+      }
+      actualizarTelefonoEmpleado();
+    </script>
     {% endif %}
 
-    {# ══ PASO 5: PRIMER CLIENTE ══ #}
-    {% if paso == 5 %}
-    <div class="logo-name">Tu primer cliente</div>
-    <div class="subtitle">Opcional. Registra un cliente de ejemplo, o sáltate este paso.</div>
-
-    <form method="POST" action="{{ url_for('setup_paso', paso=5) }}">
-      <div class="input-group">
-        <label class="input-label">Nombre del cliente</label>
-        <input class="input" type="text" name="cliente_nombre" placeholder="Ej: Sandra López" autofocus>
-      </div>
-
-      <div class="input-group">
-        <label class="input-label">Teléfono</label>
-        <input class="input" type="text" name="cliente_telefono" placeholder="Ej: 5555-5555">
-      </div>
-
-      <div class="input-group">
-        <label class="input-label">Correo</label>
-        <input class="input" type="email" name="cliente_email" placeholder="correo@ejemplo.com">
-      </div>
-
-      <button class="btn-primary" type="submit">Guardar y continuar →</button>
-      <button class="btn-ghost" type="submit" name="accion" value="saltar" formnovalidate>Saltar este paso</button>
-    </form>
-    {% endif %}
-
-    {# ══ PASO 6: LISTO ══ #}
-    {% if paso == 6 %}
+    {# ══ PASO 7: LISTO ══ #}
+    {% if paso == 7 %}
     <div class="check-icon">✓</div>
     <div class="logo-name">Todo listo</div>
     <div class="subtitle">Así quedó configurado tu negocio en Nimbo:</div>
@@ -448,6 +669,30 @@
         <span class="resumen-key">País</span>
         <span class="resumen-val">{{ resumen.negocio_pais or '—' }}</span>
       </div>
+      {% if resumen.negocio_nit %}
+      <div class="resumen-row">
+        <span class="resumen-key">NIT</span>
+        <span class="resumen-val">{{ resumen.negocio_nit }}</span>
+      </div>
+      {% endif %}
+      {% if resumen.negocio_telefono %}
+      <div class="resumen-row">
+        <span class="resumen-key">Teléfono del negocio</span>
+        <span class="resumen-val">{{ resumen.negocio_telefono }}</span>
+      </div>
+      {% endif %}
+      {% if resumen.negocio_correo %}
+      <div class="resumen-row">
+        <span class="resumen-key">Correo del negocio</span>
+        <span class="resumen-val">{{ resumen.negocio_correo }}</span>
+      </div>
+      {% endif %}
+      {% if resumen.negocio_direccion %}
+      <div class="resumen-row">
+        <span class="resumen-key">Dirección</span>
+        <span class="resumen-val">{{ resumen.negocio_direccion }}</span>
+      </div>
+      {% endif %}
       <div class="resumen-row">
         <span class="resumen-key">Administrador</span>
         <span class="resumen-val">{{ resumen.dueno_nombre or '—' }}</span>
@@ -455,6 +700,18 @@
       <div class="resumen-row">
         <span class="resumen-key">Moneda</span>
         <span class="resumen-val">{{ resumen.moneda or 'Q' }}</span>
+      </div>
+      <div class="resumen-row">
+        <span class="resumen-key">IVA</span>
+        <span class="resumen-val">{{ 'Sí (12%)' if resumen.cobra_iva == 'si' else 'No' }}</span>
+      </div>
+      <div class="resumen-row">
+        <span class="resumen-key">Pagos con POS</span>
+        <span class="resumen-val">{{ ('Sí (comisión ' ~ resumen.comision_pos ~ '%)') if resumen.usa_pos == 'si' else 'No' }}</span>
+      </div>
+      <div class="resumen-row">
+        <span class="resumen-key">ISR trimestral</span>
+        <span class="resumen-val">{{ 'Sí (5%)' if resumen.isr_trimestral == 'si' else 'No' }}</span>
       </div>
       <div class="resumen-row">
         <span class="resumen-key">Horario</span>
@@ -468,22 +725,22 @@
         <span class="resumen-key">Días laborales</span>
         <span class="resumen-val">{{ resumen.dias_laborales.replace(',', ', ') if resumen.dias_laborales else '—' }}</span>
       </div>
-      {% if resumen.producto_nombre %}
+      {% if resumen.caja_fondo_inicial %}
       <div class="resumen-row">
-        <span class="resumen-key">Primer producto</span>
-        <span class="resumen-val">{{ resumen.producto_nombre }}</span>
+        <span class="resumen-key">Fondo de caja</span>
+        <span class="resumen-val">{{ resumen.moneda or 'Q' }}{{ resumen.caja_fondo_inicial }}</span>
       </div>
       {% endif %}
-      {% if resumen.cliente_nombre %}
+      {% if resumen.empleado_nombre %}
       <div class="resumen-row">
-        <span class="resumen-key">Primer cliente</span>
-        <span class="resumen-val">{{ resumen.cliente_nombre }}</span>
+        <span class="resumen-key">Primer empleado</span>
+        <span class="resumen-val">{{ resumen.empleado_nombre }}</span>
       </div>
       {% endif %}
     </div>
 
-    <form method="POST" action="{{ url_for('setup_paso', paso=6) }}">
-      <button class="btn-primary" type="submit">Entrar al dashboard →</button>
+    <form method="POST" action="{{ url_for('setup_paso', paso=7) }}">
+      <button class="btn-primary" type="submit">Comenzar a usar Nimbo →</button>
     </form>
     {% endif %}
 
