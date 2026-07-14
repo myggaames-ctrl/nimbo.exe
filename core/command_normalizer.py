@@ -17,10 +17,15 @@ def _sin_acentos(texto: str) -> str:
 VOCABULARIO = [
     # verbos / acciones
     "busca", "buscar", "agrega", "agregar", "quita", "quitar", "elimina", "eliminar",
-    "cambia", "cambiar", "crear", "registra", "registrar", "vende", "vendi", "vendio", "vender",
+    "cambia", "cambiar", "crear", "registra", "registrar", "vende", "vendo", "vendi", "vendio", "vender",
     "cotiza", "cotizar", "genera", "generar", "actualiza", "actualizar", "muestra",
     "mostrar", "listar", "abrir", "cerrar", "retirar", "cobrar", "sugerir", "sugiere",
     "canjear", "canjea", "canje",
+    # palabras comunes de 4+ letras que sin esta entrada quedarian a merced del
+    # fuzzy match contra otra palabra del vocabulario mas corta pero muy similar
+    # (ej. "para" -> "par", la unidad de medida) y saldrian corrompidas de
+    # cualquier comando que las use ("cotizacion para X", "genera orden para X").
+    "para",
     # sustantivos generales del negocio
     "producto", "productos", "inventario", "precio", "costo", "cliente", "clientes",
     "venta", "ventas", "factura", "gasto", "gastos", "balance", "proveedor", "proveedores",

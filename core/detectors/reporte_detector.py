@@ -54,8 +54,40 @@ class ReporteDetector:
         r"^exporta[r]?\s+ventas?",
     ]
 
+    PATTERNS_PATRONES = [
+        r"^analiza\s+(?:mis\s+)?patrones?\s+(?:de\s+)?venta[s]?$",
+        r"^analisis\s+de\s+patrones?\s+(?:de\s+)?venta[s]?$",
+        r"^patrones?\s+de\s+venta[s]?$",
+    ]
+
+    PATTERNS_CUANDO_VENDO_MAS = [
+        r"^cuando\s+vendo\s+mas$",
+        r"^cuales?\s+son\s+mis\s+(?:dias|horas)\s+pico$",
+        r"^dias?\s+(?:y\s+horas?\s+)?pico\s+de\s+venta[s]?$",
+        r"^mejor\s+hora\s+para\s+vender$",
+    ]
+
+    PATTERNS_PROXIMA_COMPRA = [
+        r"^proxima\s+compra\s+de\s+(.+)$",
+        r"^cuando\s+(?:vuelve|va)\s+a\s+comprar\s+(.+)$",
+        r"^cuando\s+compra\s+de\s+nuevo\s+(.+)$",
+    ]
+
     def detect(self, text: str):
         text = normalize(text)
+
+        for pattern in self.PATTERNS_PROXIMA_COMPRA:
+            match = re.search(pattern, text)
+            if match:
+                return {"intent": "reporte.proxima_compra", "query": match.group(1).strip()}
+
+        for pattern in self.PATTERNS_PATRONES:
+            if re.search(pattern, text):
+                return {"intent": "reporte.patrones_ventas"}
+
+        for pattern in self.PATTERNS_CUANDO_VENDO_MAS:
+            if re.search(pattern, text):
+                return {"intent": "reporte.cuando_vendo_mas"}
 
         for pattern in self.PATTERNS_EXCEL:
             if re.search(pattern, text):

@@ -1,4 +1,5 @@
 import difflib
+import re
 import sqlite3
 from datetime import datetime
 
@@ -2656,6 +2657,220 @@ def get_reporte_periodo(mes=None, trimestre=None, anio=None, semestre=None):
         "comision_pos": round(comision, 2),
         "ganancia_estimada": round(total - comision, 2),
         "mejores_clientes": mejores
+    }
+
+
+# ── PATRONES DE VENTA ──────────────────────────────────
+
+DIAS_SEMANA_ES = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado", "Domingo"]
+
+
+def _parse_fecha_venta(fecha_str):
+    if not fecha_str:
+        return None
+    try:
+        return datetime.strptime(fecha_str[:19], "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+
+
+def _extraer_items_venta(descripcion):
+    """Extrae pares (cantidad, nombre) de la Descripcion de una Venta de forma
+    best-effort (texto libre, no hay detalle estructurado de items por venta -
+    ver seccion Caja en CLAUDE.md). Misma logica que _productos_de_descripcion
+    en tools/cliente_tool.py (usada ahi para el producto favorito de un
+    cliente) - duplicada aqui en vez de importada porque database/ no debe
+    depender de tools/."""
+    if not descripcion:
+        return []
+    segmento = descripcion.split("|")[0].strip()
+    for prefijo in ("Cotizacion ", "Combo ", "Incluye"):
+        if segmento.startswith(prefijo) and ":" in segmento:
+            segmento = segmento.split(":", 1)[1]
+            break
+    items = []
+    for parte in segmento.split(","):
+        m = re.match(r"\s*(\d+(?:\.\d+)?)\s*x\s+(.+?)(?:\s+a\s+Q[\d.]+)?\s*$", parte.strip())
+        if m:
+            items.append((float(m.group(1)), m.group(2).strip()))
+    return items
+
+
+def _intervalos_compra_cliente(cliente_id):
+    """Fechas ordenadas y dias transcurridos entre compras consecutivas de un
+    cliente. ([], []) si tiene menos de 2 compras con fecha valida."""
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT Fecha FROM Venta WHERE ClienteId=? ORDER BY Fecha", (cliente_id,))
+    fechas = [f for f in (_parse_fecha_venta(r["Fecha"]) for r in cur.fetchall()) if f]
+    conn.close()
+    if len(fechas) < 2:
+        return [], fechas
+    intervalos = [(fechas[i + 1] - fechas[i]).days for i in range(len(fechas) - 1)]
+    return intervalos, fechas
+
+
+def _prediccion_compra_cliente_id(cliente_id, nombre=None):
+    """Predice la proxima fecha de compra de un cliente a partir del promedio
+    de dias entre sus compras pasadas. None si tiene menos de 3 compras (no
+    hay suficiente historial para una frecuencia confiable). `regular` indica
+    si el patron es razonablemente estable (desviacion <= 60% del promedio) -
+    una desviacion mayor significa que compra en intervalos muy irregulares y
+    la prediccion es poco confiable, aunque igual se devuelve para referencia."""
+    from datetime import timedelta
+    intervalos, fechas = _intervalos_compra_cliente(cliente_id)
+    if len(fechas) < 3 or not intervalos:
+        return None
+    promedio = sum(intervalos) / len(intervalos)
+    if promedio <= 0:
+        return None
+    varianza = sum((x - promedio) ** 2 for x in intervalos) / len(intervalos)
+    desviacion = varianza ** 0.5
+    if not nombre:
+        conn = nimbo_connect()
+        cur = conn.cursor()
+        cur.execute("SELECT Nombre FROM Cliente WHERE Id=?", (cliente_id,))
+        row = cur.fetchone()
+        conn.close()
+        nombre = row["Nombre"] if row else "Cliente"
+    return {
+        "cliente_id": cliente_id,
+        "cliente": nombre,
+        "total_compras": len(fechas),
+        "frecuencia_dias": round(promedio, 1),
+        "regular": desviacion <= promedio * 0.6,
+        "ultima_compra": fechas[-1].strftime("%Y-%m-%d"),
+        "proxima_compra_estimada": (fechas[-1] + timedelta(days=round(promedio))).strftime("%Y-%m-%d")
+    }
+
+
+def get_prediccion_compra_cliente(query):
+    """Busca un cliente por nombre/telefono (buscar_cliente_completo, mismo
+    criterio que el resto del sistema) y predice su proxima compra. None si no
+    se encuentra el cliente o si no tiene suficiente historial."""
+    clientes = buscar_cliente_completo(query)
+    if not clientes:
+        return None
+    c = clientes[0]
+    return _prediccion_compra_cliente_id(c["Id"], c["Nombre"])
+
+
+def _clientes_ciclicos(minimo_compras=3, max_clientes=10):
+    """Clientes con al menos `minimo_compras` compras y un patron de compra
+    razonablemente regular (ver _prediccion_compra_cliente_id), ordenados por
+    frecuencia (los que compran mas seguido primero)."""
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""SELECT ClienteId FROM Venta WHERE ClienteId IS NOT NULL
+        GROUP BY ClienteId HAVING COUNT(*) >= ?""", (minimo_compras,))
+    candidatos = [r["ClienteId"] for r in cur.fetchall()]
+    conn.close()
+
+    resultado = []
+    for cliente_id in candidatos:
+        prediccion = _prediccion_compra_cliente_id(cliente_id)
+        if prediccion and prediccion["regular"]:
+            resultado.append(prediccion)
+    resultado.sort(key=lambda c: c["frecuencia_dias"])
+    return resultado[:max_clientes]
+
+
+def get_patrones_ventas(dias_historial=90):
+    """Analiza el historial de Venta de los ultimos `dias_historial` dias (90
+    por defecto, para tener suficientes semanas de datos) y detecta:
+    - dias de la semana con mas/menos ventas
+    - mejor hora del dia para vender
+    - productos que se venden juntos frecuentemente (mismo Venta.Id, extraidos
+      de Descripcion de forma best-effort - ver _extraer_items_venta)
+    - tendencia: ultimas 4 semanas vs las 4 semanas anteriores
+    - clientes que compran en ciclos regulares, con su proxima compra estimada
+    Retorna un dict listo para narrar con Gemini o mostrar directo en el chat."""
+    from datetime import timedelta
+
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""SELECT Id, ClienteId, Descripcion, Total, Fecha FROM Venta
+        WHERE date(Fecha) >= date('now', ?) ORDER BY Fecha""", (f"-{dias_historial} days",))
+    ventas = [dict(r) for r in cur.fetchall()]
+    conn.close()
+
+    # ── Dias de la semana y hora del dia ──
+    conteo_dia = {i: {"ventas": 0, "total": 0.0} for i in range(7)}
+    conteo_hora = {}
+    for v in ventas:
+        fecha = _parse_fecha_venta(v["Fecha"])
+        if not fecha:
+            continue
+        conteo_dia[fecha.weekday()]["ventas"] += 1
+        conteo_dia[fecha.weekday()]["total"] += float(v["Total"])
+        conteo_hora.setdefault(fecha.hour, {"ventas": 0, "total": 0.0})
+        conteo_hora[fecha.hour]["ventas"] += 1
+        conteo_hora[fecha.hour]["total"] += float(v["Total"])
+
+    dias_semana = [
+        {"dia": DIAS_SEMANA_ES[i], "ventas": conteo_dia[i]["ventas"], "total": round(conteo_dia[i]["total"], 2)}
+        for i in range(7)
+    ]
+    dias_con_ventas = [d for d in dias_semana if d["ventas"] > 0]
+    mejor_dia = max(dias_con_ventas, key=lambda d: d["ventas"]) if dias_con_ventas else None
+    peor_dia = min(dias_con_ventas, key=lambda d: d["ventas"]) if dias_con_ventas else None
+    ratio_mejor_peor_dia = (
+        round(mejor_dia["ventas"] / peor_dia["ventas"], 1)
+        if mejor_dia and peor_dia and peor_dia["ventas"] > 0 else None
+    )
+
+    horas_pico = sorted(
+        ({"hora": h, "ventas": d["ventas"], "total": round(d["total"], 2)} for h, d in conteo_hora.items()),
+        key=lambda h: h["ventas"], reverse=True
+    )
+    mejor_hora = horas_pico[0] if horas_pico else None
+
+    # ── Productos que se venden juntos ──
+    conteo_pares = {}
+    for v in ventas:
+        nombres = sorted({nombre for _, nombre in _extraer_items_venta(v["Descripcion"])})
+        for i in range(len(nombres)):
+            for j in range(i + 1, len(nombres)):
+                par = (nombres[i], nombres[j])
+                conteo_pares[par] = conteo_pares.get(par, 0) + 1
+    productos_juntos = [
+        {"producto_a": a, "producto_b": b, "veces": veces}
+        for (a, b), veces in sorted(conteo_pares.items(), key=lambda kv: kv[1], reverse=True)
+        if veces >= 2
+    ][:10]
+
+    # ── Tendencia: ultimas 4 semanas vs las 4 anteriores ──
+    hoy = datetime.now()
+    inicio_actual = hoy - timedelta(weeks=4)
+    inicio_anterior = hoy - timedelta(weeks=8)
+    total_actual = 0.0
+    total_anterior = 0.0
+    for v in ventas:
+        fecha = _parse_fecha_venta(v["Fecha"])
+        if not fecha:
+            continue
+        if fecha >= inicio_actual:
+            total_actual += float(v["Total"])
+        elif inicio_anterior <= fecha < inicio_actual:
+            total_anterior += float(v["Total"])
+    cambio_pct = round((total_actual - total_anterior) / total_anterior * 100, 1) if total_anterior > 0 else None
+
+    return {
+        "periodo_dias": dias_historial,
+        "total_ventas_analizadas": len(ventas),
+        "dias_semana": dias_semana,
+        "mejor_dia": mejor_dia,
+        "peor_dia": peor_dia,
+        "ratio_mejor_peor_dia": ratio_mejor_peor_dia,
+        "horas_pico": horas_pico[:5],
+        "mejor_hora": mejor_hora,
+        "productos_juntos": productos_juntos,
+        "tendencia": {
+            "total_ultimas_4_semanas": round(total_actual, 2),
+            "total_4_semanas_anteriores": round(total_anterior, 2),
+            "cambio_pct": cambio_pct
+        },
+        "clientes_ciclicos": _clientes_ciclicos()
     }
 
 

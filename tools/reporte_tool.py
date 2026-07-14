@@ -170,3 +170,129 @@ def backup_tool(data):
         return f"Error en backup: {e}"
 
 register("sistema.backup", backup_tool)
+
+
+def cuando_vendo_mas_tool(data):
+    from database.aronium import get_patrones_ventas
+    p = get_patrones_ventas()
+    if p["total_ventas_analizadas"] == 0:
+        return f"No hay ventas registradas en los ultimos {p['periodo_dias']} dias para analizar."
+
+    resp = "Cuando vendes mas:\n\n"
+    if p["mejor_dia"]:
+        resp += f"Mejor dia: {p['mejor_dia']['dia']} ({p['mejor_dia']['ventas']} ventas, Q{p['mejor_dia']['total']:.2f})\n"
+    if p["ratio_mejor_peor_dia"] and p["peor_dia"]["dia"] != p["mejor_dia"]["dia"]:
+        resp += f"Vendes {p['ratio_mejor_peor_dia']}x mas los {p['mejor_dia']['dia']} que los {p['peor_dia']['dia']}\n"
+    if p["mejor_hora"]:
+        resp += f"Mejor hora: {p['mejor_hora']['hora']}:00 ({p['mejor_hora']['ventas']} ventas)\n"
+
+    resp += "\nDesglose por dia de la semana:\n"
+    for d in p["dias_semana"]:
+        resp += f"- {d['dia']}: {d['ventas']} ventas (Q{d['total']:.2f})\n"
+    return resp.strip()
+
+register("reporte.cuando_vendo_mas", cuando_vendo_mas_tool)
+
+
+def _texto_patrones(p):
+    dias_txt = "\n".join(f"- {d['dia']}: {d['ventas']} ventas, Q{d['total']:.2f}" for d in p["dias_semana"])
+    horas_txt = "\n".join(
+        f"- {h['hora']}:00: {h['ventas']} ventas, Q{h['total']:.2f}" for h in p["horas_pico"]
+    ) or "(sin datos suficientes de hora)"
+    juntos_txt = "\n".join(
+        f"- {j['producto_a']} + {j['producto_b']}: {j['veces']} veces juntos" for j in p["productos_juntos"]
+    ) or "(no se detectaron productos que se compren juntos con frecuencia)"
+    ciclicos_txt = "\n".join(
+        f"- {c['cliente']}: compra cada {c['frecuencia_dias']:.0f} dias en promedio, "
+        f"ultima compra {c['ultima_compra']}, proxima estimada {c['proxima_compra_estimada']}"
+        for c in p["clientes_ciclicos"]
+    ) or "(no se detectaron clientes con un ciclo de compra regular)"
+
+    t = p["tendencia"]
+    if t["cambio_pct"] is not None:
+        tendencia_txt = (f"Ultimas 4 semanas: Q{t['total_ultimas_4_semanas']:.2f} vs 4 semanas anteriores: "
+                          f"Q{t['total_4_semanas_anteriores']:.2f} ({t['cambio_pct']:+.1f}%)")
+    else:
+        tendencia_txt = (f"Ultimas 4 semanas: Q{t['total_ultimas_4_semanas']:.2f} "
+                          "(sin datos suficientes del periodo anterior para comparar)")
+
+    return dias_txt, horas_txt, juntos_txt, ciclicos_txt, tendencia_txt
+
+
+def _resumen_patrones_sin_gemini(p, dias_txt, horas_txt, juntos_txt, ciclicos_txt, tendencia_txt):
+    resp = f"Patrones de venta ({p['periodo_dias']} dias, {p['total_ventas_analizadas']} ventas):\n\n"
+    resp += f"VENTAS POR DIA:\n{dias_txt}\n\n"
+    resp += f"VENTAS POR HORA:\n{horas_txt}\n\n"
+    resp += f"PRODUCTOS QUE SE VENDEN JUNTOS:\n{juntos_txt}\n\n"
+    resp += f"TENDENCIA:\n{tendencia_txt}\n\n"
+    resp += f"CLIENTES CICLICOS:\n{ciclicos_txt}"
+    return resp
+
+
+def patrones_ventas_tool(data):
+    from database.aronium import get_patrones_ventas
+    import os
+
+    p = get_patrones_ventas()
+    if p["total_ventas_analizadas"] == 0:
+        return f"No hay suficientes ventas registradas (ultimos {p['periodo_dias']} dias) para analizar patrones."
+
+    dias_txt, horas_txt, juntos_txt, ciclicos_txt, tendencia_txt = _texto_patrones(p)
+
+    gemini_key = os.environ.get("GEMINI_API_KEY", "")
+    if not gemini_key:
+        return _resumen_patrones_sin_gemini(p, dias_txt, horas_txt, juntos_txt, ciclicos_txt, tendencia_txt)
+
+    from google import genai
+    cliente = genai.Client(api_key=gemini_key)
+
+    prompt = f"""Eres el analista de ventas de Mi Cocina Electrodomesticos, tienda de electrodomesticos y repuestos en Guatemala.
+Analiza estos datos REALES de los ultimos {p['periodo_dias']} dias ({p['total_ventas_analizadas']} ventas) y da recomendaciones practicas.
+
+VENTAS POR DIA DE LA SEMANA:
+{dias_txt}
+
+VENTAS POR HORA DEL DIA (top 5):
+{horas_txt}
+
+PRODUCTOS QUE SE VENDEN JUNTOS CON FRECUENCIA:
+{juntos_txt}
+
+TENDENCIA:
+{tendencia_txt}
+
+CLIENTES CON CICLO DE COMPRA REGULAR:
+{ciclicos_txt}
+
+Responde en espanol, directo y practico, con:
+1. El dia y hora en que mas se vende (compara con el mas flojo, usa los numeros reales que te di)
+2. Que combos de productos conviene ofrecer juntos en mostrador (solo si hay datos, no inventes)
+3. Si la tendencia esta subiendo o bajando y una posible razon o accion concreta
+4. Que clientes ciclicos conviene contactar pronto por su proxima compra estimada
+No inventes numeros que no te di, y si algun apartado no tiene datos suficientes dilo claramente."""
+
+    r = cliente.models.generate_content(model="gemini-2.5-flash-lite", contents=prompt)
+    return r.text
+
+register("reporte.patrones_ventas", patrones_ventas_tool)
+
+
+def proxima_compra_tool(query):
+    from database.aronium import buscar_cliente_completo, get_prediccion_compra_cliente
+    clientes = buscar_cliente_completo(query)
+    if not clientes:
+        return f"No encontre cliente con '{query}'."
+
+    prediccion = get_prediccion_compra_cliente(query)
+    if not prediccion:
+        return (f"{clientes[0]['Nombre']} no tiene suficiente historial de compras (minimo 3) "
+                f"para predecir su proxima compra.")
+
+    resp = f"{prediccion['cliente']} compra en promedio cada {prediccion['frecuencia_dias']:.0f} dias"
+    if not prediccion["regular"]:
+        resp += " (patron irregular, esta prediccion es menos confiable)"
+    resp += (f". Ultima compra: {prediccion['ultima_compra']}. "
+             f"Proxima compra estimada: {prediccion['proxima_compra_estimada']}.")
+    return resp
+
+register("reporte.proxima_compra", proxima_compra_tool)

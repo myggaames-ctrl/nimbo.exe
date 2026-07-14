@@ -322,6 +322,42 @@ Usuario escribe mensaje
       al 10 de cada mes ("Recuerda declarar el IVA del mes pasado") - el plazo real de la SAT
       es en dias habiles, aqui se aproxima como dias de calendario 1-10.
 - Reportes: dia/mes/trimestre/semestre/anual, Excel, automatico 5:30pm, limpieza anual
+  - Patrones de venta: database.aronium.get_patrones_ventas(dias_historial=90) analiza el
+    historial de Venta de los ultimos 90 dias y detecta: dia de la semana con mas/menos
+    ventas (y el ratio entre ambos), mejor hora del dia, productos que se venden juntos
+    frecuentemente, tendencia (ultimas 4 semanas vs las 4 anteriores) y clientes con un ciclo
+    de compra regular (con su proxima compra estimada). "Productos juntos" se calcula
+    agrupando por Venta.Id y extrayendo los nombres de producto de Venta.Descripcion de forma
+    best-effort (_extraer_items_venta - misma logica que _productos_de_descripcion en
+    tools/cliente_tool.py, duplicada en database/aronium.py en vez de importada porque
+    database/ no debe depender de tools/; solo las ventas multi-producto de Caja generan mas
+    de un item por venta, ver seccion Caja). database.aronium.get_prediccion_compra_cliente
+    (query) hace la prediccion de ciclo para UN cliente especifico (busqueda fuzzy con
+    buscar_cliente_completo): requiere minimo 3 compras con fecha valida, calcula el promedio
+    y la desviacion estandar de los dias entre compras consecutivas, y marca "regular": True
+    solo si la desviacion es <= 60% del promedio (heuristica simple para no reportar como
+    "ciclico" a un cliente con compras muy irregulares) - igual devuelve la prediccion aunque
+    no sea regular, marcandola como menos confiable en la respuesta del chat.
+    - "analiza mis patrones de venta" / "patrones de venta" (reporte.patrones_ventas,
+      tools/reporte_tool.py) le pasa los datos ya calculados a Gemini (gemini-2.5-flash-lite,
+      mismo patron que contabilidad.analisis_completo) para que narre recomendaciones sin
+      inventar numeros; si GEMINI_API_KEY no esta configurado cae a un resumen de texto plano
+      con los mismos datos (_resumen_patrones_sin_gemini). "cuando vendo mas" / "mejor hora
+      para vender" (reporte.cuando_vendo_mas) da solo el dia/hora pico sin pasar por Gemini.
+      "proxima compra de Juan Perez" / "cuando vuelve a comprar Juan Perez"
+      (reporte.proxima_compra, core/detectors/reporte_detector.py) da la prediccion de un
+      cliente especifico.
+    - Categoria "reporte" ya era admin-only (no esta en CATEGORIAS_EMPLEADO en
+      core/action_engine.py), asi que estos comandos tambien quedan restringidos a admin sin
+      cambios adicionales.
+    - Bug preexistente encontrado y corregido de paso en core/command_normalizer.py: "para"
+      no estaba en VOCABULARIO, asi que el corrector de errores tipograficos lo autocorregia
+      a "par" (la unidad de medida, muy similar en distancia de edicion, cutoff 0.8) ANTES de
+      que cualquier detector viera el mensaje - esto rompia en silencio "cotizacion para X",
+      "genera orden para X" y cualquier otro comando que dependiera de la palabra "para"
+      literal (incluyendo el nuevo "mejor hora para vender" de este feature). Se agrego
+      "para" (y "vendo", que se autocorregia a "vendio" y rompia "cuando vendo mas") al
+      VOCABULARIO.
 - Contenido: posts, scripts, video Veo3, publicacion Facebook
 - Recordatorios: pagos fijos, follow ups, cumpleanos, contenido
 - Backup: automatico 8pm, manual, 7 backups maximos
