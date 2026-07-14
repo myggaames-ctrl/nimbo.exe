@@ -134,7 +134,7 @@ def _onboarding_paso_actual():
 @app.before_request
 def require_setup():
     global _setup_completado
-    if request.endpoint in ("setup", "setup_paso", "static"):
+    if request.endpoint in ("setup", "setup_paso", "setup_demo", "setup_demo_paso", "static"):
         return None
     if not _setup_completado:
         if _onboarding_completado():
@@ -364,7 +364,50 @@ def setup_paso(paso):
         }
 
     return render_template("setup.html", paso=paso, total_pasos=len(ONBOARDING_PASOS),
-                            error=error, resumen=resumen)
+                            error=error, resumen=resumen, demo=False)
+
+
+# ── Demo del onboarding (sin login, no persiste nada) ──────
+# Accesible desde el boton "Ver demo del onboarding" en /login. Reutiliza el
+# mismo template que /setup/<paso>, pero con demo=True: los formularios pasan
+# a GET (no hay ruta de procesamiento que valide ni llame set_config/
+# crear_usuario) y el resumen del paso 7 usa datos de ejemplo fijos en vez de
+# leer Configuracion - esta ruta no requiere sesion, asi que jamas debe
+# mostrar los datos reales del negocio.
+DEMO_RESUMEN_EJEMPLO = {
+    "negocio_nombre": "Mi Cocina Electrodomésticos",
+    "negocio_tipo": "Electrodomésticos y repuestos",
+    "negocio_pais": "Guatemala",
+    "negocio_nit": "1234567-8",
+    "negocio_telefono": "5555-5555",
+    "negocio_correo": "contacto@ejemplo.com",
+    "negocio_direccion": "5a avenida 10-20 zona 1, Guatemala",
+    "dueno_nombre": "Nombre del administrador",
+    "moneda": "Q",
+    "cobra_iva": "si",
+    "usa_pos": "si",
+    "comision_pos": "6",
+    "isr_trimestral": "si",
+    "horario_apertura": "08:00",
+    "horario_cierre": "18:00",
+    "dias_laborales": "Lunes,Martes,Miércoles,Jueves,Viernes,Sábado",
+    "caja_fondo_inicial": "400",
+    "empleado_nombre": "Nombre del empleado",
+}
+
+
+@app.route("/setup/demo")
+def setup_demo():
+    return redirect(url_for("setup_demo_paso", paso=1))
+
+
+@app.route("/setup/demo/<int:paso>")
+def setup_demo_paso(paso):
+    if paso not in ONBOARDING_PASOS:
+        return redirect(url_for("setup_demo"))
+    resumen = DEMO_RESUMEN_EJEMPLO if paso == 7 else None
+    return render_template("setup.html", paso=paso, total_pasos=len(ONBOARDING_PASOS),
+                            error=None, resumen=resumen, demo=True)
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -486,6 +529,89 @@ def api_usuarios_password(uid):
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 400
+
+
+# ── Configuracion del negocio (panel "Configuracion" del dashboard) ────────
+# Mismos datos que se recopilan en /setup (pasos 1, 3, 4 y 5), pero editables
+# despues sin tener que resetear onboarding_completado. No incluye la cuenta
+# admin (paso 2) ni el primer empleado (paso 6) - esos ya se gestionan desde
+# el panel "Usuarios".
+CONFIG_NEGOCIO_KEYS = (
+    "negocio_nombre", "negocio_tipo", "negocio_pais", "negocio_nit",
+    "negocio_telefono", "negocio_correo", "negocio_direccion",
+    "moneda", "cobra_iva", "usa_pos", "comision_pos", "isr_trimestral",
+    "horario_apertura", "horario_cierre", "dias_laborales",
+    "caja_fondo_inicial",
+)
+
+
+@app.route("/api/configuracion/negocio", methods=["GET"])
+@admin_required
+def api_configuracion_negocio_get():
+    return jsonify({k: get_config(k, "") for k in CONFIG_NEGOCIO_KEYS})
+
+
+@app.route("/api/configuracion/negocio", methods=["PUT"])
+@admin_required
+def api_configuracion_negocio_update():
+    data = request.json or {}
+
+    negocio_nombre = (data.get("negocio_nombre") or "").strip()
+    tipo_negocio = (data.get("negocio_tipo") or "").strip()
+    pais = (data.get("negocio_pais") or "").strip()
+    if not negocio_nombre or not tipo_negocio or not pais:
+        return jsonify({"error": "Nombre del negocio, tipo de negocio y pais son obligatorios."}), 400
+
+    cobra_iva = "si" if data.get("cobra_iva") == "si" else "no"
+    usa_pos = "si" if data.get("usa_pos") == "si" else "no"
+    isr_trimestral = "si" if data.get("isr_trimestral") == "si" else "no"
+    comision_pos = str(data.get("comision_pos") or "6").strip()
+    if usa_pos == "si":
+        try:
+            comision_pos = str(round(float(comision_pos), 2))
+        except (TypeError, ValueError):
+            comision_pos = "6"
+
+    dias = data.get("dias_laborales")
+    if isinstance(dias, list):
+        dias_laborales = ",".join(dias)
+    else:
+        dias_laborales = (dias or "").strip()
+
+    set_config("negocio_nombre", negocio_nombre)
+    set_config("negocio_tipo", tipo_negocio)
+    set_config("negocio_pais", pais)
+    set_config("negocio_nit", (data.get("negocio_nit") or "").strip())
+    set_config("negocio_telefono", (data.get("negocio_telefono") or "").strip())
+    set_config("negocio_correo", (data.get("negocio_correo") or "").strip())
+    set_config("negocio_direccion", (data.get("negocio_direccion") or "").strip())
+    set_config("moneda", (data.get("moneda") or "Q").strip() or "Q")
+    set_config("cobra_iva", cobra_iva)
+    set_config("iva_porcentaje", "12" if cobra_iva == "si" else "0")
+    set_config("usa_pos", usa_pos)
+    set_config("comision_pos", comision_pos if usa_pos == "si" else "0")
+    set_config("isr_trimestral", isr_trimestral)
+    set_config("isr_porcentaje", "5" if isr_trimestral == "si" else "0")
+    set_config("horario_apertura", (data.get("horario_apertura") or "").strip())
+    set_config("horario_cierre", (data.get("horario_cierre") or "").strip())
+    set_config("dias_laborales", dias_laborales)
+
+    fondo = (data.get("caja_fondo_inicial") or "").strip()
+    if fondo:
+        try:
+            monto = round(float(fondo), 2)
+            if monto < 0:
+                raise ValueError()
+        except ValueError:
+            return jsonify({"error": "El fondo de caja debe ser un numero valido."}), 400
+        set_config("caja_fondo_inicial", str(monto))
+        # Mismo mecanismo que usa el cierre de turno para sugerir el fondo del
+        # siguiente turno (ver database.aronium.cerrar_turno/get_fondo_sugerido).
+        set_config("caja_fondo_sugerido", str(monto))
+    else:
+        set_config("caja_fondo_inicial", "")
+
+    return jsonify({"ok": True})
 
 
 # ══════════════════════════════════════════════════════════

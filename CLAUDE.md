@@ -102,9 +102,36 @@ Usuario escribe mensaje
   Cada campo no obvio tiene un icono ℹ️ con un tooltip en espanol (CSS puro, sin
   librerias - macro Jinja `tip()` en templates/setup.html) explicando que es y por que
   se pide (ej. NIT, comision POS, ISR, fondo de caja).
+- Demo del onboarding: boton "🔍 Ver demo del onboarding" en /login (templates/login.html,
+  dentro de `{% if not current_user.is_authenticated %}` - aunque en la practica login.html
+  nunca se renderiza para un usuario ya autenticado, la ruta /login redirige a / de una vez,
+  ver app.py login()) -> /setup/demo -> /setup/demo/<paso> (app.py setup_demo/
+  setup_demo_paso). Reutiliza el mismo template setup.html con `demo=True`: cada form pasa de
+  POST a GET y su action apunta directo al siguiente paso (`next_action()`, macro Jinja) en
+  vez de a la ruta real de /setup/<paso> - por eso nada de lo que se escribe en la demo llega
+  a set_config()/crear_usuario(), ni pasa por ninguna validacion de backend. El resumen del
+  paso 7 usa un diccionario fijo de ejemplo (DEMO_RESUMEN_EJEMPLO en app.py) en vez de leer
+  Configuracion - /setup/demo no requiere login, asi que jamas debe mostrar datos reales del
+  negocio. Un banner "Modo demo - nada se guarda" con link "Salir" (a /login) se muestra en
+  todos los pasos. El boton final del paso 7 tambien cambia: en modo real hace POST y marca
+  onboarding_completado, en demo es un boton que solo redirige a /login sin tocar nada.
+  setup_demo/setup_demo_paso estan exentos del before_request require_setup (igual que
+  setup/setup_paso) para que la demo funcione incluso en una instalacion que todavia no
+  completo el onboarding real.
 - Gestion de usuarios: panel "Usuarios" en el dashboard (solo admin) -> listar, crear,
   activar/desactivar, y cambiar contrasena de cualquier usuario sin pedir la actual.
   Backend: /api/usuarios (GET/POST), /api/usuarios/<id>/toggle, /api/usuarios/<id>/password.
+- Configuracion del negocio: panel "Configuración" en el dashboard (solo admin, sidebar
+  seccion Sistema junto a Usuarios) -> edita despues, sin resetear onboarding_completado, la
+  misma info que se recopila en los pasos 1 (datos del negocio), 3 (financiera), 4 (horario)
+  y 5 (fondo de caja) del wizard de /setup. No incluye la cuenta admin (paso 2) ni el primer
+  empleado (paso 6) - esos se gestionan desde el panel "Usuarios" ya existente, no desde aqui.
+  Backend: GET/PUT /api/configuracion/negocio (CONFIG_NEGOCIO_KEYS en app.py), misma
+  validacion que /setup/3 (nombre/tipo/pais obligatorios, comision_pos solo se guarda si
+  usa_pos='si', etc.) y el mismo efecto secundario que el paso 5 del onboarding: si se guarda
+  un fondo de caja, tambien actualiza Configuracion.caja_fondo_sugerido (ver seccion Caja
+  Registradora - "Fondo inicial automatico"). El nombre del negocio en el sidebar
+  (#sidebar-negocio-nombre) se actualiza en el momento al guardar, sin recargar la pagina.
 - Recuperacion de contrasena (solo admin): /forgot-password pide el correo, si coincide
   con ADMIN_EMAIL genera un token (tabla PasswordResetToken, expira en 1 hora) y envia un
   link por correo (Flask-Mail) a /reset-password?token=. Logging detallado de errores SMTP

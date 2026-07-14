@@ -124,6 +124,39 @@
   }
 
   .forgot-link:hover { color: var(--accent); }
+
+  .divider {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 20px 0 14px;
+    color: var(--muted);
+    font-size: 11px;
+  }
+
+  .divider::before, .divider::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  .btn-ghost-link {
+    display: block;
+    width: 100%;
+    text-align: center;
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px;
+    font-size: 13px;
+    font-weight: 500;
+    text-decoration: none;
+    box-sizing: border-box;
+  }
+
+  .btn-ghost-link:hover { color: var(--accent2); border-color: var(--accent2); }
 </style>
 </head>
 <body>
@@ -152,6 +185,11 @@
 
   <button class="btn-primary" type="submit">Ingresar</button>
   <a class="forgot-link" href="{{ url_for('forgot_password') }}">¿Olvidaste tu contraseña?</a>
+
+  {% if not current_user.is_authenticated %}
+  <div class="divider">o</div>
+  <a class="btn-ghost-link" href="{{ url_for('setup_demo') }}">🔍 Ver demo del onboarding</a>
+  {% endif %}
 </form>
 
 </body>

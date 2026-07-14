@@ -322,11 +322,31 @@
     font-size: 24px;
     margin-bottom: 16px;
   }
+
+  /* ── BANNER DEMO ───────────────────────── */
+  .demo-banner {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    background: rgba(249,115,22,0.12);
+    border: 1px solid var(--accent);
+    color: var(--accent2);
+    border-radius: 8px;
+    padding: 9px 12px;
+    font-size: 12px;
+    margin-bottom: 16px;
+  }
+
+  .demo-banner a { color: var(--accent2); font-weight: 600; text-decoration: none; }
+  .demo-banner a:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
 
 {% macro tip(texto) %}<span class="tip" tabindex="0">ℹ️<span class="tip-bubble">{{ texto }}</span></span>{% endmacro %}
+{% macro step_url(p) %}{{ url_for('setup_demo_paso', paso=p) if demo else url_for('setup_paso', paso=p) }}{% endmacro %}
+{% macro next_action(p) %}{{ url_for('setup_demo_paso', paso=p + 1) if demo else url_for('setup_paso', paso=p) }}{% endmacro %}
 
 <div class="setup-wrap">
 
@@ -340,6 +360,13 @@
   <div class="setup-card">
     <div class="logo-mark">Nimbo AI</div>
 
+    {% if demo %}
+    <div class="demo-banner">
+      <span>🔍 Modo demo — nada se guarda</span>
+      <a href="{{ url_for('login') }}">Salir</a>
+    </div>
+    {% endif %}
+
     {% if error %}
     <div class="error-box">{{ error }}</div>
     {% endif %}
@@ -349,7 +376,7 @@
     <div class="logo-name">Bienvenido a Nimbo</div>
     <div class="subtitle">Es la primera vez que se ejecuta el sistema. Empecemos configurando los datos basicos de tu negocio.</div>
 
-    <form method="POST" action="{{ url_for('setup_paso', paso=1) }}">
+    <form method="{{ 'GET' if demo else 'POST' }}" action="{{ next_action(1) }}">
       <div class="input-group">
         <label class="input-label">Nombre del negocio</label>
         <input class="input" type="text" name="negocio_nombre" placeholder="Ej: Mi Cocina Electrodomésticos" required autofocus>
@@ -425,7 +452,7 @@
     <div class="logo-name">Cuenta de administrador</div>
     <div class="subtitle">Esta cuenta tiene acceso total al sistema. Guarda bien la contraseña.</div>
 
-    <form method="POST" action="{{ url_for('setup_paso', paso=2) }}">
+    <form method="{{ 'GET' if demo else 'POST' }}" action="{{ next_action(2) }}">
       <div class="input-group">
         <label class="input-label">Nombre del dueño</label>
         <input class="input" type="text" name="dueno_nombre" placeholder="Ej: Victor Paxtor" required autofocus>
@@ -451,7 +478,7 @@
 
       <button class="btn-primary" type="submit">Continuar →</button>
     </form>
-    <a class="back-link" href="{{ url_for('setup_paso', paso=1) }}">← Regresar</a>
+    <a class="back-link" href="{{ step_url(1) }}">← Regresar</a>
     {% endif %}
 
     {# ══ PASO 3: CONFIGURACION FINANCIERA ══ #}
@@ -459,7 +486,7 @@
     <div class="logo-name">Configuración financiera</div>
     <div class="subtitle">Estos datos los usa Nimbo para calcular impuestos, comisiones y margenes.</div>
 
-    <form method="POST" action="{{ url_for('setup_paso', paso=3) }}">
+    <form method="{{ 'GET' if demo else 'POST' }}" action="{{ next_action(3) }}">
       <div class="input-group">
         <label class="input-label">Moneda</label>
         <input class="input" type="text" name="moneda" value="Q" maxlength="4" required autofocus>
@@ -509,7 +536,7 @@
 
       <button class="btn-primary" type="submit">Continuar →</button>
     </form>
-    <a class="back-link" href="{{ url_for('setup_paso', paso=2) }}">← Regresar</a>
+    <a class="back-link" href="{{ step_url(2) }}">← Regresar</a>
 
     <script>
       function actualizarComisionPOS() {
@@ -524,7 +551,7 @@
     <div class="logo-name">Horario del negocio</div>
     <div class="subtitle">Nimbo usa estos datos para los recordatorios y reportes del dia.</div>
 
-    <form method="POST" action="{{ url_for('setup_paso', paso=4) }}">
+    <form method="{{ 'GET' if demo else 'POST' }}" action="{{ next_action(4) }}">
       <div class="input-group">
         <label class="input-label">Días laborales</label>
         <div class="dias-grid">
@@ -556,7 +583,7 @@
 
       <button class="btn-primary" type="submit">Continuar →</button>
     </form>
-    <a class="back-link" href="{{ url_for('setup_paso', paso=3) }}">← Regresar</a>
+    <a class="back-link" href="{{ step_url(3) }}">← Regresar</a>
     {% endif %}
 
     {# ══ PASO 5: CONFIGURACION DE CAJA ══ #}
@@ -564,7 +591,7 @@
     <div class="logo-name">Configuración de caja</div>
     <div class="subtitle">Opcional. Define el fondo inicial de efectivo para dar cambio, o sáltate este paso.</div>
 
-    <form method="POST" action="{{ url_for('setup_paso', paso=5) }}">
+    <form method="{{ 'GET' if demo else 'POST' }}" action="{{ next_action(5) }}">
       <div class="input-group">
         <div class="label-with-tip">
           <label class="input-label">Fondo de caja</label>
@@ -584,7 +611,7 @@
     <div class="logo-name">Tu primer empleado</div>
     <div class="subtitle">Opcional. Crea una cuenta de empleado o tecnico, o sáltate este paso.</div>
 
-    <form method="POST" action="{{ url_for('setup_paso', paso=6) }}" onsubmit="return validarEmpleadoPaso6(event)">
+    <form method="{{ 'GET' if demo else 'POST' }}" action="{{ next_action(6) }}" onsubmit="return validarEmpleadoPaso6(event)">
       <div class="input-group">
         <label class="input-label">Nombre completo</label>
         <input class="input" type="text" name="empleado_nombre" id="empleado_nombre" placeholder="Ej: Ana Gómez" autofocus>
@@ -654,7 +681,10 @@
     {% if paso == 7 %}
     <div class="check-icon">✓</div>
     <div class="logo-name">Todo listo</div>
-    <div class="subtitle">Así quedó configurado tu negocio en Nimbo:</div>
+    <div class="subtitle">
+      {% if demo %}Así se ve el resumen final, con datos de ejemplo (nada de lo que escribiste se guardó):
+      {% else %}Así quedó configurado tu negocio en Nimbo:{% endif %}
+    </div>
 
     <div class="resumen-list">
       <div class="resumen-row">
@@ -739,9 +769,13 @@
       {% endif %}
     </div>
 
+    {% if demo %}
+    <button class="btn-primary" type="button" onclick="window.location='{{ url_for('login') }}'">Volver al login →</button>
+    {% else %}
     <form method="POST" action="{{ url_for('setup_paso', paso=7) }}">
       <button class="btn-primary" type="submit">Comenzar a usar Nimbo →</button>
     </form>
+    {% endif %}
     {% endif %}
 
   </div>
