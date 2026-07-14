@@ -425,6 +425,16 @@ def send(message: str, context: dict = None, role: str = "admin") -> tuple:
     context es un dict con el estado de la conversacion
     role controla que categorias de intent puede ejecutar el usuario (admin | empleado)
     """
+    # Salida universal de cualquier flujo conversacional activo: se revisa ANTES que
+    # cualquier otra cosa (incluso antes de normalizar context/cargar el historial),
+    # para que ningun detector de intents pueda interceptar "cancelar" como si fuera
+    # parte de un comando de negocio (ver auditoria: varios steps de texto libre
+    # absorbian cualquier mensaje, incluida una cancelacion, como si fuera la
+    # respuesta esperada). Solo aplica si hay un step activo - sin flujo en curso,
+    # "cancelar" sigue el camino normal (detectores -> Gemini -> OpenClaw).
+    if context and context.get("step") and _es_cancelacion(message):
+        return "De acuerdo, empecemos de nuevo. ¿En que te puedo ayudar?", {}
+
     if context is None:
         context = {}
 
@@ -435,15 +445,6 @@ def send(message: str, context: dict = None, role: str = "admin") -> tuple:
     contexto_historial = resumen_texto(obtener_historial_reciente())
 
     step = context.get("step")
-
-    # Salida universal de cualquier flujo conversacional activo: si el usuario esta a
-    # mitad de un paso (venta, cotizacion, caja, orden de servicio, etc.) y escribe una
-    # palabra de cancelacion, se limpia el contexto de una sola vez en vez de que el
-    # texto se interprete como dato del step actual (ver auditoria: varios steps de
-    # texto libre absorbian cualquier mensaje, incluida una cancelacion, como si fuera
-    # la respuesta esperada).
-    if step and _es_cancelacion(message):
-        return "De acuerdo, empecemos de nuevo. ¿En que te puedo ayudar?", {}
 
     # Flujo de aclaracion de intencion vaga (ver _analizar_intencion_vaga)
     if step == "clarificando":
