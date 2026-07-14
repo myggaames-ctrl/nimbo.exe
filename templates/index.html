@@ -715,6 +715,10 @@
           <div id="cuentascobrar-widget"><div class="text-muted">Cargando...</div></div>
         </div>
         <div class="card">
+          <div class="card-title">🧾 Cuentas por pagar</div>
+          <div id="cuentaspagar-widget"><div class="text-muted">Cargando...</div></div>
+        </div>
+        <div class="card">
           <div class="card-title">Accesos rápidos</div>
           <div style="display:flex;flex-direction:column;gap:8px">
             <button class="btn btn-ghost w-full" onclick="showPanel('chat')">💬 Abrir Chat IA</button>
@@ -1513,6 +1517,36 @@ async function loadCuentasCobrar() {
         <div style="flex:1;text-align:center;padding:8px;background:var(--bg-alt,rgba(255,255,255,0.03));border-radius:6px">
           <div style="font-size:18px;font-weight:600;color:var(--accent)">Q${d.proximas_total}</div>
           <div style="font-size:11px;color:var(--text-muted)">Por vencer (${d.proximas_cantidad})</div>
+        </div>
+      </div>
+    `;
+    el.innerHTML = html;
+  } catch(e) {}
+}
+
+async function loadCuentasPagar() {
+  try {
+    const r = await fetch('/api/cuentaspagar/resumen');
+    const d = await r.json();
+    const el = document.getElementById('cuentaspagar-widget');
+    if (!el) return;
+    if (!d.cantidad_total) {
+      el.innerHTML = '<span class="badge badge-green">✓ Sin cuentas por pagar</span>';
+      return;
+    }
+    let html = `
+      <div style="display:flex;gap:8px;margin-bottom:10px">
+        <div style="flex:1;text-align:center;padding:8px;background:var(--bg-alt,rgba(255,255,255,0.03));border-radius:6px">
+          <div style="font-size:18px;font-weight:600">Q${d.total_por_pagar}</div>
+          <div style="font-size:11px;color:var(--text-muted)">Total por pagar</div>
+        </div>
+        <div style="flex:1;text-align:center;padding:8px;background:var(--bg-alt,rgba(255,255,255,0.03));border-radius:6px">
+          <div style="font-size:18px;font-weight:600;color:var(--red)">Q${d.vencidos_total}</div>
+          <div style="font-size:11px;color:var(--text-muted)">Vencidos (${d.vencidos_cantidad})</div>
+        </div>
+        <div style="flex:1;text-align:center;padding:8px;background:var(--bg-alt,rgba(255,255,255,0.03));border-radius:6px">
+          <div style="font-size:18px;font-weight:600;color:var(--accent)">Q${d.proximos_total}</div>
+          <div style="font-size:11px;color:var(--text-muted)">Por vencer (${d.proximos_cantidad})</div>
         </div>
       </div>
     `;
@@ -2653,6 +2687,7 @@ loadRecordatorios();
 loadEquilibrio();
 loadCotizaciones();
 loadCuentasCobrar();
+loadCuentasPagar();
 setInterval(refreshStatus, 30000);
 
 async function addStock(id, nombre) {

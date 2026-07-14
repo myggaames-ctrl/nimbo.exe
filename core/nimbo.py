@@ -154,6 +154,20 @@ def _intentar_detectar(message: str, role: str, context: dict, contexto_historia
             context = {"step": "proveedor_waiting_contacto", "proveedor_id": int(proveedor_id), "proveedor_nombre": nombre}
             return f"Proveedor {nombre} registrado. Nombre del vendedor/contacto (o 'listo' para terminar):", context
 
+        if str(result).startswith("ORDEN_COMPRA_PAGO_INICIO:"):
+            partes = str(result).replace("ORDEN_COMPRA_PAGO_INICIO:", "").split("|", 6)
+            orden_id, numero, proveedor_id, proveedor_nombre, proveedor_wa, total, resp = partes
+            context = {
+                "step": "ordencompra_waiting_pago",
+                "oc_orden_id": int(orden_id),
+                "oc_numero": numero,
+                "oc_proveedor_id": int(proveedor_id),
+                "oc_proveedor_nombre": proveedor_nombre,
+                "oc_proveedor_tel": proveedor_wa,
+                "oc_total": float(total)
+            }
+            return f"{resp}\n\nSe pago de una vez o queda pendiente? (pagado/pendiente)", context
+
         if str(result).startswith("VENTA_INICIO:"):
             partes = str(result).replace("VENTA_INICIO:", "").split("|")
             # Puede venir con multiples productos separados por ;
@@ -644,6 +658,53 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         nombre_prov = context["proveedor_nombre"]
         context = {}
         return f"Contacto registrado. Proveedor listo. Para agregar una orden de compra di: pedido a {nombre_prov}", context
+
+    # Flujo de pago de una orden de compra recien creada (arrancado por
+    # ORDEN_COMPRA_PAGO_INICIO, ver tools/proveedor_tool.py generar_orden_tool)
+    if step == "ordencompra_waiting_pago":
+        txt = message.strip().lower()
+        numero = context.get("oc_numero", "")
+        if txt in ["pagado", "pago", "ya pague", "de contado", "contado", "si"]:
+            context = {}
+            return f"Orden {numero} marcada como pagada. No se creo ninguna cuenta por pagar.", context
+        if txt in ["pendiente", "no", "queda pendiente", "fiado", "credito"]:
+            context["step"] = "ordencompra_waiting_fecha"
+            return "Para cuando queda de pagar? (fecha dd/mm/aaaa o los dias, ej: 30)", context
+        return "Responde 'pagado' o 'pendiente'.", context
+
+    if step == "ordencompra_waiting_fecha":
+        from datetime import datetime, timedelta
+        from database.aronium import DIAS_VENCIMIENTO_PAGAR_DEFAULT, crear_cuenta_pagar
+        txt = message.strip()
+        fecha_vencimiento = None
+        if txt.isdigit():
+            fecha_vencimiento = (datetime.now() + timedelta(days=int(txt))).strftime("%Y-%m-%d")
+        else:
+            for fmt in ("%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d"):
+                try:
+                    fecha_vencimiento = datetime.strptime(txt, fmt).strftime("%Y-%m-%d")
+                    break
+                except ValueError:
+                    continue
+        aviso_fecha = ""
+        if not fecha_vencimiento:
+            fecha_vencimiento = (datetime.now() + timedelta(days=DIAS_VENCIMIENTO_PAGAR_DEFAULT)).strftime("%Y-%m-%d")
+            aviso_fecha = f" No entendi la fecha, se dejo por defecto a {DIAS_VENCIMIENTO_PAGAR_DEFAULT} dias ({fecha_vencimiento})."
+
+        numero = context.get("oc_numero", "")
+        proveedor_id = context.get("oc_proveedor_id")
+        proveedor_nombre = context.get("oc_proveedor_nombre", "")
+        proveedor_tel = context.get("oc_proveedor_tel", "")
+        total = context.get("oc_total", 0)
+        orden_id = context.get("oc_orden_id")
+        context = {}
+
+        crear_cuenta_pagar(
+            proveedor_id, proveedor_nombre, proveedor_tel,
+            f"Orden {numero}", total, fecha_vencimiento=fecha_vencimiento, orden_compra_id=orden_id
+        )
+        return (f"Cuenta por pagar creada para {proveedor_nombre}: Q{total} (orden {numero}), "
+                f"vence {fecha_vencimiento}.{aviso_fecha}"), context
 
     # Flujo de venta con cliente
     if step == "venta_waiting_seleccion":

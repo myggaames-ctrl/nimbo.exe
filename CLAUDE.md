@@ -679,6 +679,52 @@ Usuario escribe mensaje
     widgets financieros del Dashboard - ver seccion "Login y roles"): total por cobrar,
     cuentas vencidas (rojo) y proximas a vencer en 3 dias (naranja, mismo color --accent que
     usa badge-orange en el resto del dashboard, no hay una variable --orange separada).
+- Cuentas por pagar: version espejo de Cuentas por cobrar pero para deudas con proveedores.
+  2 tablas en nimbo.db. CuentaPagar (Id, ProveedorId, ProveedorNombre, ProveedorTelefono -
+  denormalizados desde Proveedor.WhatsApp igual que el resto de tablas del sistema copian
+  datos del cliente/proveedor al momento, Descripcion, MontoTotal, MontoPagado,
+  MontoPendiente, FechaCreada, FechaVencimiento, Estado, OrdenCompraId, Notas) + PagoPagar
+  (historial de pagos: Id, CuentaId, Monto, MetodoPago, Fecha, Notas). database.aronium.
+  DIAS_VENCIMIENTO_PAGAR_DEFAULT = 30 (mismo criterio que DIAS_VENCIMIENTO_CUENTA_DEFAULT).
+  Estado (PENDIENTE/PAGADO_PARCIAL/PAGADO/VENCIDO) usa el mismo criterio lazy que Cuentas por
+  cobrar: database.aronium.marcar_pagos_vencidos() se corre cada vez que se consultan cuentas.
+  - "debo Q500 a Distribuidora Oster" (cuentapagar.crear) / "debo Q500 a Distribuidora Oster
+    por repuestos" (con descripcion) buscan el proveedor con buscar_proveedor (mismo fuzzy
+    match LIKE que el resto de proveedor_tool.py) - si no existe, piden registrarlo primero.
+    "pague Q200 a Distribuidora Oster" (cuentapagar.pagar) reparte el pago FIFO entre las
+    cuentas pendientes mas antiguas del proveedor (database.aronium.registrar_pago_proveedor,
+    misma logica que registrar_pago_cliente de Cuentas por cobrar). "cuentas por pagar"
+    (cuentapagar.listar) lista todo con MontoPendiente > 0; "pagos vencidos" (cuentapagar.
+    vencidas) filtra Estado='VENCIDO'; "cuanto le debo a Distribuidora Oster" (cuentapagar.
+    consultar) trae solo las cuentas pendientes de ese proveedor.
+  - Detector core/detectors/cuenta_pagar_detector.py, se revisa antes que ProveedorDetector
+    en core/intent_detector.py (sin ambiguedad real: "debo QN a X" no coincide con ningun
+    patron de ProveedorDetector). Distingue de Cuentas por cobrar por el verbo/persona: "X
+    debe QN" (3ra persona, el cliente le debe a la tienda) vs "debo QN a X" (1ra persona, la
+    tienda le debe al proveedor) - nunca se confunden entre si.
+  - Categoria "cuentapagar" NO esta en CATEGORIAS_EMPLEADO (core/action_engine.py) - a
+    diferencia de cuentacobrar, es admin-only: pagar o endeudarse con un proveedor es una
+    decision financiera del negocio, no una operacion de mostrador. Mismo criterio que la
+    categoria "proveedor", tambien admin-only.
+  - Integracion con ordenes de compra: la unica via funcional para crear una OrdenCompra
+    desde el chat es "genera orden para X" / "crear orden para X" / "pedir a X" (proveedor.
+    generar_orden en tools/proveedor_tool.py, arma la orden con database.aronium.
+    get_pedidos_sugeridos()) - el otro intent relacionado, proveedor.orden_compra ("pedir a X
+    N producto a QN"), retorna un marcador PROVEEDOR_ORDEN_INICIO: que nunca fue implementado
+    en core/nimbo.py (gap preexistente, no se toco en este feature). database.aronium.
+    crear_orden_compra() ahora retorna (numero, orden_id) en vez de solo numero, para poder
+    vincular la CuentaPagar a la orden. generar_orden_tool ya no responde directo: retorna el
+    marcador ORDEN_COMPRA_PAGO_INICIO:orden_id|numero|proveedor_id|proveedor_nombre|whatsapp|
+    total|resp, que arranca el step ordencompra_waiting_pago en core/nimbo.py preguntando "Se
+    pago de una vez o queda pendiente?". "pagado" cierra el flujo sin crear nada; "pendiente"
+    pasa a ordencompra_waiting_fecha (mismo parseo de fecha/dias que venta_waiting_credito_
+    fecha de Cuentas por cobrar, con el mismo default DIAS_VENCIMIENTO_PAGAR_DEFAULT si no
+    logra interpretarla) y crea la CuentaPagar por el total completo de la orden.
+  - Recordatorios: get_recordatorios() agrega un recordatorio por cada cuenta por pagar que
+    vence en los proximos 3 dias (get_pagos_por_vencer(dias=3), urgencia alta).
+  - Widget en el dashboard (/api/cuentaspagar/resumen, admin-only): total por pagar, pagos
+    vencidos (rojo) y proximos a vencer en 3 dias (naranja) - misma estructura visual que el
+    widget de Cuentas por cobrar.
 
 ## Tablas nimbo.db
 Cliente, OrdenServicio, HistorialOrden, Kardex, StockMinimo, ProductoFoto, ProductoInfo,
@@ -688,7 +734,7 @@ Gasto, ResumenContable, Proveedor, ContactoProveedor, ProductoProveedor,
 OrdenCompra, ItemOrdenCompra, HistorialPrecio, Usuario, PasswordResetToken, Configuracion,
 Cotizacion, CajaTurno, MovimientoCaja, ItemCarrito, Descuento, GarantiaProducto, GarantiaVenta,
 ProductoCombo, ItemCombo, UnidadMedida, PuntosCliente, MovimientoPuntos, CodigoBarrasGenerado,
-GrupoDescuento, CuentaCobrar, PagoCuenta
+GrupoDescuento, CuentaCobrar, PagoCuenta, CuentaPagar, PagoPagar
 
 ## Variables de entorno (.env)
 GEMINI_API_KEY, FB_PAGE_TOKEN, FB_PAGE_ID, WA_TOKEN, WA_PHONE_ID, IG_ACCOUNT_ID,
@@ -712,6 +758,10 @@ MAIL_SERVER, MAIL_PORT, MAIL_USERNAME, MAIL_PASSWORD, ADMIN_EMAIL
 8. Cuentas por cobrar en Caja/Cotizaciones: "credito" como metodo de pago solo se
    implemento en el flujo de venta simple del chat (ver seccion Cuentas por cobrar), no
    en /api/caja/cobrar ni en cotizacion.aceptar
+9. proveedor.orden_compra ("pedir a X N producto a QN") retorna un marcador
+   PROVEEDOR_ORDEN_INICIO: que nunca se implemento en core/nimbo.py (gap preexistente,
+   detectado al integrar Cuentas por pagar - ver esa seccion). La unica via funcional
+   para crear una OrdenCompra por chat sigue siendo "genera orden para X"
 
 FLUJO EN TIENDA (pendiente):
 - Calculo automatico de comision POS solo cuando paga con tarjeta (Caja ya distingue

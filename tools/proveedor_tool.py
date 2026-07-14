@@ -158,11 +158,12 @@ def generar_orden_tool(data):
                 })
     if not items_proveedor:
         return f"No hay productos pendientes para {p['Nombre']}."
-    numero = crear_orden_compra(p["Id"], items_proveedor)
+    numero, orden_id = crear_orden_compra(p["Id"], items_proveedor)
     resp = f"Orden {numero} creada para {p['Nombre']}:\n"
     for item in items_proveedor:
         resp += f"  - {item['nombre']} x{item['cantidad']}\n"
     resp += f"\nContacta a {p['Nombre']} al WA: {p['WhatsApp'] or 'sin numero'}"
-    return resp
+    total = sum(i["cantidad"] * i["precio"] for i in items_proveedor)
+    return f"ORDEN_COMPRA_PAGO_INICIO:{orden_id}|{numero}|{p['Id']}|{p['Nombre']}|{p.get('WhatsApp') or ''}|{total}|{resp}"
 
 register("proveedor.generar_orden", generar_orden_tool)

@@ -92,6 +92,9 @@ init_tarifas_mano_obra()
 from database.aronium import init_cuentas_cobrar
 init_cuentas_cobrar()
 
+from database.aronium import init_cuentas_pagar
+init_cuentas_pagar()
+
 # Instalaciones que ya tenian usuarios antes de que existiera el wizard de
 # onboarding (o que lo completaron con el /setup viejo de un solo paso) se
 # marcan como completas automaticamente, para no forzar el wizard nuevo.
@@ -1281,6 +1284,13 @@ def get_resumen_cotizaciones():
 def get_resumen_cuentas_cobrar_route():
     from database.aronium import get_resumen_cuentas_cobrar
     return jsonify(get_resumen_cuentas_cobrar())
+
+
+@app.route("/api/cuentaspagar/resumen")
+@admin_required
+def get_resumen_cuentas_pagar_route():
+    from database.aronium import get_resumen_cuentas_pagar
+    return jsonify(get_resumen_cuentas_pagar())
 
 
 # ── CAJA REGISTRADORA ──────────────────────────────────────
