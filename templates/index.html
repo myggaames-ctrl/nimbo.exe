@@ -2347,7 +2347,9 @@ function onUsrRolChange() {
   document.getElementById('usr-permisos-group').style.display = rol === 'admin' ? 'none' : 'block';
   document.getElementById('usr-permisos-admin-nota').style.display = rol === 'admin' ? 'block' : 'none';
 }
-renderPermisosGrid('usr-permisos-grid', PERMISOS_DEFAULT_POR_ROL.empleado);
+if (document.getElementById('usr-permisos-grid')) {
+  renderPermisosGrid('usr-permisos-grid', PERMISOS_DEFAULT_POR_ROL.empleado);
+}
 
 async function loadUsuarios() {
   try {

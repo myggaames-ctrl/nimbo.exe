@@ -103,7 +103,13 @@
       "Bash(sqlite3 nimbo.db \".schema PagoFijo\")",
       "Bash(git check-ignore *)",
       "Read(//tmp/**)",
-      "Bash(sqlite3 /home/ictor_axtor/micocina-dashboard/nimbo.db \".schema Venta\")"
+      "Bash(sqlite3 /home/ictor_axtor/micocina-dashboard/nimbo.db \".schema Venta\")",
+      "Bash(node *)",
+      "Bash(npm ls *)",
+      "Bash(pkill -f \"flask run\")",
+      "Bash(echo \"PID: $!\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:5000/)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:5000/login)"
     ]
   }
 }
