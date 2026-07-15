@@ -123,6 +123,57 @@ def _es_cancelacion(message: str) -> bool:
     return False
 
 
+# Frases que, a mitad de un step que espera un dato puntual, indican que el
+# usuario esta cambiando de decision en vez de responder tal cual lo que se le
+# pregunto (ej. "mejor tarjeta" en vez de "tarjeta" a secas). "mejor no" y
+# "olvida" NO estan aqui a proposito: esas dos ya cancelan el flujo completo mas
+# arriba (ver _PALABRAS_CANCELACION / _es_cancelacion, que corre ANTES que
+# cualquier step) - agregarlas aqui nunca se alcanzaria a ejecutar.
+_FRASES_CAMBIO_DECISION = ["no mejor", "mejor", "cambio a", "cambiar a", "en realidad"]
+
+
+def _detectar_cambio_decision(message: str, step: str):
+    """Si el mensaje trae una de las frases de _FRASES_CAMBIO_DECISION seguida de
+    un valor reconocible para el step actual, retorna ese valor ya limpio (ej.
+    "mejor tarjeta" en el step venta_waiting_pago -> "tarjeta") para que el
+    parseo normal de ese step lo use en vez del mensaje completo, sin tener que
+    duplicar esa logica de parseo aqui. Retorna None si el mensaje no trae
+    ninguna de esas frases, o si las trae pero no reconoce un valor valido para
+    el step actual - en ambos casos el step sigue su parseo normal tal cual
+    (que dara su propio mensaje de error si corresponde)."""
+    texto = unicodedata.normalize("NFD", message or "").encode("ascii", "ignore").decode("utf-8").lower().strip()
+    texto = texto.rstrip(".!?").replace(",", " ")
+    texto = " ".join(texto.split())
+
+    resto = None
+    for frase in _FRASES_CAMBIO_DECISION:
+        if texto.startswith(frase + " "):
+            resto = texto[len(frase):].strip()
+            break
+    if not resto:
+        return None
+
+    if step == "reembolso_waiting_monto":
+        # "mejor total": ya no quiere que le pregunten un monto parcial, quiere
+        # el reembolso completo - mismo valor que reembolso_waiting_tipo acepta.
+        return resto if resto in ("total", "todo", "completo") else None
+
+    if step == "venta_waiting_pago":
+        metodos = ("efectivo", "tarjeta", "transferencia", "mixto", "credito", "fiado")
+        return resto if resto in metodos else None
+
+    if step in ("reembolso_waiting_metodo", "cambio_waiting_metodo_diferencia"):
+        metodos = ("efectivo", "tarjeta", "credito tienda", "credito de tienda", "credito")
+        return resto if resto in metodos else None
+
+    if step == "cotizacion_waiting_producto":
+        # Cualquier texto despues de la frase de cambio se reinterpreta como el
+        # nombre del producto correcto (ej. "mejor licuadora" -> "licuadora").
+        return resto
+
+    return None
+
+
 def _intentar_detectar(message: str, role: str, context: dict, contexto_historial: str = ""):
     """Corre deteccion directa (detectores) y, si falla, traduccion via Gemini.
     Retorna (respuesta, context) si algo se detecto, o None si nada aplico."""
@@ -985,7 +1036,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         return "Metodo de pago? (efectivo, tarjeta, transferencia, mixto, credito):", context
 
     if step == "venta_waiting_pago":
-        pago = message.strip().lower()
+        pago = _detectar_cambio_decision(message, step) or message.strip().lower()
 
         _PAGO_MIXTO = ["mixto", "mixta", "combinado", "los dos", "efectivo y tarjeta"]
         _PAGO_CREDITO = ["credito", "a credito", "fiado", "al fiado"]
@@ -1461,10 +1512,13 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
             if not items:
                 return "Agrega al menos un producto antes de terminar.", context
             return _finalizar_cotizacion(context)
+        # "mejor licuadora": el producto que iba a escribir no era el que queria,
+        # se busca directo lo que dijo despues de la frase de cambio.
+        busqueda = _detectar_cambio_decision(message, step) or message.strip()
         from database.aronium import get_products
-        productos = get_products(search=message.strip())
+        productos = get_products(search=busqueda)
         if not productos:
-            return f"No encontre '{message.strip()}' en inventario. Intenta con otro nombre, o escribe 'listo' para terminar.", context
+            return f"No encontre '{busqueda}' en inventario. Intenta con otro nombre, o escribe 'listo' para terminar.", context
         if len(productos) > 1:
             context["cot_opciones"] = [{"id": p["Id"], "nombre": p["Name"], "precio": p["Price"]} for p in productos[:5]]
             context["step"] = "cotizacion_waiting_seleccion"
@@ -1615,6 +1669,14 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         return "Por favor escribe: total o parcial", context
 
     if step == "reembolso_waiting_monto":
+        if _detectar_cambio_decision(message, step):
+            # "mejor total": se salta la pregunta del monto parcial (mismo efecto
+            # que responder "total" en reembolso_waiting_tipo, ver esa rama arriba).
+            disponible = context.get("reembolso_disponible", 0)
+            context["reembolso_tipo"] = "TOTAL"
+            context["reembolso_monto"] = disponible
+            context["step"] = "reembolso_waiting_metodo"
+            return f"Entendido, reembolso total: Q{disponible}. Como se devuelve? (efectivo/tarjeta/credito tienda)", context
         try:
             monto = round(float(message.strip().replace(",", "").replace("Q", "").replace("q", "").strip()), 2)
             if monto <= 0:
@@ -1631,7 +1693,8 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
     if step == "reembolso_waiting_metodo":
         metodo_map = {"efectivo": "efectivo", "tarjeta": "tarjeta", "credito tienda": "credito_tienda",
                       "credito de tienda": "credito_tienda", "credito": "credito_tienda"}
-        metodo = metodo_map.get(message.strip().lower())
+        respuesta = _detectar_cambio_decision(message, step) or message.strip().lower()
+        metodo = metodo_map.get(respuesta)
         if not metodo:
             return "Por favor escribe: efectivo, tarjeta o credito tienda", context
 
@@ -1709,7 +1772,8 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
     if step == "cambio_waiting_metodo_diferencia":
         metodo_map = {"efectivo": "efectivo", "tarjeta": "tarjeta", "credito tienda": "credito_tienda",
                       "credito de tienda": "credito_tienda", "credito": "credito_tienda"}
-        metodo = metodo_map.get(message.strip().lower())
+        respuesta = _detectar_cambio_decision(message, step) or message.strip().lower()
+        metodo = metodo_map.get(respuesta)
         if not metodo:
             return "Por favor escribe: efectivo, tarjeta o credito tienda", context
         return _finalizar_cambio(context, metodo)
