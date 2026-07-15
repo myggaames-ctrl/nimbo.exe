@@ -2,6 +2,7 @@
 Autenticacion y roles
 Nimbo AI
 """
+import json
 import secrets
 import sqlite3
 from datetime import datetime, timedelta
@@ -13,11 +14,44 @@ NIMBO_DB = '/home/ictor_axtor/micocina-dashboard/nimbo.db'
 ROLES = ("admin", "empleado", "tecnico")
 RESET_TOKEN_TTL_MINUTOS = 60
 
+# Modulos que se pueden asignar/quitar por usuario (columna Usuario.Permisos, JSON
+# array). Un admin tiene siempre todos los modulos sin importar lo que diga el campo
+# (ver Usuario.tiene_permiso). Estos nombres son independientes de las categorias de
+# intent del chat (core/action_engine.py CATEGORIAS_POR_ROL) - ese gate por rol sigue
+# existiendo tal cual para el chat; Permisos controla que ve/usa cada usuario en el
+# dashboard (sidebar) y el popup de identificacion de Caja.
+MODULOS_DISPONIBLES = (
+    "inventario", "ventas", "clientes", "caja", "servicio",
+    "cotizaciones", "contenido", "reportes", "proveedores", "contabilidad",
+)
+
+# Permisos por defecto al crear un usuario nuevo sin especificar ninguno, segun su
+# rol - mismo criterio que ya usaba el gate de rol para empleado/tecnico.
+PERMISOS_DEFAULT_POR_ROL = {
+    "empleado": ["inventario", "ventas", "clientes", "caja"],
+    "tecnico": ["servicio"],
+}
+
 
 def _connect():
     conn = sqlite3.connect(NIMBO_DB)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def normalizar_permisos(valor):
+    """Convierte lo que sea (JSON string, lista, None) a una lista de modulos
+    validos (subset de MODULOS_DISPONIBLES), sin duplicados."""
+    if valor is None:
+        lista = []
+    elif isinstance(valor, str):
+        try:
+            lista = json.loads(valor) if valor.strip() else []
+        except (json.JSONDecodeError, ValueError):
+            lista = []
+    else:
+        lista = list(valor)
+    return sorted({m for m in lista if m in MODULOS_DISPONIBLES})
 
 
 class Usuario(UserMixin):
@@ -28,6 +62,8 @@ class Usuario(UserMixin):
         self.rol = row["Rol"]
         self.activo = bool(row["Activo"])
         self.telefono = row["Telefono"] if "Telefono" in row.keys() else ""
+        permisos_raw = row["Permisos"] if "Permisos" in row.keys() else None
+        self.permisos = normalizar_permisos(permisos_raw)
 
     @property
     def is_admin(self):
@@ -36,6 +72,10 @@ class Usuario(UserMixin):
     @property
     def is_tecnico(self):
         return self.rol == "tecnico"
+
+    def tiene_permiso(self, modulo):
+        """Admin siempre tiene todos los permisos, sin importar el campo Permisos."""
+        return self.is_admin or modulo in self.permisos
 
     def get_id(self):
         return self.id
@@ -73,6 +113,21 @@ def init_usuarios():
         cur.execute("ALTER TABLE Usuario ADD COLUMN Telefono TEXT")
     except sqlite3.OperationalError:
         pass
+    # Migracion: Usuario ya existia antes de agregar Permisos (sistema de permisos
+    # modulares por usuario, independiente del rol - ver MODULOS_DISPONIBLES).
+    try:
+        cur.execute("ALTER TABLE Usuario ADD COLUMN Permisos TEXT")
+    except sqlite3.OperationalError:
+        pass
+    # Usuarios creados antes de este feature quedan con Permisos NULL (no "[]" -
+    # esa distincion importa: NULL significa "nunca se configuro", no "sin ningun
+    # permiso"). Se backfillean una sola vez con el default de su rol para no
+    # perder de golpe el acceso a Inventario/Caja/Servicio que ya tenian por rol.
+    for rol, permisos_default in PERMISOS_DEFAULT_POR_ROL.items():
+        cur.execute(
+            "UPDATE Usuario SET Permisos=? WHERE Rol=? AND Permisos IS NULL",
+            (json.dumps(permisos_default), rol)
+        )
     conn.commit()
     conn.close()
 
@@ -111,9 +166,11 @@ def verify_login(username, password):
 def listar_usuarios():
     conn = _connect()
     cur = conn.cursor()
-    cur.execute("SELECT Id, Username, Nombre, Rol, Activo, Telefono, CreatedAt FROM Usuario ORDER BY Id")
+    cur.execute("SELECT Id, Username, Nombre, Rol, Activo, Telefono, Permisos, CreatedAt FROM Usuario ORDER BY Id")
     rows = [dict(r) for r in cur.fetchall()]
     conn.close()
+    for r in rows:
+        r["Permisos"] = normalizar_permisos(r["Permisos"])
     return rows
 
 
@@ -128,19 +185,36 @@ def listar_tecnicos():
     return rows
 
 
-def crear_usuario(username, password, nombre, rol, telefono=""):
+def crear_usuario(username, password, nombre, rol, telefono="", permisos=None):
     if rol not in ROLES:
         raise ValueError("Rol invalido")
     if not username or not password:
         raise ValueError("Usuario y contrasena son obligatorios")
+    if permisos is None:
+        permisos = PERMISOS_DEFAULT_POR_ROL.get(rol, [])
+    permisos = normalizar_permisos(permisos)
     conn = _connect()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO Usuario (Username, PasswordHash, Nombre, Rol, Activo, Telefono) VALUES (?,?,?,?,1,?)",
-        (username.strip(), generate_password_hash(password), nombre, rol, telefono.strip())
+        "INSERT INTO Usuario (Username, PasswordHash, Nombre, Rol, Activo, Telefono, Permisos) VALUES (?,?,?,?,1,?,?)",
+        (username.strip(), generate_password_hash(password), nombre, rol, telefono.strip(), json.dumps(permisos))
     )
     conn.commit()
     conn.close()
+
+
+def set_permisos_usuario(user_id, permisos):
+    permisos = normalizar_permisos(permisos)
+    conn = _connect()
+    cur = conn.cursor()
+    cur.execute("SELECT Id FROM Usuario WHERE Id = ?", (user_id,))
+    if not cur.fetchone():
+        conn.close()
+        raise ValueError("Usuario no encontrado")
+    cur.execute("UPDATE Usuario SET Permisos=? WHERE Id=?", (json.dumps(permisos), user_id))
+    conn.commit()
+    conn.close()
+    return permisos
 
 
 def set_usuario_activo(user_id, activo):

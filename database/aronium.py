@@ -2360,7 +2360,7 @@ def vaciar_carrito(turno_id):
     conn.close()
 
 
-def cobrar_carrito(turno_id, metodo_pago, cliente_id=None, monto_efectivo=None, monto_tarjeta=None, denominaciones_recibidas=None):
+def cobrar_carrito(turno_id, metodo_pago, cliente_id=None, monto_efectivo=None, monto_tarjeta=None, denominaciones_recibidas=None, cobrador_nombre=None):
     import json
     items = get_carrito(turno_id)
     if not items:
@@ -2415,8 +2415,8 @@ def cobrar_carrito(turno_id, metodo_pago, cliente_id=None, monto_efectivo=None, 
 
     conn = nimbo_connect()
     cur = conn.cursor()
-    cur.execute("INSERT INTO Venta (ClienteId, Descripcion, Total, Mes, Trimestre, Anio) VALUES (?,?,?,?,?,?)",
-        (cliente_id, descripcion, total, mes, trimestre, anio))
+    cur.execute("INSERT INTO Venta (ClienteId, Descripcion, Total, Mes, Trimestre, Anio, CobradorNombre) VALUES (?,?,?,?,?,?,?)",
+        (cliente_id, descripcion, total, mes, trimestre, anio, cobrador_nombre))
     venta_id = cur.lastrowid
     if cliente_id:
         cur.execute("UPDATE Cliente SET UltimaCompra=? WHERE Id=?", (now.isoformat(), cliente_id))
@@ -2569,10 +2569,22 @@ def get_reporte_dia():
         AND Mes=? AND Anio=?
     """, (datetime.now().month, datetime.now().year))
     row = dict(cur.fetchone())
+
+    cur.execute("""
+        SELECT IFNULL(CobradorNombre, 'Sin identificar') as cobrador,
+            COUNT(*) as ventas, IFNULL(SUM(Total), 0) as total
+        FROM Venta
+        WHERE DATE(Fecha) = DATE('now') AND Mes=? AND Anio=?
+        GROUP BY cobrador ORDER BY total DESC
+    """, (datetime.now().month, datetime.now().year))
+    ventas_por_cobrador = [
+        {"cobrador": r["cobrador"], "ventas": r["ventas"], "total": round(float(r["total"]), 2)}
+        for r in cur.fetchall()
+    ]
     conn.close()
-    
+
     total_vendido = float(row["total_vendido"])
-    
+
     # Obtener costo de productos vendidos desde Aronium
     conn_aronium = connect()
     cur2 = conn_aronium.cursor()
@@ -2612,7 +2624,8 @@ def get_reporte_dia():
         "total_costo": round(total_costo, 2),
         "comision_pos": round(comision_pos, 2),
         "ganancia_bruta": round(ganancia_bruta, 2),
-        "ganancia_neta": round(ganancia_neta, 2)
+        "ganancia_neta": round(ganancia_neta, 2),
+        "ventas_por_cobrador": ventas_por_cobrador
     }
 
 def get_reporte_periodo(mes=None, trimestre=None, anio=None, semestre=None):
@@ -3207,6 +3220,19 @@ def init_pagos_fijos_ext():
     cur = conn.cursor()
     try:
         cur.execute("ALTER TABLE PagoFijo ADD COLUMN Monto NUMERIC DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+    conn.commit()
+    conn.close()
+
+def init_venta_cobrador_ext():
+    """Migracion: Venta ya existia sin CobradorNombre - se necesita para saber quien
+    cobro cada venta de Caja (popup de identificacion, ver /api/caja/verificar-cobrador
+    en app.py) y para el desglose por cobrador de get_reporte_dia()."""
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    try:
+        cur.execute("ALTER TABLE Venta ADD COLUMN CobradorNombre TEXT")
     except sqlite3.OperationalError:
         pass
     conn.commit()

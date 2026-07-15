@@ -518,6 +518,24 @@
     gap: 10px;
     margin: 12px 0;
   }
+  .permisos-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 8px;
+    margin: 8px 0;
+  }
+  .permisos-grid label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    cursor: pointer;
+  }
+  .permisos-grid input { margin: 0; }
   .denom-item {
     background: var(--surface2);
     border: 1px solid var(--border);
@@ -585,17 +603,21 @@
 
     {% if rol != 'tecnico' %}
     <div class="nav-label">Negocio</div>
+    {% if current_user.tiene_permiso('inventario') %}
     <button class="nav-item active" onclick="showPanel('inventory')">
       <span class="icon">▦</span> Inventario
     </button>
+    {% endif %}
     <button class="nav-item" onclick="showPanel('analytics')">
       <span class="icon">◉</span> Análisis
     </button>
+    {% if current_user.tiene_permiso('caja') %}
     <button class="nav-item" onclick="showPanel('caja')">
       <span class="icon">▣</span> Caja
     </button>
     {% endif %}
-    {% if rol == 'admin' or rol == 'tecnico' %}
+    {% endif %}
+    {% if (rol == 'admin' or rol == 'tecnico') and current_user.tiene_permiso('servicio') %}
     <button class="nav-item" onclick="showPanel('servicio')">
       <span class="icon">🔧</span> Servicio Técnico
     </button>
@@ -603,9 +625,11 @@
 
     {% if rol == 'admin' %}
     <div class="nav-label">Contenido</div>
+    {% if current_user.tiene_permiso('contenido') %}
     <button class="nav-item" onclick="showPanel('content')">
       <span class="icon">◈</span> Generador
     </button>
+    {% endif %}
     {% endif %}
 
     {% if rol == 'admin' %}
@@ -1045,6 +1069,27 @@
       </div>
     </div>
 
+    <!-- ══ MODAL IDENTIFICACION DE COBRADOR ══ -->
+    <div class="modal-overlay" id="modal-identificacion-cobro" style="display:none">
+      <div class="modal-box">
+        <div class="card-title">¿Quién eres?</div>
+        <p class="text-muted mb-2">Ingresa tu usuario y contraseña para registrar quién cobra esta venta.</p>
+        <div class="input-group">
+          <label class="input-label">Usuario</label>
+          <input class="input" id="identcobro-username" autocomplete="off">
+        </div>
+        <div class="input-group">
+          <label class="input-label">Contraseña</label>
+          <input class="input" id="identcobro-password" type="password">
+        </div>
+        <div id="identcobro-error" class="error-box" style="display:none"></div>
+        <div class="flex gap-2" style="margin-top:8px">
+          <button class="btn btn-primary" onclick="confirmarIdentificacionCobro()">Continuar</button>
+          <button class="btn btn-ghost" onclick="cerrarModalIdentificacionCobro()">Cancelar</button>
+        </div>
+      </div>
+    </div>
+
     <!-- ══ MODAL COBRO ══ -->
     <div class="modal-overlay" id="modal-cobro" style="display:none">
       <div class="modal-box" style="max-width:520px">
@@ -1165,7 +1210,7 @@
           </div>
           <div class="input-group">
             <label class="input-label">Rol</label>
-            <select class="input" id="usr-rol">
+            <select class="input" id="usr-rol" onchange="onUsrRolChange()">
               <option value="empleado">Empleado</option>
               <option value="admin">Admin</option>
               <option value="tecnico">Técnico</option>
@@ -1176,6 +1221,11 @@
             <input class="input" id="usr-telefono" placeholder="Ej: 55551234">
           </div>
         </div>
+        <div class="input-group" id="usr-permisos-group">
+          <label class="input-label">Permisos (módulos que puede usar)</label>
+          <div id="usr-permisos-grid" class="permisos-grid"></div>
+        </div>
+        <div class="text-muted" id="usr-permisos-admin-nota" style="display:none">El rol Admin siempre tiene acceso total, sin importar los permisos.</div>
         <button class="btn btn-primary" onclick="crearUsuario()">+ Crear usuario</button>
       </div>
 
@@ -1206,6 +1256,21 @@
         <div class="flex gap-2" style="margin-top:8px">
           <button class="btn btn-primary" onclick="confirmarCambioPassword()">Guardar</button>
           <button class="btn btn-ghost" onclick="cerrarModalPassword()">Cancelar</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ MODAL PERMISOS ══ -->
+    <div class="modal-overlay" id="modal-permisos" style="display:none">
+      <div class="modal-box">
+        <div class="card-title">Permisos</div>
+        <div class="text-muted mb-2" id="modal-permisos-user" style="font-size:12.5px"></div>
+        <div class="text-muted" id="modal-permisos-admin-nota" style="display:none">El rol Admin siempre tiene acceso total, sin importar los permisos.</div>
+        <div id="modal-permisos-grid" class="permisos-grid"></div>
+        <div id="modal-permisos-error" class="error-box" style="display:none"></div>
+        <div class="flex gap-2" style="margin-top:8px">
+          <button class="btn btn-primary" onclick="confirmarPermisos()">Guardar</button>
+          <button class="btn btn-ghost" onclick="cerrarModalPermisos()">Cancelar</button>
         </div>
       </div>
     </div>
@@ -2252,6 +2317,38 @@ async function loadKardex() {
 // ── USUARIOS ────────────────────────────────────────────
 let usuariosData = [];
 
+const MODULOS_LABELS = {
+  inventario: 'Inventario', ventas: 'Ventas', clientes: 'Clientes', caja: 'Caja',
+  servicio: 'Servicio Técnico', cotizaciones: 'Cotizaciones', contenido: 'Contenido',
+  reportes: 'Reportes', proveedores: 'Proveedores', contabilidad: 'Contabilidad'
+};
+const PERMISOS_DEFAULT_POR_ROL = {
+  empleado: ['inventario', 'ventas', 'clientes', 'caja'],
+  tecnico: ['servicio'],
+  admin: Object.keys(MODULOS_LABELS)
+};
+
+function renderPermisosGrid(containerId, seleccionados) {
+  const el = document.getElementById(containerId);
+  el.innerHTML = Object.entries(MODULOS_LABELS).map(([mod, label]) => `
+    <label>
+      <input type="checkbox" value="${mod}" ${seleccionados.includes(mod) ? 'checked' : ''}>
+      ${label}
+    </label>`).join('');
+}
+
+function leerPermisosGrid(containerId) {
+  return Array.from(document.querySelectorAll(`#${containerId} input:checked`)).map(i => i.value);
+}
+
+function onUsrRolChange() {
+  const rol = document.getElementById('usr-rol').value;
+  renderPermisosGrid('usr-permisos-grid', PERMISOS_DEFAULT_POR_ROL[rol] || []);
+  document.getElementById('usr-permisos-group').style.display = rol === 'admin' ? 'none' : 'block';
+  document.getElementById('usr-permisos-admin-nota').style.display = rol === 'admin' ? 'block' : 'none';
+}
+renderPermisosGrid('usr-permisos-grid', PERMISOS_DEFAULT_POR_ROL.empleado);
+
 async function loadUsuarios() {
   try {
     const r = await fetch('/api/usuarios');
@@ -2259,7 +2356,7 @@ async function loadUsuarios() {
     usuariosData = rows;
     const body = document.getElementById('usuarios-body');
     if (!rows.length) {
-      body.innerHTML = '<tr><td colspan="5" class="text-muted" style="padding:20px">Sin usuarios.</td></tr>';
+      body.innerHTML = '<tr><td colspan="6" class="text-muted" style="padding:20px">Sin usuarios.</td></tr>';
       return;
     }
     const rolBadge = {admin: 'badge-orange', tecnico: 'badge-blue'};
@@ -2272,6 +2369,7 @@ async function loadUsuarios() {
       <td>
         <button class="btn btn-ghost btn-sm" onclick="toggleUsuario(${u.Id})">${u.Activo ? '⏸ Desactivar' : '▶ Activar'}</button>
         <button class="btn btn-ghost btn-sm" onclick="abrirModalPassword(${u.Id})">🔑 Cambiar contraseña</button>
+        <button class="btn btn-ghost btn-sm" onclick="abrirModalPermisos(${u.Id})">🔐 Permisos${u.Rol === 'admin' ? '' : ` (${u.Permisos.length})`}</button>
       </td>
     </tr>`).join('');
   } catch(e) {
@@ -2285,13 +2383,14 @@ async function crearUsuario() {
   const password = document.getElementById('usr-password').value;
   const rol = document.getElementById('usr-rol').value;
   const telefono = document.getElementById('usr-telefono').value.trim();
+  const permisos = rol === 'admin' ? [] : leerPermisosGrid('usr-permisos-grid');
   if (!username || !password) { alert('Usuario y contraseña son obligatorios.'); return; }
   if (rol === 'tecnico' && !telefono) { alert('El teléfono es obligatorio para técnicos (Nimbo lo usa para avisarles por WhatsApp).'); return; }
   try {
     const r = await fetch('/api/usuarios', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({nombre, username, password, rol, telefono})
+      body: JSON.stringify({nombre, username, password, rol, telefono, permisos})
     });
     const d = await r.json();
     if (d.ok) {
@@ -2300,12 +2399,56 @@ async function crearUsuario() {
       document.getElementById('usr-password').value = '';
       document.getElementById('usr-rol').value = 'empleado';
       document.getElementById('usr-telefono').value = '';
+      onUsrRolChange();
       loadUsuarios();
     } else {
       alert('Error: ' + d.error);
     }
   } catch(e) {
     alert('Error: ' + e.message);
+  }
+}
+
+let permisosModalUserId = null;
+
+function abrirModalPermisos(id) {
+  const u = usuariosData.find(x => x.Id === id);
+  if (!u) return;
+  permisosModalUserId = id;
+  document.getElementById('modal-permisos-user').textContent = `Usuario: ${u.Username} (${u.Nombre || 'sin nombre'})`;
+  document.getElementById('modal-permisos-error').style.display = 'none';
+  document.getElementById('modal-permisos-admin-nota').style.display = u.Rol === 'admin' ? 'block' : 'none';
+  renderPermisosGrid('modal-permisos-grid', u.Rol === 'admin' ? PERMISOS_DEFAULT_POR_ROL.admin : u.Permisos);
+  document.getElementById('modal-permisos').style.display = 'flex';
+}
+
+function cerrarModalPermisos() {
+  permisosModalUserId = null;
+  document.getElementById('modal-permisos').style.display = 'none';
+}
+
+async function confirmarPermisos() {
+  const errorBox = document.getElementById('modal-permisos-error');
+  errorBox.style.display = 'none';
+  if (!permisosModalUserId) return;
+  const permisos = leerPermisosGrid('modal-permisos-grid');
+  try {
+    const r = await fetch(`/api/usuarios/${permisosModalUserId}/permisos`, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({permisos})
+    });
+    const d = await r.json();
+    if (d.ok) {
+      cerrarModalPermisos();
+      loadUsuarios();
+    } else {
+      errorBox.textContent = d.error || 'Error al guardar los permisos.';
+      errorBox.style.display = 'block';
+    }
+  } catch(e) {
+    errorBox.textContent = e.message;
+    errorBox.style.display = 'block';
   }
 }
 
@@ -2963,8 +3106,56 @@ async function anularTurnoCaja() {
 }
 
 // -- Cobro --
+let cajaCobradorNombre = null;
+let cajaCobroMetodoPendiente = null;
+
 function abrirModalCobro(metodo) {
   if (!cajaCarritoActual.length) { alert('El carrito esta vacio.'); return; }
+  cajaCobroMetodoPendiente = metodo;
+  document.getElementById('identcobro-username').value = '';
+  document.getElementById('identcobro-password').value = '';
+  document.getElementById('identcobro-error').style.display = 'none';
+  document.getElementById('modal-identificacion-cobro').style.display = 'flex';
+}
+
+function cerrarModalIdentificacionCobro() {
+  cajaCobroMetodoPendiente = null;
+  document.getElementById('modal-identificacion-cobro').style.display = 'none';
+}
+
+async function confirmarIdentificacionCobro() {
+  const errorBox = document.getElementById('identcobro-error');
+  errorBox.style.display = 'none';
+  const username = document.getElementById('identcobro-username').value.trim();
+  const password = document.getElementById('identcobro-password').value;
+  if (!username || !password) {
+    errorBox.textContent = 'Ingresa usuario y contraseña.';
+    errorBox.style.display = 'block';
+    return;
+  }
+  try {
+    const r = await fetch('/api/caja/verificar-cobrador', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({username, password})
+    });
+    const d = await r.json();
+    if (!r.ok || d.error) {
+      errorBox.textContent = d.error || 'No se pudo verificar el usuario.';
+      errorBox.style.display = 'block';
+      return;
+    }
+    cajaCobradorNombre = d.nombre;
+    const metodo = cajaCobroMetodoPendiente;
+    document.getElementById('modal-identificacion-cobro').style.display = 'none';
+    abrirModalCobroReal(metodo);
+  } catch(e) {
+    errorBox.textContent = e.message;
+    errorBox.style.display = 'block';
+  }
+}
+
+function abrirModalCobroReal(metodo) {
   cajaMetodoPago = metodo;
   const total = cajaCarritoActual.reduce((s, i) => s + Number(i.Total), 0);
   document.getElementById('cobro-total').textContent = `Q${total.toFixed(2)}`;
@@ -3005,7 +3196,7 @@ async function confirmarCobro() {
   const errorBox = document.getElementById('cobro-error');
   errorBox.style.display = 'none';
   const total = cajaCarritoActual.reduce((s, i) => s + Number(i.Total), 0);
-  const body = {metodo_pago: cajaMetodoPago};
+  const body = {metodo_pago: cajaMetodoPago, cobrador_nombre: cajaCobradorNombre};
 
   if (cajaMetodoPago === 'efectivo') {
     body.monto_efectivo = parseFloat(document.getElementById('cobro-monto-recibido').value) || 0;
@@ -3027,6 +3218,7 @@ async function confirmarCobro() {
     return;
   }
   cerrarModal('modal-cobro');
+  cajaCobradorNombre = null;
   document.getElementById('caja-ticket-box').textContent = d.ticket || '';
   document.getElementById('modal-ticket').style.display = 'flex';
   cajaCarritoActual = [];

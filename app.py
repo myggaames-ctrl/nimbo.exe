@@ -25,6 +25,7 @@ from services.mail_service import mail, enviar_reset_password
 from core.auth import (
     init_usuarios, get_usuario_by_id, verify_login, existe_algun_usuario,
     listar_usuarios, crear_usuario, set_usuario_activo, cambiar_password_usuario,
+    set_permisos_usuario, MODULOS_DISPONIBLES,
     get_admin_activo, crear_token_reset, validar_token_reset, usar_token_reset
 )
 from core.configuracion import init_configuracion, get_config, set_config
@@ -100,6 +101,9 @@ init_pagos_fijos_ext()
 
 from database.aronium import init_metas_semanales
 init_metas_semanales()
+
+from database.aronium import init_venta_cobrador_ext
+init_venta_cobrador_ext()
 
 # Instalaciones que ya tenian usuarios antes de que existiera el wizard de
 # onboarding (o que lo completaron con el /setup viejo de un solo paso) se
@@ -498,6 +502,12 @@ def api_usuarios_list():
     return jsonify(listar_usuarios())
 
 
+@app.route("/api/usuarios/modulos", methods=["GET"])
+@admin_required
+def api_usuarios_modulos():
+    return jsonify(list(MODULOS_DISPONIBLES))
+
+
 @app.route("/api/usuarios", methods=["POST"])
 @admin_required
 def api_usuarios_create():
@@ -508,7 +518,8 @@ def api_usuarios_create():
             data.get("password", ""),
             data.get("nombre", ""),
             data.get("rol", "empleado"),
-            data.get("telefono", "")
+            data.get("telefono", ""),
+            permisos=data.get("permisos")
         )
         return jsonify({"ok": True})
     except Exception as e:
@@ -530,6 +541,17 @@ def api_usuarios_password(uid):
     try:
         cambiar_password_usuario(uid, data.get("password", ""))
         return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/usuarios/<int:uid>/permisos", methods=["PUT"])
+@admin_required
+def api_usuarios_permisos(uid):
+    data = request.json or {}
+    try:
+        permisos = set_permisos_usuario(uid, data.get("permisos", []))
+        return jsonify({"ok": True, "permisos": permisos})
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
@@ -1640,6 +1662,21 @@ def caja_carrito_vaciar():
     return jsonify({"ok": True, "items": [], "total": 0})
 
 
+@app.route("/api/caja/verificar-cobrador", methods=["POST"])
+@login_required
+def caja_verificar_cobrador():
+    """Popup de identificacion que aparece antes de cada cobro en Caja (no solo al
+    abrir turno): valida usuario/contrasena y que tenga permiso de caja, para
+    registrar quien cobro esa venta puntual (Venta.CobradorNombre)."""
+    data = request.json or {}
+    usuario = verify_login(data.get("username", ""), data.get("password", ""))
+    if not usuario:
+        return jsonify({"error": "Usuario o contraseña incorrectos."}), 401
+    if not usuario.tiene_permiso("caja"):
+        return jsonify({"error": "No tienes permiso para cobrar."}), 403
+    return jsonify({"ok": True, "nombre": usuario.nombre})
+
+
 @app.route("/api/caja/cobrar", methods=["POST"])
 @login_required
 def caja_cobrar():
@@ -1649,13 +1686,15 @@ def caja_cobrar():
     if error:
         return error
     data = request.json or {}
+    cobrador_nombre = data.get("cobrador_nombre") or current_user.nombre
     resultado = cobrar_carrito(
         turno["Id"],
         data.get("metodo_pago"),
         cliente_id=data.get("cliente_id"),
         monto_efectivo=data.get("monto_efectivo"),
         monto_tarjeta=data.get("monto_tarjeta"),
-        denominaciones_recibidas=data.get("denominaciones_recibidas")
+        denominaciones_recibidas=data.get("denominaciones_recibidas"),
+        cobrador_nombre=cobrador_nombre
     )
     if resultado.get("error"):
         return jsonify(resultado), 400
@@ -1668,7 +1707,7 @@ def caja_cobrar():
         resultado["venta_id"], resultado["fecha"], ticket_items, resultado["total"],
         resultado["metodo_pago"], cliente_nombre=data.get("cliente_nombre", ""),
         efectivo_recibido=resultado["monto_efectivo"] if resultado["metodo_pago"] == "efectivo" else None,
-        cambio=resultado["cambio"], cajero=current_user.nombre,
+        cambio=resultado["cambio"], cajero=cobrador_nombre,
         subtotal=resultado["subtotal"], descuento=resultado["descuento"],
         garantias=resultado["garantias"]
     )
