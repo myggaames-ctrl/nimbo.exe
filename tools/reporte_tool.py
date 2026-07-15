@@ -2,7 +2,7 @@
 Herramienta de Reportes
 """
 from core.tool_registry import register
-from database.aronium import get_reporte_dia, get_reporte_periodo
+from database.aronium import get_reporte_dia, get_reporte_periodo, get_cuadre_pos_dia, crear_ajuste_pos
 
 def reporte_dia_tool(data):
     r = get_reporte_dia()
@@ -355,3 +355,45 @@ def meta_semanal_falta_tool(data):
     return f"Te faltan Q{p['falta_q']:.2f} para llegar a la meta de Q{p['meta_q']:.2f} esta semana."
 
 register("reporte.meta_falta", meta_semanal_falta_tool)
+
+
+def cuadre_pos_tool(data):
+    """'cuadre de pos' / 'reporte de tarjetas': lo que Nimbo registro en ventas con
+    tarjeta hoy, para comparar contra el reporte fisico del POS del banco antes de
+    cerrar el dia (ver CLAUDE.md, flujo de cuadre)."""
+    r = get_cuadre_pos_dia()
+    if r["num_transacciones"] == 0:
+        return "No hay ventas con tarjeta registradas hoy."
+
+    resp = "Cuadre de POS - hoy:\n"
+    resp += f"Total con tarjeta (Nimbo): Q{r['total_tarjeta']}\n"
+    resp += f"Transacciones: {r['num_transacciones']}\n"
+    resp += f"Comision estimada (6%): Q{r['comision_estimada']}\n"
+    resp += f"Monto neto despues de comision: Q{r['monto_neto']}\n"
+    resp += "\nDetalle:\n"
+    for d in r["detalle"]:
+        etiqueta = " (mixto, solo la parte de tarjeta)" if d["mixto"] else ""
+        resp += f"- {d['hora']} | Q{d['monto']} | {d['cliente']}{etiqueta}\n"
+    resp += "\nSi no cuadra con el reporte del POS, escribe: 'diferencia de POS Q[monto]' (o negativo si el POS muestra menos)."
+    return resp.strip()
+
+register("reporte.cuadre_pos", cuadre_pos_tool)
+
+
+def diferencia_pos_tool(data):
+    """'diferencia de POS Q50 [motivo]': registra el ajuste cuando el cuadre no
+    coincide con el reporte fisico del POS (ver AjustePOS, tabla nimbo.db)."""
+    from flask_login import current_user
+    diferencia = data.get("diferencia", 0) if isinstance(data, dict) else float(data)
+    motivo = data.get("motivo", "") if isinstance(data, dict) else ""
+    admin_nombre = current_user.nombre if current_user.is_authenticated else "Admin"
+
+    resultado = crear_ajuste_pos(diferencia, motivo=motivo, admin_nombre=admin_nombre)
+    signo = "mas" if diferencia > 0 else "menos"
+    resp = (f"Ajuste de POS registrado: el POS muestra Q{abs(diferencia)} de {signo} que Nimbo "
+            f"(Nimbo: Q{resultado['monto_nimbo']}, POS: Q{resultado['monto_pos']}).")
+    if motivo:
+        resp += f" Motivo: {motivo}."
+    return resp
+
+register("reporte.diferencia_pos", diferencia_pos_tool)

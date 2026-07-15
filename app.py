@@ -108,6 +108,12 @@ init_venta_cobrador_ext()
 from database.aronium import init_reembolsos
 init_reembolsos()
 
+from database.aronium import init_venta_metodo_pago_ext
+init_venta_metodo_pago_ext()
+
+from database.aronium import init_ajuste_pos
+init_ajuste_pos()
+
 # Instalaciones que ya tenian usuarios antes de que existiera el wizard de
 # onboarding (o que lo completaron con el /setup viejo de un solo paso) se
 # marcan como completas automaticamente, para no forzar el wizard nuevo.
@@ -1764,6 +1770,13 @@ def caja_movimientos():
     if error:
         return error
     return jsonify(get_movimientos_caja(turno["Id"]))
+
+
+@app.route("/api/caja/resumen-dia")
+@login_required
+def caja_resumen_dia():
+    from database.aronium import get_resumen_caja_dia
+    return jsonify(get_resumen_caja_dia())
 
 
 @app.route("/api/caja/imprimir-ticket", methods=["POST"])

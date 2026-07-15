@@ -459,11 +459,15 @@ def _siguiente_paso_venta_credito(context: dict, prefijo: str = "", aviso: str =
 
 
 def _registrar_venta_chat(cliente_id, descripcion, total, producto_id=None, producto_nombre="",
-                           cliente_nombre="Consumidor Final", cliente_tel=""):
+                           cliente_nombre="Consumidor Final", cliente_tel="",
+                           metodo_pago="", monto_tarjeta=0):
     """Inserta la Venta del flujo de venta simple del chat (un solo producto),
     actualiza la ultima compra del cliente y genera la garantia del producto
     (ver database.aronium.generar_garantia_venta). Usado tanto por el pago de un
-    solo metodo como por el pago mixto (efectivo + tarjeta)."""
+    solo metodo como por el pago mixto (efectivo + tarjeta) y la venta a credito.
+    monto_tarjeta es el monto REAL cobrado con tarjeta (todo el total si
+    metodo_pago='tarjeta', la porcion de tarjeta si fue mixto, 0 en cualquier
+    otro caso) - se usa para el cuadre de POS, ver get_cuadre_pos_dia."""
     from database.aronium import nimbo_connect, generar_garantia_venta
     from datetime import datetime
     conn = nimbo_connect()
@@ -473,8 +477,8 @@ def _registrar_venta_chat(cliente_id, descripcion, total, producto_id=None, prod
     trimestre = (mes - 1) // 3 + 1
     anio = now.year
     cur.execute(
-        "INSERT INTO Venta (ClienteId, Descripcion, Total, Mes, Trimestre, Anio) VALUES (?,?,?,?,?,?)",
-        (cliente_id, descripcion, total, mes, trimestre, anio)
+        "INSERT INTO Venta (ClienteId, Descripcion, Total, Mes, Trimestre, Anio, MetodoPago, MontoTarjeta) VALUES (?,?,?,?,?,?,?,?)",
+        (cliente_id, descripcion, total, mes, trimestre, anio, metodo_pago, monto_tarjeta)
     )
     venta_id = cur.lastrowid
     if cliente_id:
@@ -1114,7 +1118,8 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         venta_id, garantia = _registrar_venta_chat(
             cliente_id, descripcion, total_final,
             producto_id=ctx.get("producto_id"), producto_nombre=ctx.get("producto", ""),
-            cliente_nombre=cliente_nombre, cliente_tel=cliente_tel
+            cliente_nombre=cliente_nombre, cliente_tel=cliente_tel,
+            metodo_pago=pago, monto_tarjeta=total_final if pago == "tarjeta" else 0
         )
 
         puntos_info = None
@@ -1203,7 +1208,8 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         venta_id, garantia = _registrar_venta_chat(
             cliente_id, descripcion, total_final,
             producto_id=ctx.get("producto_id"), producto_nombre=ctx.get("producto", ""),
-            cliente_nombre=cliente_nombre, cliente_tel=cliente_tel
+            cliente_nombre=cliente_nombre, cliente_tel=cliente_tel,
+            metodo_pago="mixto", monto_tarjeta=monto_tarjeta
         )
 
         puntos_info = None
@@ -1296,7 +1302,8 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         venta_id, garantia = _registrar_venta_chat(
             cliente_id, descripcion, total_final,
             producto_id=ctx.get("producto_id"), producto_nombre=ctx.get("producto", ""),
-            cliente_nombre=cliente_nombre, cliente_tel=cliente_tel
+            cliente_nombre=cliente_nombre, cliente_tel=cliente_tel,
+            metodo_pago="credito"
         )
 
         crear_cuenta_cobrar(

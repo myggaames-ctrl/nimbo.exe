@@ -67,6 +67,8 @@ VOCABULARIO = [
     # (mismo criterio que el resto de features de este archivo).
     "reembolso", "reembolsos", "reembolsar", "reembolsado", "tienda",
     "devuelve", "devolver", "devolucion", "devoluciones", "total", "parcial",
+    # Cuadre de POS
+    "cuadre", "tarjetas", "diferencia", "diferencias", "ajuste", "neto",
 ]
 
 # Correcciones directas para errores muy comunes (garantiza el resultado sin depender

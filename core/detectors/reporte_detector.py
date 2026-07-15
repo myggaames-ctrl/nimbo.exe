@@ -97,8 +97,34 @@ class ReporteDetector:
         r"^como\s+voy\s+(?:con\s+)?(?:la\s+)?meta(?:\s+semanal)?$",
     ]
 
+    # Cuadre de POS: comparar lo que Nimbo registro en ventas con tarjeta contra el
+    # reporte fisico del POS del banco al cerrar el dia.
+    PATTERNS_CUADRE_POS = [
+        r"^cuadre\s+(?:de\s+)?pos$",
+        r"^cuadre\s+de\s+tarjetas?$",
+        r"^reporte\s+de\s+tarjetas?$",
+    ]
+
+    # Se revisa antes que PATTERNS_CUADRE_POS: exige un monto despues de "pos", asi
+    # que es mas especifico y no puede confundirse con "cuadre de pos" a secas.
+    PATTERNS_DIFERENCIA_POS = [
+        r"^diferencia\s+(?:de\s+|del\s+)?pos\s+(-)?q?\s*(\d+(?:\.\d+)?)(?:\s+(?:por|motivo|porque)\s+(.+))?$",
+    ]
+
     def detect(self, text: str):
         text = normalize(text)
+
+        for pattern in self.PATTERNS_DIFERENCIA_POS:
+            match = re.search(pattern, text)
+            if match:
+                signo = -1 if match.group(1) else 1
+                diferencia = round(signo * float(match.group(2)), 2)
+                motivo = match.group(3).strip() if match.group(3) else ""
+                return {"intent": "reporte.diferencia_pos", "diferencia": diferencia, "motivo": motivo}
+
+        for pattern in self.PATTERNS_CUADRE_POS:
+            if re.search(pattern, text):
+                return {"intent": "reporte.cuadre_pos"}
 
         for pattern in self.PATTERNS_META_DEFINIR:
             match = re.search(pattern, text)

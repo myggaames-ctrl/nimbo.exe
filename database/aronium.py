@@ -704,16 +704,20 @@ def get_todos_clientes(limit=100):
     conn.close()
     return rows
 
-def registrar_venta_cliente(cliente_id, descripcion, total):
+def registrar_venta_cliente(cliente_id, descripcion, total, metodo_pago=""):
     """Registra una Venta aplicando el ajuste de puntos de lealtad (credito de un
     canje pendiente + 5% extra de nivel Oro, ver calcular_ajuste_puntos) sobre
     `total` antes de insertar, y luego gana puntos nuevos sobre el monto ya
-    ajustado. Retorna (venta_id, total_final_cobrado, puntos_info)."""
+    ajustado. Retorna (venta_id, total_final_cobrado, puntos_info).
+    metodo_pago queda vacio para cotizacion.aceptar y combo.vender (esos flujos no
+    preguntan metodo de pago) - no cuentan para el cuadre de POS."""
     from datetime import datetime
 
     ajuste = calcular_ajuste_puntos(cliente_id, total)
     total_final = ajuste["total_final"]
     descripcion += formatear_nota_ajuste_puntos(ajuste)
+
+    monto_tarjeta = total_final if metodo_pago == "tarjeta" else 0
 
     now = datetime.now()
     mes = now.month
@@ -722,8 +726,8 @@ def registrar_venta_cliente(cliente_id, descripcion, total):
     conn = nimbo_connect()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO Venta (ClienteId, Descripcion, Total, Mes, Trimestre, Anio) VALUES (?,?,?,?,?,?)",
-        (cliente_id, descripcion, total_final, mes, trimestre, anio)
+        "INSERT INTO Venta (ClienteId, Descripcion, Total, Mes, Trimestre, Anio, MetodoPago, MontoTarjeta) VALUES (?,?,?,?,?,?,?,?)",
+        (cliente_id, descripcion, total_final, mes, trimestre, anio, metodo_pago, monto_tarjeta)
     )
     venta_id = cur.lastrowid
     cur.execute("UPDATE Cliente SET UltimaCompra=? WHERE Id=?", (now.isoformat(), cliente_id))
@@ -2415,8 +2419,10 @@ def cobrar_carrito(turno_id, metodo_pago, cliente_id=None, monto_efectivo=None, 
 
     conn = nimbo_connect()
     cur = conn.cursor()
-    cur.execute("INSERT INTO Venta (ClienteId, Descripcion, Total, Mes, Trimestre, Anio, CobradorNombre) VALUES (?,?,?,?,?,?,?)",
-        (cliente_id, descripcion, total, mes, trimestre, anio, cobrador_nombre))
+    cur.execute("""INSERT INTO Venta
+        (ClienteId, Descripcion, Total, Mes, Trimestre, Anio, CobradorNombre, MetodoPago, MontoTarjeta)
+        VALUES (?,?,?,?,?,?,?,?,?)""",
+        (cliente_id, descripcion, total, mes, trimestre, anio, cobrador_nombre, metodo_pago, monto_tarjeta))
     venta_id = cur.lastrowid
     if cliente_id:
         cur.execute("UPDATE Cliente SET UltimaCompra=? WHERE Id=?", (now.isoformat(), cliente_id))
@@ -2949,6 +2955,102 @@ def get_reporte_dia():
         "ventas_por_cobrador": ventas_por_cobrador,
         "total_reembolsos": reembolsos["total"],
         "cantidad_reembolsos": reembolsos["cantidad"]
+    }
+
+
+COMISION_POS_PORCENTAJE = 0.06
+
+
+def get_cuadre_pos_dia():
+    """Reporte de tarjetas del dia para cuadrar contra el reporte fisico del POS
+    del banco: total y cantidad de transacciones con tarjeta (MontoTarjeta > 0,
+    incluye tanto ventas pagadas 100% con tarjeta como la porcion de tarjeta de un
+    pago mixto - ver Venta.MontoTarjeta), el detalle hora/monto/cliente de cada
+    una, y la comision estimada (6%, mismo porcentaje que el resto del sistema -
+    ver get_reporte_dia)."""
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT v.Id, v.Fecha, v.MontoTarjeta, v.MetodoPago, v.ClienteId,
+               IFNULL(c.Nombre, 'Consumidor Final') as ClienteNombre
+        FROM Venta v
+        LEFT JOIN Cliente c ON v.ClienteId = c.Id
+        WHERE v.MontoTarjeta > 0 AND DATE(v.Fecha) = DATE('now')
+        ORDER BY v.Fecha
+    """)
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+
+    detalle = [{
+        "venta_id": r["Id"],
+        "hora": (r["Fecha"] or "")[11:16],
+        "monto": round(float(r["MontoTarjeta"]), 2),
+        "cliente": r["ClienteNombre"],
+        "mixto": r["MetodoPago"] == "mixto"
+    } for r in rows]
+
+    total_tarjeta = round(sum(d["monto"] for d in detalle), 2)
+    comision = round(total_tarjeta * COMISION_POS_PORCENTAJE, 2)
+
+    return {
+        "total_tarjeta": total_tarjeta,
+        "num_transacciones": len(detalle),
+        "detalle": detalle,
+        "comision_estimada": comision,
+        "monto_neto": round(total_tarjeta - comision, 2)
+    }
+
+
+def crear_ajuste_pos(diferencia, motivo="", admin_nombre=""):
+    """Registra un ajuste cuando el reporte fisico del POS no cuadra con lo que
+    Nimbo registro hoy. `diferencia` es lo que el admin reporta (puede ser
+    negativo si el POS muestra MENOS que Nimbo) - MontoPOS se deriva sumandola al
+    total de tarjeta de Nimbo, no se le pide al admin escribir el total completo
+    del POS."""
+    monto_nimbo = get_cuadre_pos_dia()["total_tarjeta"]
+    monto_pos = round(monto_nimbo + diferencia, 2)
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""INSERT INTO AjustePOS (MontoNimbo, MontoPOS, Diferencia, Motivo, AdminNombre)
+        VALUES (?,?,?,?,?)""", (monto_nimbo, monto_pos, diferencia, motivo, admin_nombre))
+    conn.commit()
+    conn.close()
+    return {"monto_nimbo": monto_nimbo, "monto_pos": monto_pos, "diferencia": diferencia}
+
+
+def get_ajustes_pos_dia():
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM AjustePOS WHERE DATE(Fecha) = DATE('now') ORDER BY Id DESC")
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+def get_resumen_caja_dia():
+    """Efectivo/Tarjeta/Transferencia/Total del dia (todas las ventas de hoy sin
+    importar el canal - chat o Caja, ver Venta.MetodoPago). Las ventas mixto/
+    credito/sin metodo registrado no tienen su propio renglon (no se pidio en el
+    widget) pero SI cuentan en el Total."""
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT
+            IFNULL(SUM(CASE WHEN MetodoPago='efectivo' THEN Total ELSE 0 END), 0) as efectivo,
+            IFNULL(SUM(CASE WHEN MetodoPago='transferencia' THEN Total ELSE 0 END), 0) as transferencia,
+            IFNULL(SUM(MontoTarjeta), 0) as tarjeta,
+            SUM(CASE WHEN MontoTarjeta > 0 THEN 1 ELSE 0 END) as tarjeta_transacciones,
+            IFNULL(SUM(Total), 0) as total
+        FROM Venta WHERE DATE(Fecha) = DATE('now')
+    """)
+    row = cur.fetchone()
+    conn.close()
+    return {
+        "efectivo": round(float(row["efectivo"]), 2),
+        "tarjeta": round(float(row["tarjeta"]), 2),
+        "tarjeta_transacciones": row["tarjeta_transacciones"] or 0,
+        "transferencia": round(float(row["transferencia"]), 2),
+        "total": round(float(row["total"]), 2)
     }
 
 def get_reporte_periodo(mes=None, trimestre=None, anio=None, semestre=None):
@@ -3558,6 +3660,50 @@ def init_venta_cobrador_ext():
         cur.execute("ALTER TABLE Venta ADD COLUMN CobradorNombre TEXT")
     except sqlite3.OperationalError:
         pass
+    conn.commit()
+    conn.close()
+
+
+def init_venta_metodo_pago_ext():
+    """Migracion: Venta ya existia sin metodo de pago (antes solo se mostraba en el
+    texto de respuesta del chat, nunca se guardaba - ver CLAUDE.md seccion
+    Clientes, "el metodo de pago solo se detecta cuando fue un pago mixto").
+    Necesario para el cuadre de POS: MontoTarjeta es el monto REAL que se cobro
+    con tarjeta en esa venta (el total completo si MetodoPago='tarjeta', la
+    porcion de tarjeta si 'mixto', 0 en cualquier otro caso) - se guarda explicito
+    en cada INSERT (registrar_venta_cliente, cobrar_carrito, _registrar_venta_chat)
+    en vez de parsear texto libre, para que el cuadre no dependa de un best-effort."""
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    try:
+        cur.execute("ALTER TABLE Venta ADD COLUMN MetodoPago TEXT")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cur.execute("ALTER TABLE Venta ADD COLUMN MontoTarjeta NUMERIC DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+    conn.commit()
+    conn.close()
+
+
+def init_ajuste_pos():
+    """Ajustes manuales cuando el cuadre de POS no coincide con lo que Nimbo
+    registro (ver get_cuadre_pos_dia/crear_ajuste_pos) - un ajuste por dia como
+    maximo tiene sentido en la practica, pero no se fuerza a nivel de esquema."""
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS AjustePOS (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            Fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
+            MontoNimbo NUMERIC DEFAULT 0,
+            MontoPOS NUMERIC DEFAULT 0,
+            Diferencia NUMERIC DEFAULT 0,
+            Motivo TEXT,
+            AdminNombre TEXT
+        )
+    """)
     conn.commit()
     conn.close()
 

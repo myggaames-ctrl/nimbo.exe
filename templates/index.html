@@ -969,6 +969,29 @@
 
       <div class="text-muted mb-2" id="caja-fuerte-info" style="display:none">🔒 Caja fuerte acumulada: <b id="caja-fuerte-monto">Q0.00</b></div>
 
+      <div class="card">
+        <div class="card-title">Resumen del día</div>
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-label">Efectivo</div>
+            <div class="stat-value" id="resumen-dia-efectivo">Q0.00</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Tarjeta</div>
+            <div class="stat-value" id="resumen-dia-tarjeta">Q0.00</div>
+            <div class="stat-sub" id="resumen-dia-tarjeta-trans">0 transacciones</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Transferencia</div>
+            <div class="stat-value" id="resumen-dia-transferencia">Q0.00</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Total</div>
+            <div class="stat-value stat-accent" id="resumen-dia-total">Q0.00</div>
+          </div>
+        </div>
+      </div>
+
       <div class="card" id="caja-sin-turno">
         <div class="card-title">Caja cerrada</div>
         <p class="text-muted mb-4">No hay ningun turno de caja abierto. Abre un turno registrando el fondo inicial por denominacion.</p>
@@ -2822,7 +2845,20 @@ function cerrarModal(id) {
   document.getElementById(id).style.display = 'none';
 }
 
+async function loadResumenCajaDia() {
+  try {
+    const r = await fetch('/api/caja/resumen-dia');
+    const d = await r.json();
+    document.getElementById('resumen-dia-efectivo').textContent = `Q${Number(d.efectivo).toFixed(2)}`;
+    document.getElementById('resumen-dia-tarjeta').textContent = `Q${Number(d.tarjeta).toFixed(2)}`;
+    document.getElementById('resumen-dia-tarjeta-trans').textContent = `${d.tarjeta_transacciones} transaccion(es)`;
+    document.getElementById('resumen-dia-transferencia').textContent = `Q${Number(d.transferencia).toFixed(2)}`;
+    document.getElementById('resumen-dia-total').textContent = `Q${Number(d.total).toFixed(2)}`;
+  } catch(e) {}
+}
+
 async function loadCajaEstado() {
+  loadResumenCajaDia();
   try {
     const r = await fetch('/api/caja/estado');
     const d = await r.json();
