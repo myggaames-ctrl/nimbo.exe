@@ -1015,14 +1015,13 @@
 
     <!-- ══ MODAL APERTURA DE CAJA ══ -->
     <div class="modal-overlay" id="modal-apertura-caja" style="display:none">
-      <div class="modal-box" style="max-width:520px">
-        <div class="card-title">Abrir turno — fondo inicial</div>
-        <p class="text-muted mb-2" id="apertura-sugerido-nota" style="display:none">Prellenado con lo que quedó contado al cerrar el turno anterior. Ajusta solo si el efectivo físico cambió.</p>
-        <p class="text-muted mb-2" id="apertura-sin-sugerido-nota" style="display:none">Cuenta cuantos billetes/monedas de cada denominacion hay en la caja.</p>
-        <div class="denom-grid" id="denom-apertura"></div>
-        <div class="caja-total" id="denom-apertura-total">Q0.00</div>
+      <div class="modal-box" style="max-width:420px">
+        <div class="card-title">Abrir turno</div>
+        <p class="mb-2">El fondo de hoy es <b id="apertura-fondo-monto" style="color:var(--text);font-size:20px">Q0.00</b></p>
+        <p class="text-muted" id="apertura-fondo-nota" style="font-size:12.5px"></p>
+        <div id="apertura-error" class="error-box" style="display:none"></div>
         <div class="flex gap-2" style="margin-top:8px">
-          <button class="btn btn-primary" onclick="confirmarAperturaCaja()">Abrir turno</button>
+          <button class="btn btn-primary" onclick="confirmarAperturaCaja()">Confirmar apertura</button>
           <button class="btn btn-ghost" onclick="cerrarModal('modal-apertura-caja')">Cancelar</button>
         </div>
       </div>
@@ -2947,32 +2946,33 @@ async function agregarProductoPorId(productoId) {
 async function abrirModalAperturaCaja() {
   const r = await fetch('/api/caja/estado');
   const d = await r.json();
-  CAJA_DENOMS = d.denominaciones || CAJA_DENOMS;
-  const notaSugerido = document.getElementById('apertura-sugerido-nota');
-  const notaSinSugerido = document.getElementById('apertura-sin-sugerido-nota');
-  if (d.fondo_sugerido) {
-    renderDenomGrid('denom-apertura', CAJA_DENOMS, d.fondo_sugerido);
-    notaSugerido.style.display = 'block';
-    notaSinSugerido.style.display = 'none';
-  } else {
-    renderDenomGrid('denom-apertura', CAJA_DENOMS);
-    notaSugerido.style.display = 'none';
-    notaSinSugerido.style.display = 'block';
-  }
+  const monto = Number(d.fondo_sugerido_total || 0);
+  document.getElementById('apertura-fondo-monto').textContent = `Q${monto.toFixed(2)}`;
+  document.getElementById('apertura-fondo-nota').textContent = d.fondo_sugerido_total != null
+    ? 'Es lo que quedó contado en caja al cerrar el turno anterior.'
+    : 'Todavía no hay un fondo configurado. Pide a un administrador que lo defina en Configuración del negocio.';
+  document.getElementById('apertura-error').style.display = 'none';
   document.getElementById('modal-apertura-caja').style.display = 'flex';
 }
 
 async function confirmarAperturaCaja() {
-  // El fondo inicial queda fijo en CajaTurno desde este POST: no hay ningun endpoint
-  // que permita editarlo despues. Si se abrio con datos incorrectos, un admin debe
-  // anular el turno (anularTurnoCaja) y abrir uno nuevo.
-  const fondo_inicial = leerDenomGrid('denom-apertura');
+  // El fondo inicial lo calcula el servidor (Configuracion.caja_fondo_sugerido) - el
+  // empleado solo confirma, no puede escribir un monto distinto. Queda fijo en
+  // CajaTurno desde este POST: no hay ningun endpoint que permita editarlo despues.
+  // Si se abrio con un fondo incorrecto, un admin debe anular el turno
+  // (anularTurnoCaja) y abrir uno nuevo, o corregir el fondo en Configuración del
+  // negocio antes de la siguiente apertura.
   const r = await fetch('/api/caja/abrir', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({fondo_inicial})
+    body: JSON.stringify({})
   });
   const d = await r.json();
-  if (d.error) { alert(d.error); return; }
+  if (d.error) {
+    const errorBox = document.getElementById('apertura-error');
+    errorBox.textContent = d.error;
+    errorBox.style.display = 'block';
+    return;
+  }
   cerrarModal('modal-apertura-caja');
   loadCajaEstado();
 }

@@ -1545,19 +1545,18 @@ def caja_estado():
 @app.route("/api/caja/abrir", methods=["POST"])
 @login_required
 def caja_abrir():
-    from database.aronium import get_turno_abierto, abrir_turno, abrir_turno_simple
+    """El fondo inicial se toma automaticamente de Configuracion.caja_fondo_sugerido
+    (lo que quedo contado al cerrar el turno anterior, o el fondo configurado por un
+    admin si todavia no se ha cerrado ningun turno - ver get_fondo_sugerido). El
+    empleado solo confirma la apertura, no puede enviar un monto distinto: cambiar el
+    fondo es exclusivo de Configuracion del negocio (solo admin)."""
+    from database.aronium import get_turno_abierto, abrir_turno_simple, get_fondo_sugerido
     if get_turno_abierto():
         return jsonify({"error": "Ya hay un turno de caja abierto."}), 400
-    data = request.json or {}
-    if data.get("fondo_total") is not None:
-        try:
-            fondo_total = float(data.get("fondo_total"))
-        except (TypeError, ValueError):
-            return jsonify({"error": "Monto invalido"}), 400
-        turno_id, total = abrir_turno_simple(int(current_user.id), current_user.nombre, fondo_total)
-    else:
-        fondo_inicial = data.get("fondo_inicial", {})
-        turno_id, total = abrir_turno(int(current_user.id), current_user.nombre, fondo_inicial)
+    fondo_total = get_fondo_sugerido()
+    if fondo_total is None:
+        fondo_total = 0
+    turno_id, total = abrir_turno_simple(int(current_user.id), current_user.nombre, fondo_total)
     return jsonify({"ok": True, "turno_id": turno_id, "efectivo_esperado": total})
 
 
