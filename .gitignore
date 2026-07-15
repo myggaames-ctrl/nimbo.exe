@@ -1,1 +1,7 @@
 .env
+*.db
+__pycache__/
+*.pyc
+static/videos/
+static/fotos/
+static/fotos_servicio/
