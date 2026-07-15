@@ -259,6 +259,56 @@ def _intentar_detectar(message: str, role: str, context: dict, contexto_historia
             context = {"step": "combo_crear_waiting_producto", "combo_nombre": nombre_combo, "combo_items": []}
             return f"Creando combo '{nombre_combo}'. Que producto quieres agregar? (o 'listo' para terminar)", context
 
+        if str(result).startswith("REEMBOLSO_INICIO:"):
+            venta_id = int(str(result).replace("REEMBOLSO_INICIO:", "").strip())
+            from database.aronium import get_venta_por_id, get_cliente_por_id, get_total_reembolsado_venta
+            venta = get_venta_por_id(venta_id)
+            if not venta:
+                return f"No encontre la venta #{venta_id}.", context
+            cliente_nombre = "Consumidor Final"
+            if venta["ClienteId"]:
+                cliente = get_cliente_por_id(venta["ClienteId"])
+                if cliente:
+                    cliente_nombre = cliente["Nombre"]
+            ya_reembolsado = get_total_reembolsado_venta(venta_id)
+            disponible = round(venta["Total"] - ya_reembolsado, 2)
+            if disponible <= 0:
+                return (f"La venta #{venta_id} ya fue reembolsada por completo "
+                        f"(Q{ya_reembolsado} de Q{venta['Total']})."), context
+            aviso_previo = f" (ya se habian reembolsado Q{ya_reembolsado} antes)" if ya_reembolsado else ""
+            context = {"step": "reembolso_waiting_tipo", "reembolso_venta_id": venta_id, "reembolso_disponible": disponible}
+            return (f"Venta #{venta_id}: {venta['Descripcion']}\n"
+                    f"Total: Q{venta['Total']}{aviso_previo}. Cliente: {cliente_nombre}. "
+                    f"Metodo de pago: {_metodo_pago_de(venta['Descripcion'])}.\n"
+                    f"Quieres un reembolso total o parcial?"), context
+
+        if str(result).startswith("CAMBIO_PRODUCTO_INICIO:"):
+            venta_id = int(str(result).replace("CAMBIO_PRODUCTO_INICIO:", "").strip())
+            from database.aronium import get_venta_por_id, get_items_venta
+            venta = get_venta_por_id(venta_id)
+            if not venta:
+                return f"No encontre la venta #{venta_id}.", context
+            items = get_items_venta(venta_id)
+            if not items:
+                return (f"No pude identificar los productos de la venta #{venta_id} "
+                        f"(descripcion: '{venta['Descripcion']}'). No se puede hacer el cambio."), context
+            if len(items) > 1:
+                context = {
+                    "step": "cambio_waiting_seleccion_viejo",
+                    "cambio_venta_id": venta_id,
+                    "cambio_opciones_viejo": [{"nombre": nombre, "cantidad": cantidad} for cantidad, nombre in items]
+                }
+                lista = "\n".join(f"{i+1}. {cantidad}x {nombre}" for i, (cantidad, nombre) in enumerate(items))
+                return f"Venta #{venta_id}. Que producto de esta venta estas cambiando?\n{lista}\n\nEscribe el numero:", context
+            cantidad, nombre = items[0]
+            context = {
+                "step": "cambio_waiting_producto_nuevo",
+                "cambio_venta_id": venta_id,
+                "cambio_producto_viejo_nombre": nombre,
+                "cambio_producto_viejo_cantidad": cantidad
+            }
+            return f"Venta #{venta_id}. Cambiando {cantidad}x {nombre}. Que producto nuevo se lleva?", context
+
         if str(result) == "CAJA_ABRIR_INICIO":
             from database.aronium import DENOMINACIONES, get_ultimo_cierre_denominaciones, get_fondo_sugerido
             sugerido = get_ultimo_cierre_denominaciones()
@@ -329,6 +379,32 @@ def _intentar_detectar(message: str, role: str, context: dict, contexto_historia
             return result, context
 
     return None
+
+
+def _metodo_pago_de(descripcion):
+    """Best-effort: solo el pago mixto deja rastro reconocible en la Descripcion de
+    una Venta (misma logica duplicada en tools/cliente_tool.py y
+    tools/reembolso_tool.py - ver CLAUDE.md seccion Clientes). Para efectivo/
+    tarjeta/transferencia/credito simple no hay metodo de pago guardado en la Venta."""
+    if descripcion and "Efectivo: Q" in descripcion and "Tarjeta: Q" in descripcion:
+        return "mixto (efectivo + tarjeta)"
+    return "no registrado"
+
+
+def _siguiente_paso_venta_credito(context: dict, prefijo: str = "", aviso: str = ""):
+    """Despues de resolver el canje de puntos de lealtad (si aplicaba), revisa si el
+    cliente tiene credito de tienda disponible (de un reembolso anterior, ver
+    tools/reembolso_tool.py) antes de pedir el metodo de pago - mismo criterio
+    interactivo que el canje de puntos, implementado solo en la venta simple del
+    chat (no en Caja/Cotizaciones, mismo alcance que puntos de lealtad)."""
+    from database.aronium import get_credito_cliente
+    cliente_id = context.get("venta_cliente_id")
+    credito = get_credito_cliente(cliente_id) if cliente_id else 0
+    if credito > 0:
+        context["step"] = "venta_waiting_usar_credito"
+        return f"{prefijo}Tiene Q{credito} de credito en tienda disponible. Quiere usarlo en esta compra? (si/no){aviso}", context
+    context["step"] = "venta_waiting_pago"
+    return f"{prefijo}Metodo de pago? (efectivo, tarjeta, transferencia, mixto, credito):{aviso}", context
 
 
 def _registrar_venta_chat(cliente_id, descripcion, total, producto_id=None, producto_nombre="",
@@ -416,6 +492,60 @@ def _finalizar_cotizacion(context: dict):
         link = f"https://wa.me/{tel}?text={urllib.parse.quote(mensaje_wa)}"
         resp += f'<br><a href="{link}" target="_blank" style="color:var(--accent)">📱 Enviar por WhatsApp</a>'
 
+    return resp, {}
+
+
+def _procesar_cambio_confirmar(context: dict, producto_nuevo_id, producto_nuevo_nombre, producto_nuevo_precio):
+    """Calcula la diferencia de precio (con el precio ACTUAL de inventario de ambos
+    productos - la venta original no guarda precio por item, ver CLAUDE.md seccion
+    Caja) y decide el siguiente paso: confirmar directo si no hay diferencia, o
+    preguntar el metodo si hay que cobrar/devolver algo."""
+    from database.aronium import get_products
+    nombre_viejo = context.get("cambio_producto_viejo_nombre", "")
+    cantidad_viejo = context.get("cambio_producto_viejo_cantidad", 1)
+    productos_viejo = get_products(search=nombre_viejo)
+    precio_viejo_unit = productos_viejo[0]["Price"] if productos_viejo else 0
+    precio_viejo = round(precio_viejo_unit * cantidad_viejo, 2)
+    diferencia = round(producto_nuevo_precio - precio_viejo, 2)
+
+    context["cambio_producto_nuevo_id"] = producto_nuevo_id
+    context["cambio_producto_nuevo_nombre"] = producto_nuevo_nombre
+    context["cambio_diferencia"] = diferencia
+    resumen = f"Cambio: {cantidad_viejo}x {nombre_viejo} (Q{precio_viejo}) por {producto_nuevo_nombre} (Q{producto_nuevo_precio})."
+
+    if diferencia == 0:
+        context["step"] = "cambio_waiting_confirmar"
+        return f"{resumen} Sin diferencia que cobrar ni devolver. Confirmas? (si/no)", context
+
+    context["step"] = "cambio_waiting_metodo_diferencia"
+    if diferencia > 0:
+        return f"{resumen} El cliente debe pagar una diferencia de Q{diferencia}. Como paga la diferencia? (efectivo/tarjeta/credito tienda)", context
+    return f"{resumen} Se le debe devolver una diferencia de Q{-diferencia}. Como se la devuelves? (efectivo/tarjeta/credito tienda)", context
+
+
+def _finalizar_cambio(context: dict, metodo: str):
+    from database.aronium import procesar_cambio_producto, get_turno_abierto
+    venta_id = context.get("cambio_venta_id")
+    nombre_viejo = context.get("cambio_producto_viejo_nombre", "")
+    cantidad_viejo = context.get("cambio_producto_viejo_cantidad", 1)
+    producto_nuevo_id = context.get("cambio_producto_nuevo_id")
+
+    turno = get_turno_abierto()
+    turno_id = turno["Id"] if turno else None
+
+    resultado = procesar_cambio_producto(venta_id, nombre_viejo, cantidad_viejo, producto_nuevo_id, metodo, turno_id=turno_id)
+    if resultado.get("error"):
+        return resultado["error"], {}
+
+    resp = f"Cambio {resultado['numero']} procesado: {resultado['producto_viejo']} por {resultado['producto_nuevo']}."
+    if resultado["diferencia_cobrada"]:
+        resp += f" Diferencia cobrada: Q{resultado['diferencia_cobrada']} ({metodo})."
+    if resultado["diferencia_devuelta"]:
+        resp += f" Diferencia devuelta: Q{resultado['diferencia_devuelta']} ({metodo})."
+    if metodo == "tarjeta" and (resultado["diferencia_cobrada"] or resultado["diferencia_devuelta"]):
+        resp += " Recuerda procesar la diferencia con el POS fisico."
+    if not turno_id and metodo == "efectivo" and (resultado["diferencia_cobrada"] or resultado["diferencia_devuelta"]):
+        resp += " Aviso: no hay ningun turno de caja abierto, la diferencia en efectivo no se registro contra ninguna caja."
     return resp, {}
 
 
@@ -804,8 +934,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
                 valor = puntos_a_quetzales(saldo)
                 return (f"Cliente encontrado: {clientes[0]['Nombre']}. Tiene {saldo} puntos disponibles "
                         f"(Q{valor} en descuentos). Quiere canjearlos en esta compra? (si/no)"), context
-            context["step"] = "venta_waiting_pago"
-            return f"Cliente encontrado: {clientes[0]['Nombre']}. Metodo de pago? (efectivo, tarjeta, transferencia, mixto, credito):", context
+            return _siguiente_paso_venta_credito(context, prefijo=f"Cliente encontrado: {clientes[0]['Nombre']}. ")
         context["venta_cliente_nombre"] = message.strip().title()
         context["step"] = "venta_waiting_telefono"
         return f"Cliente nuevo. Telefono (o 'sin telefono'):", context
@@ -824,7 +953,13 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
                 aviso = f" No se pudo canjear: {resultado['error']}"
             else:
                 aviso = f" Canjeaste {puntos_a_usar} puntos por Q{resultado['credito']} de descuento en esta compra."
+        return _siguiente_paso_venta_credito(context, aviso=aviso)
+
+    if step == "venta_waiting_usar_credito":
+        resp_txt = message.strip().lower()
+        context["venta_usar_credito_tienda"] = resp_txt in ["si", "si.", "sí", "s", "ok", "dale", "yes", "de una"]
         context["step"] = "venta_waiting_pago"
+        aviso = " Se aplicara tu credito de tienda en el pago." if context["venta_usar_credito_tienda"] else ""
         return f"Metodo de pago? (efectivo, tarjeta, transferencia, mixto, credito):{aviso}", context
 
     if step == "venta_waiting_telefono":
@@ -880,6 +1015,12 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         ajuste_puntos = calcular_ajuste_puntos(cliente_id, total_final)
         total_final = ajuste_puntos["total_final"]
 
+        credito_tienda_usado = 0
+        if cliente_id and context.get("venta_usar_credito_tienda"):
+            from database.aronium import get_credito_cliente
+            credito_tienda_usado = min(get_credito_cliente(cliente_id), total_final)
+            total_final = round(total_final - credito_tienda_usado, 2)
+
         if pago in _PAGO_MIXTO:
             context = {
                 "step": "venta_waiting_pago_mixto_efectivo",
@@ -889,7 +1030,8 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
                 "venta_cliente_tel": cliente_tel,
                 "venta_total_final": total_final,
                 "venta_descuento": descuento,
-                "venta_ajuste_puntos": ajuste_puntos
+                "venta_ajuste_puntos": ajuste_puntos,
+                "venta_credito_tienda_usado": credito_tienda_usado
             }
             return "Cuanto en efectivo?", context
 
@@ -906,11 +1048,12 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
                 "venta_cliente_tel": cliente_tel,
                 "venta_total_final": total_final,
                 "venta_descuento": descuento,
-                "venta_ajuste_puntos": ajuste_puntos
+                "venta_ajuste_puntos": ajuste_puntos,
+                "venta_credito_tienda_usado": credito_tienda_usado
             }
             return "Cuanto de enganche paga ahora? (puede ser 0)", context
 
-        from database.aronium import formatear_nota_ajuste_puntos, consumir_credito_puntos_pendiente, ganar_puntos
+        from database.aronium import formatear_nota_ajuste_puntos, consumir_credito_puntos_pendiente, ganar_puntos, usar_credito_cliente
 
         descripcion = f"{ctx['cantidad']}x {ctx['producto']} a Q{ctx['precio_unit']}"
         if descuento:
@@ -927,6 +1070,8 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         if cliente_id:
             consumir_credito_puntos_pendiente(cliente_id, venta_id)
             puntos_info = ganar_puntos(cliente_id, cliente_nombre, total_final, venta_id)
+            if credito_tienda_usado:
+                usar_credito_cliente(cliente_id, credito_tienda_usado)
 
         resumen = f"Venta #{venta_id} registrada. {ctx['cantidad']}x {ctx['producto']} = Q{ctx['total']}."
         if descuento:
@@ -934,6 +1079,8 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         if ajuste_puntos["credito_puntos"] or ajuste_puntos["descuento_oro"]:
             resumen += (f" Ajuste por puntos: -Q{ajuste_puntos['credito_puntos']}"
                         f"{f' + 5% Oro -Q' + str(ajuste_puntos['descuento_oro']) if ajuste_puntos['descuento_oro'] else ''}.")
+        if credito_tienda_usado:
+            resumen += f" Credito de tienda usado: -Q{credito_tienda_usado}."
         resumen += f" Total: Q{total_final}. Pago: {pago}. Cliente: {cliente_nombre}."
         if garantia:
             resumen += f" Garantia {garantia['numero']} hasta {garantia['vencimiento_propia']}."
@@ -985,6 +1132,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         descuento = context.get("venta_descuento")
         ajuste_puntos = context.get("venta_ajuste_puntos", {"credito_puntos": 0, "descuento_oro": 0})
         monto_efectivo = context.get("venta_pago_efectivo", 0)
+        credito_tienda_usado = context.get("venta_credito_tienda_usado", 0)
 
         if round(monto_efectivo + monto_tarjeta, 2) != round(total_final, 2):
             return (f"Los montos no coinciden: Efectivo Q{monto_efectivo} + Tarjeta Q{monto_tarjeta} = "
@@ -993,7 +1141,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
 
         comision_pos = round(monto_tarjeta * 0.06, 2)
 
-        from database.aronium import formatear_nota_ajuste_puntos, consumir_credito_puntos_pendiente, ganar_puntos
+        from database.aronium import formatear_nota_ajuste_puntos, consumir_credito_puntos_pendiente, ganar_puntos, usar_credito_cliente
 
         descripcion = f"{ctx['cantidad']}x {ctx['producto']} a Q{ctx['precio_unit']}"
         if descuento:
@@ -1011,6 +1159,8 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         if cliente_id:
             consumir_credito_puntos_pendiente(cliente_id, venta_id)
             puntos_info = ganar_puntos(cliente_id, cliente_nombre, total_final, venta_id)
+            if credito_tienda_usado:
+                usar_credito_cliente(cliente_id, credito_tienda_usado)
 
         resumen = f"Venta #{venta_id} registrada. Efectivo Q{monto_efectivo} + Tarjeta Q{monto_tarjeta}."
         if descuento:
@@ -1018,6 +1168,8 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         if ajuste_puntos["credito_puntos"] or ajuste_puntos["descuento_oro"]:
             resumen += (f" Ajuste por puntos: -Q{ajuste_puntos['credito_puntos']}"
                         f"{f' + 5% Oro -Q' + str(ajuste_puntos['descuento_oro']) if ajuste_puntos['descuento_oro'] else ''}.")
+        if credito_tienda_usado:
+            resumen += f" Credito de tienda usado: -Q{credito_tienda_usado}."
         resumen += f" Comision POS: Q{comision_pos} (solo sobre tarjeta). Cliente: {cliente_nombre}."
         if garantia:
             resumen += f" Garantia {garantia['numero']} hasta {garantia['vencimiento_propia']}."
@@ -1056,7 +1208,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         from datetime import datetime, timedelta
         from database.aronium import (
             DIAS_VENCIMIENTO_CUENTA_DEFAULT, formatear_nota_ajuste_puntos,
-            consumir_credito_puntos_pendiente, ganar_puntos, crear_cuenta_cobrar
+            consumir_credito_puntos_pendiente, ganar_puntos, crear_cuenta_cobrar, usar_credito_cliente
         )
         txt = message.strip()
         fecha_vencimiento = None
@@ -1082,6 +1234,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         descuento = context.get("venta_descuento")
         ajuste_puntos = context.get("venta_ajuste_puntos", {"credito_puntos": 0, "descuento_oro": 0})
         enganche = context.get("venta_credito_enganche", 0)
+        credito_tienda_usado = context.get("venta_credito_tienda_usado", 0)
 
         descripcion = f"{ctx['cantidad']}x {ctx['producto']} a Q{ctx['precio_unit']}"
         if descuento:
@@ -1105,11 +1258,15 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         if cliente_id:
             consumir_credito_puntos_pendiente(cliente_id, venta_id)
             puntos_info = ganar_puntos(cliente_id, cliente_nombre, total_final, venta_id)
+            if credito_tienda_usado:
+                usar_credito_cliente(cliente_id, credito_tienda_usado)
 
         pendiente = round(total_final - enganche, 2)
         resumen = f"Venta #{venta_id} registrada a credito. {ctx['cantidad']}x {ctx['producto']} = Q{ctx['total']}."
         if descuento:
             resumen += f" Descuento {descuento['nombre']} ({descuento['tipo']}): -Q{descuento['monto_descuento']}."
+        if credito_tienda_usado:
+            resumen += f" Credito de tienda usado: -Q{credito_tienda_usado}."
         resumen += f" Total: Q{total_final}. Enganche: Q{enganche}. Pendiente: Q{pendiente}, vence {fecha_vencimiento}."
         resumen += f" Cuenta por cobrar creada para {cliente_nombre}."
         if garantia:
@@ -1438,6 +1595,124 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
             resp += f" (ahorro de Q{ahorro} vs Q{suma} por separado)"
         resp += f". Para venderlo: 'vender combo {nombre}'"
         return resp, context
+
+    # Flujo de reembolso (arrancado por REEMBOLSO_INICIO, ver tools/reembolso_tool.py
+    # y el marcador manejado en _intentar_detectar). Solo admin (categoria
+    # "reembolso" no esta en CATEGORIAS_EMPLEADO/CATEGORIAS_TECNICO de
+    # core/action_engine.py).
+    if step == "reembolso_waiting_tipo":
+        tipo_txt = message.strip().lower()
+        disponible = context.get("reembolso_disponible", 0)
+        if tipo_txt in ["total", "todo", "completo"]:
+            context["reembolso_tipo"] = "TOTAL"
+            context["reembolso_monto"] = disponible
+            context["step"] = "reembolso_waiting_metodo"
+            return f"Reembolso total: Q{disponible}. Como se devuelve? (efectivo/tarjeta/credito tienda)", context
+        if tipo_txt in ["parcial", "parte"]:
+            context["reembolso_tipo"] = "PARCIAL"
+            context["step"] = "reembolso_waiting_monto"
+            return f"Cuanto quieres devolver? (maximo Q{disponible})", context
+        return "Por favor escribe: total o parcial", context
+
+    if step == "reembolso_waiting_monto":
+        try:
+            monto = round(float(message.strip().replace(",", "").replace("Q", "").replace("q", "").strip()), 2)
+            if monto <= 0:
+                raise ValueError()
+        except (TypeError, ValueError):
+            return "Escribe solo el monto a devolver. Ejemplo: 50", context
+        disponible = context.get("reembolso_disponible", 0)
+        if monto > disponible:
+            return f"El monto (Q{monto}) no puede ser mayor a lo disponible para reembolsar (Q{disponible}). Cuanto quieres devolver?", context
+        context["reembolso_monto"] = monto
+        context["step"] = "reembolso_waiting_metodo"
+        return f"Reembolso parcial: Q{monto}. Como se devuelve? (efectivo/tarjeta/credito tienda)", context
+
+    if step == "reembolso_waiting_metodo":
+        metodo_map = {"efectivo": "efectivo", "tarjeta": "tarjeta", "credito tienda": "credito_tienda",
+                      "credito de tienda": "credito_tienda", "credito": "credito_tienda"}
+        metodo = metodo_map.get(message.strip().lower())
+        if not metodo:
+            return "Por favor escribe: efectivo, tarjeta o credito tienda", context
+
+        from database.aronium import procesar_reembolso, get_turno_abierto
+        venta_id = context.get("reembolso_venta_id")
+        tipo = context.get("reembolso_tipo", "TOTAL")
+        monto = context.get("reembolso_monto", 0)
+
+        turno = get_turno_abierto()
+        turno_id = turno["Id"] if turno else None
+
+        resultado = procesar_reembolso(venta_id, tipo, monto, metodo, turno_id=turno_id)
+        if resultado.get("error"):
+            return resultado["error"], {}
+
+        resp = f"Reembolso {resultado['numero']} procesado ({tipo.lower()}): Q{resultado['monto']} via {metodo}."
+        if resultado["revertidos"]:
+            resp += "\nStock repuesto: " + ", ".join(f"{it['cantidad']}x {it['nombre']}" for it in resultado["revertidos"])
+        if resultado["no_encontrados"]:
+            resp += "\nNo se pudo identificar en inventario (revisa el stock manualmente): " + ", ".join(resultado["no_encontrados"])
+        if metodo == "tarjeta":
+            resp += "\nEstado: PENDIENTE - procesa la devolucion con el POS fisico."
+        elif metodo == "credito_tienda":
+            resp += "\nEl monto se sumo como credito en tienda para el cliente."
+        elif turno_id:
+            resp += "\nSe descuenta de la caja del turno activo."
+        else:
+            resp += "\nAviso: no hay ningun turno de caja abierto, el efectivo no se registro contra ninguna caja."
+        return resp, {}
+
+    # Flujo de cambio de producto (arrancado por CAMBIO_PRODUCTO_INICIO)
+    if step == "cambio_waiting_seleccion_viejo":
+        try:
+            idx = int(message.strip()) - 1
+            opciones = context.get("cambio_opciones_viejo", [])
+            if 0 <= idx < len(opciones):
+                op = opciones[idx]
+                context["cambio_producto_viejo_nombre"] = op["nombre"]
+                context["cambio_producto_viejo_cantidad"] = op["cantidad"]
+                context["step"] = "cambio_waiting_producto_nuevo"
+                return f"Cambiando {op['cantidad']}x {op['nombre']}. Que producto nuevo se lleva?", context
+        except:
+            pass
+        return "Por favor escribe el numero del producto:", context
+
+    if step == "cambio_waiting_producto_nuevo":
+        from database.aronium import get_products
+        productos = get_products(search=message.strip())
+        if not productos:
+            return f"No encontre '{message.strip()}' en inventario. Intenta con otro nombre:", context
+        if len(productos) > 1:
+            context["cambio_opciones_nuevo"] = [{"id": p["Id"], "nombre": p["Name"], "precio": p["Price"]} for p in productos[:5]]
+            context["step"] = "cambio_waiting_seleccion_nuevo"
+            lista = "\n".join(f"{i+1}. {p['nombre']} - Q{p['precio']}" for i, p in enumerate(context["cambio_opciones_nuevo"]))
+            return f"Varios productos similares:\n{lista}\n\nEscribe el numero:", context
+        p = productos[0]
+        return _procesar_cambio_confirmar(context, p["Id"], p["Name"], p["Price"])
+
+    if step == "cambio_waiting_seleccion_nuevo":
+        try:
+            idx = int(message.strip()) - 1
+            opciones = context.get("cambio_opciones_nuevo", [])
+            if 0 <= idx < len(opciones):
+                op = opciones[idx]
+                return _procesar_cambio_confirmar(context, op["id"], op["nombre"], op["precio"])
+        except:
+            pass
+        return "Por favor escribe el numero del producto:", context
+
+    if step == "cambio_waiting_confirmar":
+        if message.strip().lower() not in ["si", "si.", "sí", "s", "ok", "dale", "yes", "de una"]:
+            return "Cambio cancelado.", {}
+        return _finalizar_cambio(context, "efectivo")
+
+    if step == "cambio_waiting_metodo_diferencia":
+        metodo_map = {"efectivo": "efectivo", "tarjeta": "tarjeta", "credito tienda": "credito_tienda",
+                      "credito de tienda": "credito_tienda", "credito": "credito_tienda"}
+        metodo = metodo_map.get(message.strip().lower())
+        if not metodo:
+            return "Por favor escribe: efectivo, tarjeta o credito tienda", context
+        return _finalizar_cambio(context, metodo)
 
     # Confirmacion del fondo sugerido (igual al cierre del turno anterior)
     if step == "caja_abrir_confirmar_sugerido":

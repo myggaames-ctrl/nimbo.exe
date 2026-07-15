@@ -22,6 +22,7 @@ from core.detectors.unidad_medida_detector import UnidadMedidaDetector
 from core.detectors.puntos_detector import PuntosDetector
 from core.detectors.codigo_barras_detector import CodigoBarrasDetector
 from core.detectors.tarifa_detector import TarifaDetector
+from core.detectors.reembolso_detector import ReembolsoDetector
 from core.command_normalizer import CommandNormalizer
 
 
@@ -34,6 +35,7 @@ class IntentDetector:
         self.detectors = [
 
             CajaDetector(),
+            ReembolsoDetector(),
             DescuentoDetector(),
             GarantiaDetector(),
             CuentaCobrarDetector(),

@@ -13,6 +13,8 @@ def reporte_dia_tool(data):
     resp += f"Ganancia bruta: Q{r['ganancia_bruta']}\n"
     resp += f"Comision POS (6%): Q{r['comision_pos']}\n"
     resp += f"Ganancia neta: Q{r['ganancia_neta']}"
+    if r["total_reembolsos"]:
+        resp += f"\nReembolsos: -Q{r['total_reembolsos']} ({r['cantidad_reembolsos']})"
     if r["ventas_por_cobrador"]:
         resp += "\n\nVentas por cobrador:\n"
         resp += "\n".join(

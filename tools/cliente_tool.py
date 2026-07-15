@@ -7,7 +7,7 @@ from core.tool_registry import register
 from database.aronium import (
     crear_cliente_completo, buscar_cliente_completo,
     get_todos_clientes, get_historial_cliente, get_clientes_inactivos, get_descuentos,
-    set_grupo_cliente, get_grupo_descuento, get_clientes_por_grupo
+    set_grupo_cliente, get_grupo_descuento, get_clientes_por_grupo, get_credito_cliente
 )
 
 ESTADOS_COTIZACION = {
@@ -95,6 +95,7 @@ def _estadisticas_cliente(cliente, historial):
         "ultima_visita": ventas[0]["Fecha"][:10] if ventas else (cliente.get("UltimaCompra") or "").strip()[:10] or None,
         "descuento": descuento,
         "grupo": cliente.get("GrupoCliente") or "detallista",
+        "credito_tienda": get_credito_cliente(cliente["Id"]),
     }
 
 
@@ -107,6 +108,8 @@ def _texto_estadisticas(stats):
     else:
         resp += "Frecuencia de compra: no hay suficientes compras para calcularla\n"
     resp += f"Ultima visita: {stats['ultima_visita'] or 'sin registro'}\n"
+    if stats["credito_tienda"]:
+        resp += f"Credito en tienda disponible: Q{stats['credito_tienda']}\n"
     if stats["descuento"]:
         d = stats["descuento"]
         valor = f"{d['Porcentaje']}%" if d.get("Porcentaje") else f"Q{d['MontoFijo']}"

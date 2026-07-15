@@ -2524,6 +2524,325 @@ def get_movimientos_caja(turno_id, limit=100):
     return rows
 
 
+# ── REEMBOLSOS ────────────────────────────────────────
+
+def init_reembolsos():
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS Reembolso (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            NumeroReembolso TEXT UNIQUE,
+            VentaId INTEGER,
+            ClienteId INTEGER,
+            ClienteNombre TEXT,
+            Tipo TEXT,
+            MontoOriginal NUMERIC DEFAULT 0,
+            MontoReembolso NUMERIC DEFAULT 0,
+            MetodoDevolucion TEXT,
+            ProductosDevueltos TEXT,
+            ProductoNuevo TEXT,
+            DiferenciaCobrada NUMERIC DEFAULT 0,
+            DiferenciaDevuelta NUMERIC DEFAULT 0,
+            Estado TEXT DEFAULT 'PROCESADO',
+            Motivo TEXT,
+            Fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
+            CajaId INTEGER,
+            FOREIGN KEY (VentaId) REFERENCES Venta(Id),
+            FOREIGN KEY (ClienteId) REFERENCES Cliente(Id)
+        )
+    """)
+    # Migracion: Cliente ya existia antes de agregar CreditoTienda (saldo a favor
+    # del cliente cuando un reembolso se devuelve como credito en tienda, en vez
+    # de efectivo/tarjeta - ver procesar_reembolso/procesar_cambio_producto).
+    try:
+        cur.execute("ALTER TABLE Cliente ADD COLUMN CreditoTienda NUMERIC DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+    conn.commit()
+    conn.close()
+
+
+def get_venta_por_id(venta_id):
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM Venta WHERE Id=?", (venta_id,))
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_items_venta(venta_id):
+    """Items (cantidad, nombre) parseados de la Descripcion de una venta (best-effort,
+    ver _extraer_items_venta) - publico para que el flujo de cambio de producto
+    (core/nimbo.py) no tenga que duplicar el parseo de texto libre."""
+    venta = get_venta_por_id(venta_id)
+    if not venta:
+        return []
+    return _extraer_items_venta(venta["Descripcion"])
+
+
+def get_credito_cliente(cliente_id):
+    if not cliente_id:
+        return 0.0
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT CreditoTienda FROM Cliente WHERE Id=?", (cliente_id,))
+    row = cur.fetchone()
+    conn.close()
+    return round(float(row["CreditoTienda"] or 0), 2) if row else 0.0
+
+
+def agregar_credito_cliente(cliente_id, monto):
+    """Suma credito de tienda al cliente (por un reembolso devuelto como credito).
+    No revierte nada si monto es 0 o el cliente no existe."""
+    if not cliente_id or not monto:
+        return
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("UPDATE Cliente SET CreditoTienda=IFNULL(CreditoTienda,0)+? WHERE Id=?", (monto, cliente_id))
+    conn.commit()
+    conn.close()
+
+
+def usar_credito_cliente(cliente_id, monto):
+    """Descuenta credito de tienda ya disponible (usado como parte del pago de una
+    venta, o para cobrar una diferencia en un cambio de producto). Retorna False
+    si no hay credito suficiente o el cliente no existe - el llamador no debe
+    pasar un monto mayor al disponible (ver get_credito_cliente)."""
+    if not cliente_id or not monto or monto <= 0:
+        return False
+    if get_credito_cliente(cliente_id) < monto:
+        return False
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("UPDATE Cliente SET CreditoTienda=CreditoTienda-? WHERE Id=?", (monto, cliente_id))
+    conn.commit()
+    conn.close()
+    return True
+
+
+def crear_reembolso(venta_id, cliente_id, cliente_nombre, tipo, monto_original, monto_reembolso,
+                     metodo_devolucion, productos_devueltos, producto_nuevo=None,
+                     diferencia_cobrada=0, diferencia_devuelta=0, motivo="", caja_id=None):
+    """Insert de bajo nivel del Reembolso ya procesado (stock revertido y efecto de
+    caja/credito ya aplicados por el llamador - ver procesar_reembolso/
+    procesar_cambio_producto). Estado queda PENDIENTE solo para tarjeta, porque esa
+    devolucion no la hace Nimbo: es solo una nota para procesar con el POS fisico;
+    efectivo y credito_tienda quedan PROCESADO de inmediato."""
+    import json
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) as total FROM Reembolso")
+    numero = f"REM-{cur.fetchone()['total'] + 1:04d}"
+    estado = "PENDIENTE" if metodo_devolucion == "tarjeta" else "PROCESADO"
+    cur.execute("""INSERT INTO Reembolso
+        (NumeroReembolso, VentaId, ClienteId, ClienteNombre, Tipo, MontoOriginal, MontoReembolso,
+         MetodoDevolucion, ProductosDevueltos, ProductoNuevo, DiferenciaCobrada, DiferenciaDevuelta,
+         Estado, Motivo, CajaId)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (numero, venta_id, cliente_id, cliente_nombre, tipo, monto_original, monto_reembolso,
+         metodo_devolucion, json.dumps(productos_devueltos),
+         json.dumps(producto_nuevo) if producto_nuevo else None,
+         diferencia_cobrada, diferencia_devuelta, estado, motivo, caja_id))
+    conn.commit()
+    conn.close()
+    return numero, estado
+
+
+def get_reembolso(numero):
+    import json
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM Reembolso WHERE NumeroReembolso=?", (numero,))
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return None
+    r = dict(row)
+    r["ProductosDevueltos"] = json.loads(r["ProductosDevueltos"]) if r["ProductosDevueltos"] else []
+    r["ProductoNuevo"] = json.loads(r["ProductoNuevo"]) if r["ProductoNuevo"] else None
+    return r
+
+
+def get_reembolsos_venta(venta_id):
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM Reembolso WHERE VentaId=? ORDER BY Id", (venta_id,))
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+def get_total_reembolsado_venta(venta_id):
+    return round(sum(r["MontoReembolso"] for r in get_reembolsos_venta(venta_id)), 2)
+
+
+def get_reembolsos_dia():
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""SELECT IFNULL(SUM(MontoReembolso),0) as total, COUNT(*) as cantidad
+        FROM Reembolso WHERE DATE(Fecha)=DATE('now')""")
+    row = cur.fetchone()
+    conn.close()
+    return {"total": round(float(row["total"]), 2), "cantidad": row["cantidad"]}
+
+
+def _revertir_stock_items(items):
+    """items: lista de (cantidad, nombre) extraidos de Venta.Descripcion (ver
+    _extraer_items_venta) - texto libre, no hay detalle estructurado de items por
+    venta (ver CLAUDE.md seccion Caja). Por cada nombre se busca el producto actual
+    en inventario (mismo fuzzy fallback que el resto del sistema, get_products) y se
+    le repone el stock. Si un nombre no matchea nada no se revierte ese item (se
+    reporta aparte, para que el admin lo ajuste manualmente si hace falta)."""
+    revertidos = []
+    no_encontrados = []
+    for cantidad, nombre in items:
+        productos = get_products(search=nombre)
+        if not productos:
+            no_encontrados.append(nombre)
+            continue
+        producto = productos[0]
+        add_stock(producto["Id"], cantidad, razon="Reembolso")
+        revertidos.append({"producto_id": producto["Id"], "nombre": producto["Name"], "cantidad": cantidad})
+    return revertidos, no_encontrados
+
+
+def _registrar_movimiento_caja_reembolso(turno_id, monto, descripcion, tipo="REEMBOLSO"):
+    """monto siempre positivo; tipo determina si sale de la caja del turno activo
+    (REEMBOLSO, resta de EfectivoEsperado) o entra (CAMBIO_COBRO, suma - diferencia
+    cobrada en efectivo en un cambio de producto)."""
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""INSERT INTO MovimientoCaja (TurnoId, Tipo, Monto, Descripcion)
+        VALUES (?, ?, ?, ?)""", (turno_id, tipo, monto, descripcion))
+    signo = 1 if tipo == "CAMBIO_COBRO" else -1
+    cur.execute("UPDATE CajaTurno SET EfectivoEsperado=EfectivoEsperado+? WHERE Id=?", (signo * monto, turno_id))
+    conn.commit()
+    conn.close()
+
+
+def procesar_reembolso(venta_id, tipo, monto_reembolso, metodo_devolucion, motivo="", turno_id=None):
+    """Procesa un reembolso TOTAL o PARCIAL de una venta ya registrada: registra el
+    Reembolso y aplica el efecto segun el metodo de devolucion - efectivo sale de la
+    caja del turno activo, credito_tienda se suma al saldo del cliente, tarjeta solo
+    queda como nota PENDIENTE para el POS fisico. El stock SOLO se revierte en un
+    reembolso TOTAL (el cliente devuelve todo, ver tipos de reembolso) - un PARCIAL
+    es un ajuste de dinero (ej. descuento por un defecto) sin que el producto vuelva
+    a la tienda, para no reponer el mismo stock dos veces si despues se hace un
+    TOTAL sobre el saldo restante de la misma venta."""
+    venta = get_venta_por_id(venta_id)
+    if not venta:
+        return {"error": f"No encontre la venta #{venta_id}."}
+
+    ya_reembolsado = get_total_reembolsado_venta(venta_id)
+    disponible = round(venta["Total"] - ya_reembolsado, 2)
+    if monto_reembolso <= 0:
+        return {"error": "El monto a reembolsar debe ser mayor a cero."}
+    if monto_reembolso > disponible:
+        return {"error": (f"La venta #{venta_id} ya tiene Q{ya_reembolsado} reembolsado. "
+                           f"Maximo disponible para reembolsar: Q{disponible}.")}
+    if metodo_devolucion == "credito_tienda" and not venta["ClienteId"]:
+        return {"error": "No se puede dar credito en tienda sin un cliente identificado en la venta."}
+
+    revertidos, no_encontrados = [], []
+    if tipo == "TOTAL":
+        items = _extraer_items_venta(venta["Descripcion"])
+        revertidos, no_encontrados = _revertir_stock_items(items)
+
+    cliente_nombre = "Consumidor Final"
+    if venta["ClienteId"]:
+        cliente = get_cliente_por_id(venta["ClienteId"])
+        if cliente:
+            cliente_nombre = cliente["Nombre"]
+
+    numero, estado = crear_reembolso(
+        venta_id, venta["ClienteId"], cliente_nombre, tipo,
+        venta["Total"], monto_reembolso, metodo_devolucion, revertidos,
+        motivo=motivo, caja_id=turno_id
+    )
+
+    if metodo_devolucion == "efectivo" and turno_id:
+        _registrar_movimiento_caja_reembolso(turno_id, monto_reembolso, f"Reembolso {numero} - venta #{venta_id}")
+    if metodo_devolucion == "credito_tienda":
+        agregar_credito_cliente(venta["ClienteId"], monto_reembolso)
+
+    return {
+        "numero": numero, "estado": estado, "monto": monto_reembolso,
+        "revertidos": revertidos, "no_encontrados": no_encontrados
+    }
+
+
+def procesar_cambio_producto(venta_id, producto_viejo_nombre, producto_viejo_cantidad,
+                              producto_nuevo_id, metodo_diferencia, motivo="", turno_id=None):
+    """Cambio de un producto de una venta por otro distinto: revierte el stock del
+    producto devuelto y descuenta el del producto nuevo. La diferencia se calcula
+    con el precio ACTUAL de inventario de ambos (la venta original no guarda precio
+    por item, ver CLAUDE.md seccion Caja) y se cobra o se devuelve segun corresponda."""
+    venta = get_venta_por_id(venta_id)
+    if not venta:
+        return {"error": f"No encontre la venta #{venta_id}."}
+
+    productos_viejo = get_products(search=producto_viejo_nombre)
+    if not productos_viejo:
+        return {"error": f"No encontre '{producto_viejo_nombre}' en inventario para calcular su precio."}
+    producto_viejo = productos_viejo[0]
+
+    producto_nuevo = get_product_by_id(producto_nuevo_id)
+    if not producto_nuevo:
+        return {"error": "No encontre el producto nuevo."}
+    if producto_nuevo["Stock"] < 1:
+        return {"error": f"No hay stock de {producto_nuevo['Name']} para el cambio."}
+
+    precio_viejo = round(producto_viejo["Price"] * producto_viejo_cantidad, 2)
+    precio_nuevo = round(producto_nuevo["Price"], 2)
+    diferencia = round(precio_nuevo - precio_viejo, 2)
+    diferencia_cobrada = diferencia if diferencia > 0 else 0
+    diferencia_devuelta = -diferencia if diferencia < 0 else 0
+
+    if diferencia_cobrada and metodo_diferencia == "credito_tienda" and not venta["ClienteId"]:
+        return {"error": "No se puede cobrar la diferencia con credito en tienda sin un cliente identificado."}
+    if diferencia_cobrada and metodo_diferencia == "credito_tienda" and get_credito_cliente(venta["ClienteId"]) < diferencia_cobrada:
+        return {"error": (f"El cliente solo tiene Q{get_credito_cliente(venta['ClienteId'])} de credito en tienda, "
+                           f"no alcanza para cobrar la diferencia de Q{diferencia_cobrada}.")}
+
+    add_stock(producto_viejo["Id"], producto_viejo_cantidad, razon=f"Cambio de producto - venta #{venta_id}")
+    remove_stock(producto_nuevo["Id"], 1, razon=f"Cambio de producto - venta #{venta_id}")
+
+    cliente_nombre = "Consumidor Final"
+    if venta["ClienteId"]:
+        cliente = get_cliente_por_id(venta["ClienteId"])
+        if cliente:
+            cliente_nombre = cliente["Nombre"]
+
+    numero, estado = crear_reembolso(
+        venta_id, venta["ClienteId"], cliente_nombre, "CAMBIO",
+        venta["Total"], 0, metodo_diferencia,
+        [{"producto_id": producto_viejo["Id"], "nombre": producto_viejo["Name"], "cantidad": producto_viejo_cantidad}],
+        producto_nuevo={"producto_id": producto_nuevo["Id"], "nombre": producto_nuevo["Name"],
+                         "cantidad": 1, "precio": precio_nuevo},
+        diferencia_cobrada=diferencia_cobrada, diferencia_devuelta=diferencia_devuelta,
+        motivo=motivo, caja_id=turno_id
+    )
+
+    if turno_id and metodo_diferencia == "efectivo":
+        if diferencia_cobrada:
+            _registrar_movimiento_caja_reembolso(turno_id, diferencia_cobrada, f"Cambio {numero} - diferencia cobrada", tipo="CAMBIO_COBRO")
+        elif diferencia_devuelta:
+            _registrar_movimiento_caja_reembolso(turno_id, diferencia_devuelta, f"Cambio {numero} - diferencia devuelta")
+    if metodo_diferencia == "credito_tienda":
+        if diferencia_cobrada:
+            usar_credito_cliente(venta["ClienteId"], diferencia_cobrada)
+        elif diferencia_devuelta:
+            agregar_credito_cliente(venta["ClienteId"], diferencia_devuelta)
+
+    return {
+        "numero": numero, "estado": estado,
+        "producto_viejo": producto_viejo["Name"], "producto_nuevo": producto_nuevo["Name"],
+        "diferencia_cobrada": diferencia_cobrada, "diferencia_devuelta": diferencia_devuelta
+    }
+
+
 # ── INFORMACION DE PRODUCTOS ──────────────────────────
 
 def set_descripcion_producto(producto_id, producto_nombre, descripcion, descripcion_corta=""):
@@ -2617,7 +2936,9 @@ def get_reporte_dia():
     comision_pos = total_vendido * 0.06
     ganancia_bruta = total_vendido - total_costo
     ganancia_neta = ganancia_bruta - comision_pos
-    
+
+    reembolsos = get_reembolsos_dia()
+
     return {
         "total_ventas": row["total_ventas"],
         "total_vendido": round(total_vendido, 2),
@@ -2625,7 +2946,9 @@ def get_reporte_dia():
         "comision_pos": round(comision_pos, 2),
         "ganancia_bruta": round(ganancia_bruta, 2),
         "ganancia_neta": round(ganancia_neta, 2),
-        "ventas_por_cobrador": ventas_por_cobrador
+        "ventas_por_cobrador": ventas_por_cobrador,
+        "total_reembolsos": reembolsos["total"],
+        "cantidad_reembolsos": reembolsos["cantidad"]
     }
 
 def get_reporte_periodo(mes=None, trimestre=None, anio=None, semestre=None):

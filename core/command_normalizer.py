@@ -61,6 +61,12 @@ VOCABULARIO = [
     "extractor", "extractores", "ventilador", "ventiladores", "congelador", "congeladores",
     "lavadora", "lavadoras", "secadora", "secadoras", "estufa", "estufas", "cocina",
     "abanico", "abanicos", "resistencia", "resistencias", "motor", "motores",
+    # Reembolsos: "tienda" y "devolver/devolucion" no estaban en el vocabulario;
+    # aunque hoy no colisionan con nada (verificado con difflib), se agregan de
+    # una vez para que una futura palabra parecida no las corrompa en silencio
+    # (mismo criterio que el resto de features de este archivo).
+    "reembolso", "reembolsos", "reembolsar", "reembolsado", "tienda",
+    "devuelve", "devolver", "devolucion", "devoluciones", "total", "parcial",
 ]
 
 # Correcciones directas para errores muy comunes (garantiza el resultado sin depender

@@ -105,6 +105,9 @@ init_metas_semanales()
 from database.aronium import init_venta_cobrador_ext
 init_venta_cobrador_ext()
 
+from database.aronium import init_reembolsos
+init_reembolsos()
+
 # Instalaciones que ya tenian usuarios antes de que existiera el wizard de
 # onboarding (o que lo completaron con el /setup viejo de un solo paso) se
 # marcan como completas automaticamente, para no forzar el wizard nuevo.
