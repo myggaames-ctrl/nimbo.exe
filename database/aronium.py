@@ -101,6 +101,26 @@ def get_product_by_code(code):
     conn.close()
     return dict(row) if row else None
 
+def get_product_by_code_ci(code):
+    """Igual que get_product_by_code() pero sin distinguir mayusculas/minusculas -
+    usada por el escaneo de codigo de barras en el chat (tools/inventory_tool.py
+    escanear_codigo_tool). El mensaje ya paso por CommandNormalizer (todo en
+    minusculas) antes de llegar al detector, y algunos codigos alfanumericos
+    legados (ej. 'LIC001') se guardaron con mayusculas."""
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT p.Id, p.Nombre AS Name, p.Codigo AS Code, p.Precio AS Price, p.Costo AS Cost,
+               p.Descripcion AS Description, IFNULL(s.Cantidad,0) AS Stock
+        FROM Producto p
+        LEFT JOIN Stock s ON p.Id = s.ProductoId
+        WHERE UPPER(p.Codigo) = UPPER(?)
+        LIMIT 1
+    """, (code,))
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
 def get_product_by_id(product_id):
     conn = nimbo_connect()
     cur = conn.cursor()

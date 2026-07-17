@@ -163,7 +163,18 @@
       "Bash(sqlite3 nimbo.db \"DELETE FROM Producto WHERE Id=12;\")",
       "Bash(sqlite3 nimbo.db \"DELETE FROM Stock WHERE ProductoId=13;\")",
       "Bash(sqlite3 nimbo.db \"DELETE FROM Kardex WHERE ProductId=13;\")",
-      "Bash(sqlite3 nimbo.db \"DELETE FROM Producto WHERE Id=13;\")"
+      "Bash(sqlite3 nimbo.db \"DELETE FROM Producto WHERE Id=13;\")",
+      "Bash(sort -u -t: -k1,1)",
+      "Bash(sqlite3 nimbo.db \"UPDATE Producto SET Codigo='LIC900' WHERE Id=\\(SELECT Id FROM Producto WHERE Nombre LIKE '%Empaque%' LIMIT 1\\);\")",
+      "Bash(sqlite3 nimbo.db \"SELECT Id,Nombre,Codigo,Precio FROM Producto WHERE Codigo='LIC900';\")",
+      "Bash(sqlite3 nimbo.db \"UPDATE Producto SET Codigo='' WHERE Codigo='LIC900';\")",
+      "Bash(sqlite3 nimbo.db \"SELECT Id,Nombre,Codigo FROM Producto WHERE Id=11;\")",
+      "Bash(sqlite3 nimbo.db \"SELECT * FROM Producto WHERE Id=14;\")",
+      "Bash(sqlite3 nimbo.db \"SELECT * FROM Stock WHERE ProductoId=14;\")",
+      "Bash(sqlite3 nimbo.db \"SELECT * FROM Kardex WHERE ProductId=14;\")",
+      "Bash(sqlite3 nimbo.db \"DELETE FROM Kardex WHERE ProductId=14;\")",
+      "Bash(sqlite3 nimbo.db \"DELETE FROM Stock WHERE ProductoId=14;\")",
+      "Bash(sqlite3 nimbo.db \"DELETE FROM Producto WHERE Id=14;\")"
     ]
   }
 }

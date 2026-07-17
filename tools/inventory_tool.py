@@ -124,16 +124,18 @@ def delete_product_tool(data):
 register("inventory.delete", delete_product_tool)
 
 
-def _crear_producto_directo(name, price, cost, quantity):
+def _crear_producto_directo(name, price, cost, quantity, codigo=""):
     """Insercion real del producto, ya con precio y costo resueltos (los dos
     obligatorios). Usada tanto por create_product_tool (cuando el mensaje ya
     trae todo) como por el step producto_waiting_costo en core/nimbo.py (cuando
-    el flujo conversacional termino de completar los campos que faltaban)."""
+    el flujo conversacional termino de completar los campos que faltaban - ese
+    flujo tambien se arranca desde un codigo escaneado sin registrar, ver
+    escanear_codigo_tool, en cuyo caso codigo llega prellenado)."""
     conn = nimbo_connect()
     cur = conn.cursor()
     cur.execute(
         "INSERT INTO Producto (Nombre, Codigo, Precio, Costo, Activo) VALUES (?, ?, ?, ?, 1)",
-        (name, "", price, cost)
+        (name, codigo or "", price, cost)
     )
     conn.commit()
     product_id = cur.lastrowid
@@ -161,6 +163,27 @@ def create_product_tool(data):
     return _crear_producto_directo(query.title(), price, cost, quantity)
 
 register("inventory.create", create_product_tool)
+
+
+def escanear_codigo_tool(codigo):
+    """Escaneo de codigo de barras directo en el chat (el lector USB/Bluetooth
+    escribe el codigo + Enter, ver BARCODE_PATTERNS en
+    core/detectors/inventory_detector.py). Recibe el codigo como string plano
+    (el detector devuelve solo {"intent","query"}, ver core/action_engine.py).
+    Si encuentra el producto arranca BARCODE_INICIO: (pregunta si vender, ver
+    step barcode_waiting_accion en core/nimbo.py); si no, arranca
+    CODIGO_NO_ENCONTRADO_INICIO: (pregunta si agregarlo como producto nuevo)."""
+    from database.aronium import get_product_by_code_ci, get_foto_producto
+    codigo = (codigo or "").strip()
+    producto = get_product_by_code_ci(codigo)
+    if not producto:
+        return f"CODIGO_NO_ENCONTRADO_INICIO:{codigo}"
+
+    foto = get_foto_producto(producto["Id"]) or ""
+    return (f"BARCODE_INICIO:{producto['Id']}|{producto['Name']}|{producto['Price']}|"
+            f"{producto['Stock']}|{producto['Code'] or ''}|{foto}")
+
+register("inventory.scan_barcode", escanear_codigo_tool)
 
 
 def importar_instrucciones_tool(data):

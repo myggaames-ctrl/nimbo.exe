@@ -46,6 +46,22 @@ class InventoryDetector:
         "importar excel", "cargar excel", "importar inventario",
     ]
 
+    # Codigo de barras "pelado" (el lector USB/Bluetooth escribe el codigo + Enter,
+    # sin ningun verbo alrededor - a diferencia de "stock de X"/"buscar X" el
+    # mensaje completo ES el codigo). Dos formas: solo digitos (EAN/UPC, 6-13
+    # digitos, cubre desde codigos cortos legados hasta el EAN-13 completo que
+    # genera generar_ean13()) o alfanumerico corto tipo "LIC001" (letras+digitos
+    # mezclados, sin espacios, 4-12 caracteres - exige al menos una letra y un
+    # digito para no chocar con una busqueda de producto por nombre normal, que
+    # es solo letras). El lookahead negativo excluye los numeros de referencia
+    # propios de la app que tambien son alfanumericos cortos: OS-XXXX (Servicio
+    # Tecnico), GAR-XXXX/GARR-XXXX (garantias), COT-XXXX (cotizaciones) - y
+    # "QNNN" (una mencion de precio tipo "Q950", no un codigo de barras).
+    BARCODE_PATTERNS = [
+        r"^\d{6,13}$",
+        r"^(?!(?:os|garr|gar|cot)-?\d|q\d+$)(?=[a-z0-9\-]{4,12}$)(?=.*[a-z])(?=.*\d)[a-z0-9\-]+$",
+    ]
+
     ADD_STOCK_PATTERNS = [
         r"^agrega[r]?\s+(\d+)\s+(.+?)(?:\s+al?\s+stock)?$",
         r"^entr[ao]\s+(\d+)\s+(.+)$",
@@ -122,6 +138,10 @@ class InventoryDetector:
 
         if text in self.IMPORTAR_EXACT:
             return {"intent": "inventory.importar_instrucciones"}
+
+        for pattern in self.BARCODE_PATTERNS:
+            if re.match(pattern, text):
+                return {"intent": "inventory.scan_barcode", "query": text}
 
         if text in self.KARDEX_EXACT:
             return {"intent": "inventory.kardex", "query": ""}

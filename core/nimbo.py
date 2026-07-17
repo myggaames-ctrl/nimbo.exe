@@ -327,6 +327,37 @@ def _intentar_detectar(message: str, role: str, context: dict, contexto_historia
                 return f"¿Cuál es el costo de {nombre}?", context
             return f"¿A qué precio se vende {nombre}?", context
 
+        if str(result).startswith("BARCODE_INICIO:"):
+            # Arrancado por tools/inventory_tool.py escanear_codigo_tool cuando el
+            # codigo escaneado SI matcheo un producto. Arma el texto con foto (si
+            # tiene) + nombre/precio/stock y pregunta si vender.
+            partes = str(result).replace("BARCODE_INICIO:", "").split("|", 5)
+            producto_id, nombre, precio, stock, codigo, foto = partes
+            context = {
+                "step": "barcode_waiting_accion",
+                "barcode_producto_id": int(producto_id),
+                "barcode_nombre": nombre,
+                "barcode_precio": float(precio),
+                "barcode_stock": float(stock),
+            }
+            texto = ""
+            if foto:
+                ruta = foto if foto.startswith(("http://", "https://", "/")) else f"/{foto}"
+                texto += f'<img src="{ruta}" style="max-width:220px;border-radius:8px;margin-bottom:6px"><br>'
+            texto += (f"<b>{nombre}</b><br>"
+                      f"Código: {codigo or '—'}<br>"
+                      f"Precio: Q{precio}<br>"
+                      f"Existencias: {int(float(stock))}<br><br>"
+                      f"¿Quieres vender este producto? (si/no) o escribe la cantidad")
+            return texto, context
+
+        if str(result).startswith("CODIGO_NO_ENCONTRADO_INICIO:"):
+            # Arrancado por escanear_codigo_tool cuando el codigo escaneado no
+            # matchea ningun producto registrado.
+            codigo = str(result).replace("CODIGO_NO_ENCONTRADO_INICIO:", "").strip()
+            context = {"step": "barcode_waiting_crear", "barcode_codigo_nuevo": codigo}
+            return f"Código '{codigo}' no registrado. ¿Quieres agregarlo como producto nuevo? (si/no)", context
+
         if str(result).startswith("COMBO_INICIO:"):
             nombre_combo = str(result).replace("COMBO_INICIO:", "").strip()
             context = {"step": "combo_crear_waiting_producto", "combo_nombre": nombre_combo, "combo_items": []}
@@ -1979,8 +2010,68 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         nombre = context["prod_nombre"].title()
         precio = context["prod_precio"]
         cantidad = context.get("prod_cantidad", 0)
+        codigo = context.get("prod_codigo", "")
         context = {}
-        return _crear_producto_directo(nombre, precio, costo, cantidad), context
+        return _crear_producto_directo(nombre, precio, costo, cantidad, codigo=codigo), context
+
+    # Flujo de escaneo de codigo de barras en el chat (arrancado por
+    # BARCODE_INICIO:/CODIGO_NO_ENCONTRADO_INICIO: mas arriba, ver
+    # tools/inventory_tool.py escanear_codigo_tool).
+    if step == "barcode_waiting_accion":
+        resp = message.strip().lower()
+        nombre = context["barcode_nombre"]
+        producto_id = context["barcode_producto_id"]
+        precio = context["barcode_precio"]
+        stock = context["barcode_stock"]
+
+        if resp in ("no", "n"):
+            return f"De acuerdo, no se vendio nada de {nombre}.", {}
+
+        if resp in ("si", "sí", "s"):
+            cantidad = 1
+        else:
+            try:
+                cantidad = int(float(resp.replace(",", ".")))
+            except ValueError:
+                return "Responde 'si', 'no', o escribe la cantidad a vender.", context
+            if cantidad <= 0:
+                return "La cantidad debe ser mayor a 0.", context
+
+        if stock < cantidad:
+            return f"Stock insuficiente. {nombre} solo tiene {int(stock)} unidades.", {}
+
+        from database.aronium import remove_stock
+        remove_stock(producto_id, cantidad, razon="Venta")
+        total = precio * cantidad
+        context = {
+            "step": "venta_waiting_nombre",
+            "venta_ctx": {
+                "cantidad": cantidad,
+                "producto": nombre,
+                "precio_unit": precio,
+                "total": total,
+                "producto_id": producto_id
+            }
+        }
+        return f"Venta: {cantidad}x {nombre} = Q{total}. Nombre del cliente (o 'sin nombre'):", context
+
+    if step == "barcode_waiting_crear":
+        resp = message.strip().lower()
+        codigo = context.get("barcode_codigo_nuevo", "")
+        if resp in ("no", "n"):
+            return "De acuerdo, no se agrego nada.", {}
+        if resp in ("si", "sí", "s"):
+            context = {"step": "barcode_waiting_nombre_nuevo", "barcode_codigo_nuevo": codigo}
+            return "¿Cómo se llama el producto?", context
+        return "Responde 'si' o 'no'.", context
+
+    if step == "barcode_waiting_nombre_nuevo":
+        nombre = message.strip()
+        if not nombre:
+            return "Escribe el nombre del producto.", context
+        codigo = context.get("barcode_codigo_nuevo", "")
+        context = {"step": "producto_waiting_precio", "prod_nombre": nombre, "prod_cantidad": 0, "prod_codigo": codigo}
+        return f"¿A qué precio se vende {nombre}?", context
 
     # Intento 1 y 2: deteccion directa + traduccion Gemini
     detectado = _intentar_detectar(message, role, context, contexto_historial)

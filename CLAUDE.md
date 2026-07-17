@@ -356,6 +356,37 @@ Usuario escribe mensaje
       (garantia_detector.py).
     - Categoria "inventory" ya era de empleado, asi que estos comandos tambien quedan
       disponibles para el rol empleado sin cambios adicionales.
+  - Escaneo de codigo de barras directo en el chat: el lector USB/Bluetooth escribe el
+    codigo + Enter como si fuera un mensaje normal - sin ningun verbo alrededor, a
+    diferencia del resto de comandos de inventario. BARCODE_PATTERNS en
+    core/detectors/inventory_detector.py detecta esto revisando si el mensaje COMPLETO
+    es un codigo "pelado": solo digitos (6-13, cubre desde codigos cortos legados hasta
+    el EAN-13 completo de generar_ean13()) o alfanumerico corto tipo "LIC001" (4-12
+    caracteres, exige al menos una letra y un digito para no chocar con una busqueda de
+    producto por nombre normal). Tiene un lookahead negativo para excluir los numeros de
+    referencia propios de la app que tambien son alfanumericos cortos - OS-XXXX
+    (Servicio Tecnico), GAR-XXXX/GARR-XXXX (garantias), COT-XXXX (cotizaciones) - y
+    "QNNN" (mencion de precio, no codigo). Produce intent "inventory.scan_barcode".
+    - tools/inventory_tool.py escanear_codigo_tool(codigo) busca con
+      database.aronium.get_product_by_code_ci() (case-insensitive - el mensaje ya paso
+      por CommandNormalizer, todo en minusculas, y algunos codigos legados como "LIC001"
+      se guardaron con mayusculas).
+    - Si encuentra el producto: arranca BARCODE_INICIO: (core/nimbo.py) que muestra foto
+      (si tiene, get_foto_producto), nombre, codigo, precio y existencias, y pregunta
+      "Quieres vender este producto? (si/no) o escribe la cantidad" (step
+      barcode_waiting_accion). "si" o cualquier numero > 0 descuenta el stock
+      (remove_stock, razon="Venta") y arranca el MISMO flujo de venta simple del chat
+      (step venta_waiting_nombre, ver seccion Ventas) con venta_ctx ya armado - se
+      reutiliza tal cual la maquina de estados existente (cliente, puntos, credito,
+      metodo de pago, factura) en vez de duplicarla, asi que hereda gratis la
+      cancelacion universal (revierte el stock si se cancela a medio camino) y todo lo
+      demas. "no" solo muestra la info sin vender ni tocar stock.
+    - Si NO encuentra el producto: arranca CODIGO_NO_ENCONTRADO_INICIO: - "Codigo 'X' no
+      registrado. Quieres agregarlo como producto nuevo? (si/no)" (step
+      barcode_waiting_crear). "si" pide el nombre (step barcode_waiting_nombre_nuevo) y
+      de ahi entra al mismo flujo producto_waiting_precio/producto_waiting_costo de
+      "agregar producto" (ver arriba) con el codigo escaneado ya prellenado -
+      _crear_producto_directo() ahora acepta un parametro codigo opcional para esto.
 - Ventas: flujo completo, WhatsApp, descuento stock automatico
 - Clientes: historial completo, Excel, cumpleanos. "historial de Juan Perez" (cliente.historial,
   tools/cliente_tool.py) muestra todo desde el primer dia: datos (telefono/email/NIT/fecha de
