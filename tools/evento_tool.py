@@ -3,22 +3,35 @@ Herramienta de Eventos y Fidelizacion de Clientes
 """
 from core.tool_registry import register
 from database.aronium import get_analisis_clientes
-from google import genai
+from services.ollama_service import llamar_ollama
 import os
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-_gemini = None
-if GEMINI_API_KEY:
-    _gemini = genai.Client(api_key=GEMINI_API_KEY)
+
+def _generar_ia(prompt):
+    """Intenta Ollama local (qwen2.5:7b) primero, cae a Gemini si Ollama no
+    esta corriendo. Retorna None si ninguno esta disponible."""
+    try:
+        return llamar_ollama(prompt).text
+    except Exception:
+        pass
+
+    gemini_key = os.environ.get("GEMINI_API_KEY", "")
+    if not gemini_key:
+        return None
+    try:
+        from google import genai
+        cliente = genai.Client(api_key=gemini_key)
+        r = cliente.models.generate_content(model="gemini-2.5-flash-lite", contents=prompt)
+        return r.text
+    except Exception:
+        return None
+
 
 def analisis_clientes_tool(data):
     analisis = get_analisis_clientes()
     mejores = analisis["mejores"]
     inactivos = analisis["inactivos"]
-    
-    if not _gemini:
-        return "Gemini no configurado."
-    
+
     prompt = f"""Eres el estratega de clientes de Mi Cocina Electrodomesticos Guatemala.
 Tienda de electrodomesticos y repuestos. La mayoria de clientes son mujeres amas de casa.
 
@@ -39,8 +52,8 @@ Con base en estos datos:
 
 Responde en espanol, de forma practica y especifica para Guatemala."""
 
-    r = _gemini.models.generate_content(model="gemini-2.5-flash-lite", contents=prompt)
-    return r.text
+    texto = _generar_ia(prompt)
+    return texto if texto else "Ollama y Gemini no estan disponibles ahora mismo."
 
 register("evento.analisis", analisis_clientes_tool)
 
@@ -56,10 +69,7 @@ def mensaje_agradecimiento_tool(data):
     historial = get_historial_cliente(c["Id"])
     total_compras = c.get("TotalCompras", 0) or 0
     total_gastado = c.get("TotalGastado", 0) or 0
-    
-    if not _gemini:
-        return "Gemini no configurado."
-    
+
     prompt = f"""Crea un mensaje de agradecimiento personalizado para WhatsApp para este cliente de Mi Cocina Electrodomesticos Guatemala.
 
 Cliente: {c['Nombre']}
@@ -75,9 +85,11 @@ El mensaje debe ser:
 - Sin ser demasiado comercial
 - Firmado como Mi Cocina Electrodomesticos"""
 
-    r = _gemini.models.generate_content(model="gemini-2.5-flash-lite", contents=prompt)
-    mensaje = r.text.strip()
-    
+    texto = _generar_ia(prompt)
+    if not texto:
+        return "Ollama y Gemini no estan disponibles ahora mismo."
+    mensaje = texto.strip()
+
     if c.get("Telefono"):
         tel = c["Telefono"].replace("+","").replace("-","").replace(" ","")
         if not tel.startswith("502"):
@@ -91,10 +103,7 @@ register("evento.agradecimiento", mensaje_agradecimiento_tool)
 
 def sugerir_evento_tool(data):
     analisis = get_analisis_clientes()
-    
-    if not _gemini:
-        return "Gemini no configurado."
-    
+
     prompt = f"""Eres el estratega de marketing de Mi Cocina Electrodomesticos Guatemala.
 Tienda de electrodomesticos y repuestos. La mayoria de clientes son mujeres.
 Ubicacion: Guatemala City.
@@ -121,8 +130,8 @@ Para el evento incluye:
 
 Se creativo pero realista para Guatemala."""
 
-    r = _gemini.models.generate_content(model="gemini-2.5-flash-lite", contents=prompt)
-    return r.text
+    texto = _generar_ia(prompt)
+    return texto if texto else "Ollama y Gemini no estan disponibles ahora mismo."
 
 register("evento.sugerir", sugerir_evento_tool)
 

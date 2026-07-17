@@ -4,6 +4,8 @@ import time
 import os
 import base64
 
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 def generar_video_producto(producto_nombre, descripcion="", ruta_foto=None, duracion=8):
     client = genai.Client(vertexai=True, project='pivotal-mode-499817-t7', location='us-central1')
     
@@ -19,8 +21,9 @@ def generar_video_producto(producto_nombre, descripcion="", ruta_foto=None, dura
     )
 
     # Si hay foto de referencia usarla
-    if ruta_foto and os.path.exists(ruta_foto.replace('/static/', '/home/ictor_axtor/micocina-dashboard/static/')):
-        ruta_real = ruta_foto.replace('/static/', '/home/ictor_axtor/micocina-dashboard/static/')
+    static_prefix = os.path.join(BASE_DIR, 'static') + '/'
+    if ruta_foto and os.path.exists(ruta_foto.replace('/static/', static_prefix)):
+        ruta_real = ruta_foto.replace('/static/', static_prefix)
         with open(ruta_real, 'rb') as f:
             foto_bytes = f.read()
         imagen = types.Image(image_bytes=foto_bytes, mime_type='image/jpeg')
@@ -48,7 +51,7 @@ def generar_video_producto(producto_nombre, descripcion="", ruta_foto=None, dura
     if video.video.video_bytes:
         import uuid
         filename = f"video_{uuid.uuid4()}.mp4"
-        filepath = f"/home/ictor_axtor/micocina-dashboard/static/videos/{filename}"
+        filepath = os.path.join(BASE_DIR, 'static', 'videos', filename)
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         with open(filepath, 'wb') as f:
             f.write(video.video.video_bytes)

@@ -14,7 +14,8 @@ import qrcode
 from reportlab.pdfgen import canvas
 from reportlab.lib.units import mm
 
-OUTPUT_DIR = '/home/ictor_axtor/micocina-dashboard/static/etiquetas'
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+OUTPUT_DIR = os.path.join(BASE_DIR, 'static', 'etiquetas')
 PUERTO = 5000
 
 # Tamano estandar de etiqueta para impresoras de etiquetas

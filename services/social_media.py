@@ -2,7 +2,8 @@ import os
 import requests
 from dotenv import load_dotenv
 
-load_dotenv('/home/ictor_axtor/micocina-dashboard/.env')
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+load_dotenv(os.path.join(BASE_DIR, '.env'))
 
 FB_PAGE_TOKEN = os.getenv("FB_PAGE_TOKEN", "")
 FB_PAGE_ID = os.getenv("FB_PAGE_ID", "")
@@ -19,7 +20,7 @@ def publicar_facebook(mensaje, ruta_video=None, ruta_foto=None):
                     "access_token": FB_PAGE_TOKEN,
                     "description": mensaje
                 },
-                files={"file": open(ruta_video.replace('/static/', '/home/ictor_axtor/micocina-dashboard/static/'), 'rb')}
+                files={"file": open(ruta_video.replace('/static/', os.path.join(BASE_DIR, 'static') + '/'), 'rb')}
             )
         elif ruta_foto:
             r = requests.post(
@@ -28,7 +29,7 @@ def publicar_facebook(mensaje, ruta_video=None, ruta_foto=None):
                     "access_token": FB_PAGE_TOKEN,
                     "caption": mensaje
                 },
-                files={"source": open(ruta_foto.replace('/static/', '/home/ictor_axtor/micocina-dashboard/static/'), 'rb')}
+                files={"source": open(ruta_foto.replace('/static/', os.path.join(BASE_DIR, 'static') + '/'), 'rb')}
             )
         else:
             r = requests.post(
@@ -46,7 +47,7 @@ def publicar_instagram_reel(ruta_video, caption):
     if not FB_PAGE_TOKEN or not IG_ACCOUNT_ID:
         return False, "Instagram no configurado"
     try:
-        ruta_real = ruta_video.replace('/static/', '/home/ictor_axtor/micocina-dashboard/static/')
+        ruta_real = ruta_video.replace('/static/', os.path.join(BASE_DIR, 'static') + '/')
         r1 = requests.post(
             f"https://graph.facebook.com/{IG_ACCOUNT_ID}/media",
             data={

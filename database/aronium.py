@@ -1,9 +1,14 @@
 import difflib
+import os
 import re
 import sqlite3
 from datetime import datetime
 
-DB_PATH = '/mnt/c/Users/Victor Paxtor/AppData/Local/Aronium/Data/pos.db'
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DB_PATH = os.environ.get(
+    "ARONIUM_DB_PATH",
+    "/mnt/c/Users/Victor Paxtor/AppData/Local/Aronium/Data/pos.db"
+)
 
 UMBRAL_SIMILITUD_PRODUCTO = 0.6
 
@@ -18,15 +23,14 @@ def _buscar_productos_similares(search, limit=100, umbral=UMBRAL_SIMILITUD_PRODU
     busqueda tanto contra el nombre completo del producto como contra cada
     palabra individual del nombre, para que un typo en una sola palabra de un
     nombre compuesto (ej: "cuchila" en "Cuchilla oster original") tambien matchee."""
-    conn = connect()
+    conn = nimbo_connect()
     cur = conn.cursor()
     cur.execute("""
-        SELECT p.Id, p.Name, p.Code, p.Price, p.Cost,
-               IFNULL(SUM(s.Quantity),0) AS Stock
-        FROM Product p
-        LEFT JOIN Stock s ON p.Id = s.ProductId
-        WHERE p.IsEnabled=1
-        GROUP BY p.Id
+        SELECT p.Id, p.Nombre AS Name, p.Codigo AS Code, p.Precio AS Price, p.Costo AS Cost,
+               IFNULL(s.Cantidad,0) AS Stock
+        FROM Producto p
+        LEFT JOIN Stock s ON p.Id = s.ProductoId
+        WHERE p.Activo=1
     """)
     todos = [dict(r) for r in cur.fetchall()]
     conn.close()
@@ -53,24 +57,24 @@ def _buscar_productos_similares(search, limit=100, umbral=UMBRAL_SIMILITUD_PRODU
     return [p for _, p in candidatos[:limit]]
 
 def get_products(search="", limit=100):
-    conn = connect()
+    conn = nimbo_connect()
     cur = conn.cursor()
     if search:
         cur.execute("""
-            SELECT p.Id, p.Name, p.Code, p.Price, p.Cost,
-                   IFNULL(SUM(s.Quantity),0) AS Stock
-            FROM Product p
-            LEFT JOIN Stock s ON p.Id = s.ProductId
-            WHERE p.Name LIKE ? OR p.Code LIKE ?
-            GROUP BY p.Id ORDER BY p.Name LIMIT ?
+            SELECT p.Id, p.Nombre AS Name, p.Codigo AS Code, p.Precio AS Price, p.Costo AS Cost,
+                   IFNULL(s.Cantidad,0) AS Stock
+            FROM Producto p
+            LEFT JOIN Stock s ON p.Id = s.ProductoId
+            WHERE p.Nombre LIKE ? OR p.Codigo LIKE ?
+            ORDER BY p.Nombre LIMIT ?
         """, (f"%{search}%", f"%{search}%", limit))
     else:
         cur.execute("""
-            SELECT p.Id, p.Name, p.Code, p.Price, p.Cost,
-                   IFNULL(SUM(s.Quantity),0) AS Stock
-            FROM Product p
-            LEFT JOIN Stock s ON p.Id = s.ProductId
-            GROUP BY p.Id ORDER BY p.Name LIMIT ?
+            SELECT p.Id, p.Nombre AS Name, p.Codigo AS Code, p.Precio AS Price, p.Costo AS Cost,
+                   IFNULL(s.Cantidad,0) AS Stock
+            FROM Producto p
+            LEFT JOIN Stock s ON p.Id = s.ProductoId
+            ORDER BY p.Nombre LIMIT ?
         """, (limit,))
     rows = [dict(r) for r in cur.fetchall()]
     conn.close()
@@ -83,45 +87,44 @@ def get_products(search="", limit=100):
     return rows
 
 def get_product_by_code(code):
-    conn = connect()
+    conn = nimbo_connect()
     cur = conn.cursor()
     cur.execute("""
-        SELECT p.Id, p.Name, p.Code, p.Price, p.Cost, p.Description,
-               IFNULL(SUM(s.Quantity),0) AS Stock
-        FROM Product p
-        LEFT JOIN Stock s ON p.Id = s.ProductId
-        WHERE p.Code = ?
-        GROUP BY p.Id LIMIT 1
+        SELECT p.Id, p.Nombre AS Name, p.Codigo AS Code, p.Precio AS Price, p.Costo AS Cost,
+               p.Descripcion AS Description, IFNULL(s.Cantidad,0) AS Stock
+        FROM Producto p
+        LEFT JOIN Stock s ON p.Id = s.ProductoId
+        WHERE p.Codigo = ?
+        LIMIT 1
     """, (code,))
     row = cur.fetchone()
     conn.close()
     return dict(row) if row else None
 
 def get_product_by_id(product_id):
-    conn = connect()
+    conn = nimbo_connect()
     cur = conn.cursor()
     cur.execute("""
-        SELECT p.Id, p.Name, p.Code, p.Price, p.Cost,
-               IFNULL(SUM(s.Quantity),0) AS Stock
-        FROM Product p
-        LEFT JOIN Stock s ON p.Id = s.ProductId
+        SELECT p.Id, p.Nombre AS Name, p.Codigo AS Code, p.Precio AS Price, p.Costo AS Cost,
+               IFNULL(s.Cantidad,0) AS Stock
+        FROM Producto p
+        LEFT JOIN Stock s ON p.Id = s.ProductoId
         WHERE p.Id = ?
-        GROUP BY p.Id LIMIT 1
+        LIMIT 1
     """, (product_id,))
     row = cur.fetchone()
     conn.close()
     return dict(row) if row else None
 
 def get_low_stock(min_stock=5):
-    conn = connect()
+    conn = nimbo_connect()
     cur = conn.cursor()
     cur.execute("""
-        SELECT p.Id, p.Name, p.Code, p.Price,
-               IFNULL(SUM(s.Quantity),0) AS Stock
-        FROM Product p
-        LEFT JOIN Stock s ON p.Id = s.ProductId
-        GROUP BY p.Id
-        HAVING Stock < ?
+        SELECT p.Id, p.Nombre AS Name, p.Codigo AS Code, p.Precio AS Price,
+               IFNULL(s.Cantidad,0) AS Stock
+        FROM Producto p
+        LEFT JOIN Stock s ON p.Id = s.ProductoId
+        WHERE IFNULL(s.Cantidad,0) < ?
         ORDER BY Stock ASC
     """, (min_stock,))
     rows = [dict(r) for r in cur.fetchall()]
@@ -192,48 +195,52 @@ def get_customers(search="", limit=50):
     return rows
 
 def add_stock(product_id, quantity, warehouse_id=1, razon="Entrada manual"):
-    conn = connect()
+    # warehouse_id se mantiene en la firma por compatibilidad (nadie en el
+    # codebase lo pasaba distinto de 1) pero ya no se usa: la tabla Stock propia
+    # de nimbo.db es 1 fila por producto, sin concepto de almacenes multiples
+    # como tenia Aronium.
+    conn = nimbo_connect()
     cur = conn.cursor()
-    cur.execute("SELECT Id, Quantity FROM Stock WHERE ProductId=? AND WarehouseId=?", (product_id, warehouse_id))
+    cur.execute("SELECT Id, Cantidad FROM Stock WHERE ProductoId=?", (product_id,))
     row = cur.fetchone()
-    stock_antes = row["Quantity"] if row else 0
+    stock_antes = row["Cantidad"] if row else 0
     if row:
-        cur.execute("UPDATE Stock SET Quantity=Quantity+? WHERE ProductId=? AND WarehouseId=?",
-            (quantity, product_id, warehouse_id))
+        cur.execute("UPDATE Stock SET Cantidad=Cantidad+?, UltimaActualizacion=CURRENT_TIMESTAMP WHERE ProductoId=?",
+            (quantity, product_id))
     else:
-        cur.execute("INSERT INTO Stock (ProductId, WarehouseId, Quantity) VALUES (?,?,?)",
-            (product_id, warehouse_id, quantity))
+        cur.execute("INSERT INTO Stock (ProductoId, Cantidad, UltimaActualizacion) VALUES (?,?,CURRENT_TIMESTAMP)",
+            (product_id, quantity))
     conn.commit()
-    cur.execute("SELECT Name FROM Product WHERE Id=?", (product_id,))
+    cur.execute("SELECT Nombre FROM Producto WHERE Id=?", (product_id,))
     p = cur.fetchone()
     conn.close()
-    name = p["Name"] if p else str(product_id)
+    name = p["Nombre"] if p else str(product_id)
     registrar_kardex(product_id, name, "ENTRADA", quantity, stock_antes, stock_antes + quantity, razon)
     return True
 
 def remove_stock(product_id, quantity, warehouse_id=1, razon="Salida manual"):
-    conn = connect()
+    conn = nimbo_connect()
     cur = conn.cursor()
-    cur.execute("SELECT Quantity FROM Stock WHERE ProductId=? AND WarehouseId=?", (product_id, warehouse_id))
+    cur.execute("SELECT Cantidad FROM Stock WHERE ProductoId=?", (product_id,))
     row = cur.fetchone()
     if not row or row[0] < quantity:
         conn.close()
         return False
     stock_antes = row[0]
-    cur.execute("UPDATE Stock SET Quantity=Quantity-? WHERE ProductId=? AND WarehouseId=?",
-        (quantity, product_id, warehouse_id))
+    cur.execute("UPDATE Stock SET Cantidad=Cantidad-?, UltimaActualizacion=CURRENT_TIMESTAMP WHERE ProductoId=?",
+        (quantity, product_id))
     conn.commit()
-    cur.execute("SELECT Name FROM Product WHERE Id=?", (product_id,))
+    cur.execute("SELECT Nombre FROM Producto WHERE Id=?", (product_id,))
     p = cur.fetchone()
     conn.close()
-    name = p["Name"] if p else str(product_id)
+    name = p["Nombre"] if p else str(product_id)
     registrar_kardex(product_id, name, "SALIDA", quantity, stock_antes, stock_antes - quantity, razon)
     return True
 
 def get_stock(product_id, warehouse_id=1):
-    conn = connect()
+    conn = nimbo_connect()
     cur = conn.cursor()
-    cur.execute("SELECT Quantity FROM Stock WHERE ProductId=? AND WarehouseId=?", (product_id, warehouse_id))
+    cur.execute("SELECT Cantidad FROM Stock WHERE ProductoId=?", (product_id,))
     row = cur.fetchone()
     conn.close()
     return row[0] if row else 0
@@ -242,12 +249,132 @@ def get_stock(product_id, warehouse_id=1):
 
 # Kardex y Stock Minimo
 import sqlite3 as _sqlite3
-NIMBO_DB = '/home/ictor_axtor/micocina-dashboard/nimbo.db'
+NIMBO_DB = os.path.join(BASE_DIR, 'nimbo.db')
 
 def nimbo_connect():
     conn = _sqlite3.connect(NIMBO_DB)
     conn.row_factory = _sqlite3.Row
     return conn
+
+
+# ── PRODUCTO Y STOCK (catalogo propio de Nimbo, independiente de Aronium) ──
+#
+# Hasta esta migracion, Product/Stock vivian unicamente en pos.db (Aronium) y
+# get_products()/get_product_by_code()/get_product_by_id()/add_stock()/
+# remove_stock()/get_stock() (y sus consumidores fuzzy/derivados:
+# _buscar_productos_similares, get_valor_inventario, get_margen_productos,
+# get_productos_sin_codigo, asignar_codigo_barras, _codigo_ean_existe) leian y
+# escribian ahi via connect(). Todos esos ahora usan nimbo_connect() contra las
+# tablas propias Producto/Stock de nimbo.db, definidas mas abajo. connect()
+# (Aronium/pos.db) se mantiene solo para lo que sigue siendo dominio de
+# Aronium: reportes de ventas reales de caja fisica (get_sales_today/month,
+# get_top_products, get_reporte_dia via costo historico, get_balance_mes) y
+# clientes nativos de Aronium (get_customers) - nada de eso se toco.
+#
+# Compatibilidad: las funciones migradas devuelven exactamente las mismas
+# claves que antes (Id, Name, Code, Price, Cost, Stock, Description) aunque
+# las columnas fisicas de Producto/Stock esten en espanol (Nombre, Codigo,
+# Precio, Costo, Cantidad) - el resto del codebase sigue leyendo esas mismas
+# claves sin cambios.
+def init_productos():
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS Producto (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            Codigo TEXT,
+            Nombre TEXT NOT NULL,
+            Precio REAL DEFAULT 0,
+            Costo REAL DEFAULT 0,
+            Categoria TEXT,
+            Descripcion TEXT,
+            Unidad TEXT DEFAULT 'unidad',
+            Activo INTEGER DEFAULT 1,
+            FechaCreado TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS Stock (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ProductoId INTEGER UNIQUE NOT NULL,
+            Cantidad REAL DEFAULT 0,
+            StockMinimo REAL DEFAULT 0,
+            UltimaActualizacion TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def migrar_productos_desde_aronium():
+    """Se corre una sola vez al arrancar (ver app.py, justo despues de
+    init_productos()). Si Producto ya tiene filas (ya se migro antes, o es un
+    negocio que empezo directo en Nimbo) no hace nada. Si no, intenta conectar
+    a pos.db (connect(), Aronium) y copiar su catalogo Product/Stock tal cual -
+    preservando el mismo Id que tenian en Aronium, porque Kardex,
+    GarantiaProducto, ItemCombo, UnidadMedida, StockMinimo, Descuento,
+    CodigoBarrasGenerado y ProductoProveedor ya tienen filas en nimbo.db que
+    guardan ese Id suelto (sin FK real) como referencia a un producto - si se
+    reasignaran Ids nuevos esas referencias quedarian huerfanas/incorrectas.
+    Si pos.db no existe o no es alcanzable (negocio nuevo, ver CLAUDE.md),
+    nimbo.db se queda con Producto/Stock vacios sin error."""
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM Producto")
+    if cur.fetchone()[0] > 0:
+        conn.close()
+        return
+
+    try:
+        conn_aronium = connect()
+        cur_a = conn_aronium.cursor()
+        cur_a.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='Product'")
+        if not cur_a.fetchone():
+            conn_aronium.close()
+            conn.close()
+            return
+    except Exception:
+        conn.close()
+        return
+
+    columnas = {r["name"] for r in cur_a.execute("PRAGMA table_info(Product)").fetchall()}
+    tiene_code = "Code" in columnas
+    tiene_desc = "Description" in columnas
+    tiene_enabled = "IsEnabled" in columnas
+
+    cur_a.execute("SELECT * FROM Product")
+    productos = cur_a.fetchall()
+
+    ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    for p in productos:
+        cur.execute(
+            "INSERT INTO Producto (Id, Codigo, Nombre, Precio, Costo, Descripcion, Activo, FechaCreado) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (
+                p["Id"],
+                p["Code"] if tiene_code else "",
+                p["Name"],
+                float(p["Price"] or 0),
+                float(p["Cost"] or 0),
+                p["Description"] if tiene_desc else None,
+                int(p["IsEnabled"]) if tiene_enabled and p["IsEnabled"] is not None else 1,
+                ahora
+            )
+        )
+
+    cur_a.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='Stock'")
+    if cur_a.fetchone():
+        cur_a.execute("SELECT ProductId, SUM(Quantity) as Cantidad FROM Stock GROUP BY ProductId")
+        for s in cur_a.fetchall():
+            cur.execute(
+                "INSERT INTO Stock (ProductoId, Cantidad, StockMinimo, UltimaActualizacion) VALUES (?,?,0,?)",
+                (s["ProductId"], float(s["Cantidad"] or 0), ahora)
+            )
+
+    conn_aronium.close()
+    conn.commit()
+    conn.close()
+
 
 def registrar_kardex(product_id, product_name, tipo, cantidad, stock_antes, stock_despues, razon=""):
     conn = nimbo_connect()
@@ -2910,20 +3037,18 @@ def get_reporte_dia():
 
     total_vendido = float(row["total_vendido"])
 
-    # Obtener costo de productos vendidos desde Aronium
-    conn_aronium = connect()
-    cur2 = conn_aronium.cursor()
-    
+    # Costo de los productos vendidos hoy (catalogo propio Producto, nimbo.db) -
+    # se extrae el nombre de Venta.Descripcion (best-effort, sin detalle
+    # estructurado de items por venta, ver seccion Caja en CLAUDE.md).
     nimbo_conn = nimbo_connect()
-    cur3 = nimbo_conn.cursor()
-    cur3.execute("""
-        SELECT Descripcion, Total FROM Venta 
+    cur2 = nimbo_conn.cursor()
+    cur2.execute("""
+        SELECT Descripcion, Total FROM Venta
         WHERE DATE(Fecha) = DATE('now')
         AND Mes=? AND Anio=?
     """, (datetime.now().month, datetime.now().year))
-    ventas = cur3.fetchall()
-    nimbo_conn.close()
-    
+    ventas = cur2.fetchall()
+
     total_costo = 0
     for venta in ventas:
         desc = venta["Descripcion"]
@@ -2932,13 +3057,13 @@ def get_reporte_dia():
         if match:
             cantidad = int(match.group(1))
             nombre = match.group(2).strip()
-            cur2.execute("SELECT Cost FROM Product WHERE Name LIKE ?", (f"%{nombre}%",))
+            cur2.execute("SELECT Costo FROM Producto WHERE Nombre LIKE ?", (f"%{nombre}%",))
             prod = cur2.fetchone()
             if prod:
-                total_costo += float(prod["Cost"]) * cantidad
-    
-    conn_aronium.close()
-    
+                total_costo += float(prod["Costo"]) * cantidad
+
+    nimbo_conn.close()
+
     comision_pos = total_vendido * 0.06
     ganancia_bruta = total_vendido - total_costo
     ganancia_neta = ganancia_bruta - comision_pos
@@ -3358,7 +3483,7 @@ def archivar_y_limpiar_anio(anio):
     for row in cur.fetchall():
         ws3.append(list(row))
     
-    filename = f"/home/ictor_axtor/micocina-dashboard/archivo_ventas_{anio}.xlsx"
+    filename = os.path.join(BASE_DIR, f"archivo_ventas_{anio}.xlsx")
     wb.save(filename)
     
     # 2. Guardar resumen anual en ResumenTrimestral
@@ -3879,7 +4004,7 @@ def archivar_chat_trimestral():
     
     trimestre = (datetime.now().month - 1) // 3 + 1
     anio = datetime.now().year
-    filename = f"/home/ictor_axtor/micocina-dashboard/chat_Q{trimestre}_{anio}.xlsx"
+    filename = os.path.join(BASE_DIR, f"chat_Q{trimestre}_{anio}.xlsx")
     wb.save(filename)
     
     # Borrar mensajes archivados
@@ -4044,13 +4169,12 @@ def get_declaracion_iva(mes=None, anio=None):
 
 
 def get_valor_inventario():
-    conn = connect()
+    conn = nimbo_connect()
     cur = conn.cursor()
-    cur.execute("""SELECT p.Name, p.Cost, IFNULL(SUM(s.Quantity),0) as Stock,
-        p.Cost * IFNULL(SUM(s.Quantity),0) as ValorTotal
-        FROM Product p LEFT JOIN Stock s ON p.Id=s.ProductId
-        WHERE p.IsEnabled=1
-        GROUP BY p.Id HAVING Stock > 0
+    cur.execute("""SELECT p.Nombre AS Name, p.Costo AS Cost, IFNULL(s.Cantidad,0) as Stock,
+        p.Costo * IFNULL(s.Cantidad,0) as ValorTotal
+        FROM Producto p LEFT JOIN Stock s ON p.Id=s.ProductoId
+        WHERE p.Activo=1 AND IFNULL(s.Cantidad,0) > 0
         ORDER BY ValorTotal DESC""")
     rows = [dict(r) for r in cur.fetchall()]
     total = sum(float(r["ValorTotal"]) for r in rows)
@@ -4058,11 +4182,11 @@ def get_valor_inventario():
     return {"productos": rows, "total_inventario": round(total, 2)}
 
 def get_margen_productos():
-    conn = connect()
+    conn = nimbo_connect()
     cur = conn.cursor()
-    cur.execute("""SELECT Name, Price, Cost, 
-        CASE WHEN Cost > 0 THEN ROUND((Price-Cost)/Cost*100, 1) ELSE 0 END as Margen
-        FROM Product WHERE IsEnabled=1 AND Price > 0
+    cur.execute("""SELECT Nombre AS Name, Precio AS Price, Costo AS Cost,
+        CASE WHEN Costo > 0 THEN ROUND((Precio-Costo)/Costo*100, 1) ELSE 0 END as Margen
+        FROM Producto WHERE Activo=1 AND Precio > 0
         ORDER BY Margen DESC""")
     rows = [dict(r) for r in cur.fetchall()]
     conn.close()
@@ -4251,23 +4375,22 @@ def get_flujo_caja_proyectado():
 def hacer_backup():
     import shutil
     from datetime import datetime
-    import os
-    
-    backup_dir = "/home/ictor_axtor/micocina-dashboard/backups"
+
+    backup_dir = os.path.join(BASE_DIR, "backups")
     os.makedirs(backup_dir, exist_ok=True)
-    
+
     fecha = datetime.now().strftime("%Y%m%d_%H%M")
-    
+
     # Backup nimbo.db
     shutil.copy2(
-        "/home/ictor_axtor/micocina-dashboard/nimbo.db",
+        NIMBO_DB,
         f"{backup_dir}/nimbo_{fecha}.db"
     )
-    
+
     # Backup Aronium
     try:
         shutil.copy2(
-            "/mnt/c/Users/Victor Paxtor/AppData/Local/Aronium/Data/pos.db",
+            DB_PATH,
             f"{backup_dir}/aronium_{fecha}.db"
         )
     except: pass
@@ -4311,25 +4434,23 @@ def _digito_verificador_ean13(doce_digitos):
 
 
 def _codigo_ean_existe(codigo):
-    conn = connect()
-    cur = conn.cursor()
-    cur.execute("SELECT 1 FROM Product WHERE Code=? LIMIT 1", (codigo,))
-    existe_aronium = cur.fetchone() is not None
-    conn.close()
-    if existe_aronium:
-        return True
-
     conn = nimbo_connect()
     cur = conn.cursor()
+    cur.execute("SELECT 1 FROM Producto WHERE Codigo=? LIMIT 1", (codigo,))
+    existe_producto = cur.fetchone() is not None
+    if existe_producto:
+        conn.close()
+        return True
+
     cur.execute("SELECT 1 FROM CodigoBarrasGenerado WHERE CodigoEAN=? LIMIT 1", (codigo,))
-    existe_nimbo = cur.fetchone() is not None
+    existe_generado = cur.fetchone() is not None
     conn.close()
-    return existe_nimbo
+    return existe_generado
 
 
 def generar_ean13():
-    """Genera un codigo EAN-13 unico (no choca con ningun Product.Code existente en
-    Aronium ni con uno ya generado antes en CodigoBarrasGenerado)."""
+    """Genera un codigo EAN-13 unico (no choca con ningun Producto.Codigo existente
+    ni con uno ya generado antes en CodigoBarrasGenerado)."""
     import random
     while True:
         cuerpo = PREFIJO_EAN_INTERNO + "".join(str(random.randint(0, 9)) for _ in range(10))
@@ -4339,15 +4460,15 @@ def generar_ean13():
 
 
 def get_productos_sin_codigo(limit=500):
-    conn = connect()
+    conn = nimbo_connect()
     cur = conn.cursor()
     cur.execute("""
-        SELECT p.Id, p.Name, p.Code, p.Price, p.Cost,
-               IFNULL(SUM(s.Quantity),0) AS Stock
-        FROM Product p
-        LEFT JOIN Stock s ON p.Id = s.ProductId
-        WHERE p.IsEnabled=1 AND (p.Code IS NULL OR TRIM(p.Code)='')
-        GROUP BY p.Id ORDER BY p.Name LIMIT ?
+        SELECT p.Id, p.Nombre AS Name, p.Codigo AS Code, p.Precio AS Price, p.Costo AS Cost,
+               IFNULL(s.Cantidad,0) AS Stock
+        FROM Producto p
+        LEFT JOIN Stock s ON p.Id = s.ProductoId
+        WHERE p.Activo=1 AND (p.Codigo IS NULL OR TRIM(p.Codigo)='')
+        ORDER BY p.Nombre LIMIT ?
     """, (limit,))
     rows = [dict(r) for r in cur.fetchall()]
     conn.close()
@@ -4355,20 +4476,16 @@ def get_productos_sin_codigo(limit=500):
 
 
 def asignar_codigo_barras(producto_id, producto_nombre):
-    """Genera un EAN-13 nuevo y lo asigna como Code del producto en Aronium; registra
-    el evento en CodigoBarrasGenerado (nimbo.db) porque Aronium no guarda quien/cuando
-    se genero el codigo. No revisa si el producto ya tenia un Code - eso lo decide
-    quien llama (ver codigobarras.generar en tools/codigo_barras_tool.py)."""
+    """Genera un EAN-13 nuevo y lo asigna como Codigo del producto (Producto,
+    nimbo.db); registra ademas el evento en CodigoBarrasGenerado porque Producto
+    no guarda quien/cuando se genero el codigo. No revisa si el producto ya
+    tenia un Codigo - eso lo decide quien llama (ver codigobarras.generar en
+    tools/codigo_barras_tool.py)."""
     codigo = generar_ean13()
-
-    conn = connect()
-    cur = conn.cursor()
-    cur.execute("UPDATE Product SET Code=? WHERE Id=?", (codigo, producto_id))
-    conn.commit()
-    conn.close()
 
     conn = nimbo_connect()
     cur = conn.cursor()
+    cur.execute("UPDATE Producto SET Codigo=? WHERE Id=?", (codigo, producto_id))
     cur.execute("INSERT INTO CodigoBarrasGenerado (ProductoId, ProductoNombre, CodigoEAN) VALUES (?,?,?)",
         (producto_id, producto_nombre, codigo))
     conn.commit()

@@ -9,8 +9,9 @@ from reportlab.lib.units import mm
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
 
-OUTPUT_DIR = '/home/ictor_axtor/micocina-dashboard'
-LOGO_PATH = '/home/ictor_axtor/micocina-dashboard/static/icon.png'
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+OUTPUT_DIR = BASE_DIR
+LOGO_PATH = os.path.join(BASE_DIR, 'static', 'icon.png')
 
 ACCENT = colors.HexColor("#2563eb")
 

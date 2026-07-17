@@ -2,7 +2,7 @@ import tools
 from core.action_engine import ActionEngine
 from core.chat_context import obtener_historial_reciente, resumen_texto
 from openclaw_bridge import send_to_openclaw
-from google import genai
+from services.ollama_service import llamar_ollama
 import os
 import re
 import unicodedata
@@ -10,9 +10,25 @@ import unicodedata
 _engine = ActionEngine()
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-_gemini = None
-if GEMINI_API_KEY:
-    _gemini = genai.Client(api_key=GEMINI_API_KEY)
+
+
+def _generar_ia(prompt):
+    """Intenta Ollama local (qwen2.5:7b) primero, cae a Gemini si Ollama no
+    esta corriendo. Retorna None si ninguno esta disponible."""
+    try:
+        return llamar_ollama(prompt).text
+    except Exception:
+        pass
+
+    if not GEMINI_API_KEY:
+        return None
+    try:
+        from google import genai
+        cliente = genai.Client(api_key=GEMINI_API_KEY)
+        r = cliente.models.generate_content(model="gemini-2.5-flash-lite", contents=prompt)
+        return r.text
+    except Exception:
+        return None
 
 TRANSLATE_PROMPT = """Eres un traductor de comandos para un sistema de inventario.
 Convierte el mensaje del usuario a uno de estos comandos exactos:
@@ -33,25 +49,19 @@ Mensaje: {message}
 Comando:"""
 
 def _translate(message: str, contexto: str = "") -> str:
-    if not _gemini:
-        return None
-    try:
-        prompt = TRANSLATE_PROMPT.format(message=message)
-        if contexto:
-            prompt = (
-                "Contexto de conversacion reciente (puede ser de dias anteriores):\n"
-                f"{contexto}\n\n{prompt}"
-            )
-        r = _gemini.models.generate_content(
-            model="gemini-2.5-flash-lite",
-            contents=prompt
+    prompt = TRANSLATE_PROMPT.format(message=message)
+    if contexto:
+        prompt = (
+            "Contexto de conversacion reciente (puede ser de dias anteriores):\n"
+            f"{contexto}\n\n{prompt}"
         )
-        cmd = r.text.strip().lower()
-        if cmd == "ninguno" or not cmd:
-            return None
-        return cmd
-    except:
+    texto = _generar_ia(prompt)
+    if not texto:
         return None
+    cmd = texto.strip().lower()
+    if cmd == "ninguno" or not cmd:
+        return None
+    return cmd
 
 
 CLARIFICACION_PROMPT = """Eres Nimbo, el asistente de un sistema de gestion para "Mi Cocina Electrodomesticos", una tienda de electrodomesticos y repuestos en Guatemala.
@@ -85,27 +95,22 @@ Mensaje del usuario: {message}
 Respuesta:"""
 
 def _analizar_intencion_vaga(message: str, contexto: str = "") -> str:
-    """Le pregunta a Gemini si el mensaje es una intencion de negocio expresada de forma vaga.
+    """Le pregunta a la IA (Ollama, o Gemini si Ollama no esta corriendo) si el mensaje
+    es una intencion de negocio expresada de forma vaga.
     Retorna la pregunta de clarificacion en espanol, o None si no aplica."""
-    if not _gemini:
-        return None
-    try:
-        prompt = CLARIFICACION_PROMPT.format(message=message)
-        if contexto:
-            prompt = (
-                "Contexto de conversacion reciente (puede ser de dias anteriores):\n"
-                f"{contexto}\n\n{prompt}"
-            )
-        r = _gemini.models.generate_content(
-            model="gemini-2.5-flash-lite",
-            contents=prompt
+    prompt = CLARIFICACION_PROMPT.format(message=message)
+    if contexto:
+        prompt = (
+            "Contexto de conversacion reciente (puede ser de dias anteriores):\n"
+            f"{contexto}\n\n{prompt}"
         )
-        texto = r.text.strip()
-        if not texto or texto.upper() == "NINGUNO":
-            return None
-        return texto
-    except:
+    texto = _generar_ia(prompt)
+    if not texto:
         return None
+    texto = texto.strip()
+    if not texto or texto.upper() == "NINGUNO":
+        return None
+    return texto
 
 
 # Frases que, escritas a mitad de cualquier flujo conversacional, cancelan ese flujo
@@ -782,20 +787,13 @@ def send(message: str, context: dict = None, role: str = "admin") -> tuple:
         return "Cual es el objetivo? (vender, informar, entretener, generar engagement):", context
 
     if step == "script_waiting_objetivo":
-        from google import genai as _genai
-        import os
         objetivo = message.strip()
         producto = context.get("script_producto", "")
         tono = context.get("script_tono", "profesional")
         duracion = context.get("script_duracion", "30 segundos")
         red = context.get("script_red", "Instagram")
         context = {}
-        
-        gemini_key = os.environ.get("GEMINI_API_KEY", "")
-        if not gemini_key:
-            return "Gemini no configurado.", context
-        
-        cliente = _genai.Client(api_key=gemini_key)
+
         prompt = f"""Eres experto en contenido viral para redes sociales en Guatemala.
 Crea un script completo para video de {duracion} para {red}.
 Producto: {producto}
@@ -811,9 +809,9 @@ El script debe incluir:
 - Texto en pantalla sugerido entre corchetes
 
 En espanol guatemalteco natural."""
-        
-        r = cliente.models.generate_content(model="gemini-2.5-flash-lite", contents=prompt)
-        return r.text, context
+
+        texto = _generar_ia(prompt)
+        return (texto if texto else "Ollama y Gemini no estan disponibles ahora mismo."), context
 
     # Flujo de programacion de contenido
     if step == "prog_waiting_frecuencia":
@@ -833,18 +831,11 @@ En espanol guatemalteco natural."""
         return "Que tipos de contenido quieres alternar? (ej: productos, tips, promociones, testimonios):", context
 
     if step == "prog_waiting_tipos":
-        from google import genai as _genai
-        import os
         tipos = message.strip()
         frecuencia = context.get("prog_frecuencia", "1")
         horas = context.get("prog_horas", "12pm")
         context = {}
-        
-        gemini_key = os.environ.get("GEMINI_API_KEY", "")
-        if not gemini_key:
-            return "Gemini no configurado.", context
-        
-        cliente = _genai.Client(api_key=gemini_key)
+
         prompt = f"""Eres experto en marketing digital para Mi Cocina Electrodomesticos Guatemala.
 Crea un plan de publicacion semanal con estas especificaciones:
 - Frecuencia: {frecuencia} publicacion(es) por dia
@@ -859,9 +850,9 @@ Genera un calendario para 7 dias con:
 - Formato (foto, video, carrusel, historia)
 
 En espanol, practico y realista para una tienda de electrodomesticos en Guatemala."""
-        
-        r = cliente.models.generate_content(model="gemini-2.5-flash-lite", contents=prompt)
-        return r.text, context
+
+        texto = _generar_ia(prompt)
+        return (texto if texto else "Ollama y Gemini no estan disponibles ahora mismo."), context
 
     # Flujo de nuevo proveedor
     if step == "proveedor_waiting_contacto":
@@ -1927,14 +1918,14 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
     if step == "waiting_cost":
         try:
             cost = float(message.strip().replace("Q","").replace("q","").strip())
-            from database.aronium import connect, add_stock
+            from database.aronium import nimbo_connect, add_stock
             name = context["product_name"].title()
             price = context["price"]
             qty = context.get("quantity", 0)
-            conn = connect()
+            conn = nimbo_connect()
             cur = conn.cursor()
             cur.execute(
-                "INSERT INTO Product (Name, Code, Price, Cost, IsEnabled) VALUES (?, ?, ?, ?, 1)",
+                "INSERT INTO Producto (Nombre, Codigo, Precio, Costo, Activo) VALUES (?, ?, ?, ?, 1)",
                 (name, "", price, cost)
             )
             conn.commit()

@@ -56,7 +56,7 @@ register(
     list_products
 )
 import re
-from database.aronium import add_stock, remove_stock, get_products, connect
+from database.aronium import add_stock, remove_stock, get_products, nimbo_connect
 
 
 def _quitar_articulo(query):
@@ -97,9 +97,9 @@ register("inventory.remove_stock", remove_stock_tool)
 def update_price_tool(data):
     query = _quitar_articulo(data.get("query", ""))
     price = data.get("price", 0)
-    conn = connect()
+    conn = nimbo_connect()
     cur = conn.cursor()
-    cur.execute("UPDATE Product SET Price=? WHERE Name LIKE ?", (price, f"%{query}%"))
+    cur.execute("UPDATE Producto SET Precio=? WHERE Nombre LIKE ?", (price, f"%{query}%"))
     conn.commit()
     affected = cur.rowcount
     conn.close()
@@ -111,9 +111,9 @@ register("inventory.update_price", update_price_tool)
 
 def delete_product_tool(data):
     query = data.get("query", "")
-    conn = connect()
+    conn = nimbo_connect()
     cur = conn.cursor()
-    cur.execute("UPDATE Product SET IsEnabled=0 WHERE Name LIKE ?", (f"%{query}%",))
+    cur.execute("UPDATE Producto SET Activo=0 WHERE Nombre LIKE ?", (f"%{query}%",))
     conn.commit()
     affected = cur.rowcount
     conn.close()
@@ -123,19 +123,16 @@ def delete_product_tool(data):
 
 register("inventory.delete", delete_product_tool)
 
-from database.aronium import add_stock, remove_stock, get_products, connect
-
 
 def create_product_tool(data):
-    from database.aronium import connect, add_stock
     name = data.get("query", "").title()
     price = data.get("price", 0)
     cost = data.get("cost", 0)
     quantity = data.get("quantity", 0)
-    conn = connect()
+    conn = nimbo_connect()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO Product (Name, Code, Price, Cost, IsEnabled) VALUES (?, ?, ?, ?, 1)",
+        "INSERT INTO Producto (Nombre, Codigo, Precio, Costo, Activo) VALUES (?, ?, ?, ?, 1)",
         (name, "", price, cost)
     )
     conn.commit()
@@ -162,12 +159,11 @@ register("inventory.set_min_stock", set_min_stock_tool)
 
 
 def update_cost_tool(data):
-    from database.aronium import connect
     query = _quitar_articulo(data.get("query", ""))
     cost = data.get("cost", 0)
-    conn = connect()
+    conn = nimbo_connect()
     cur = conn.cursor()
-    cur.execute("UPDATE Product SET Cost=? WHERE Name LIKE ?", (cost, f"%{query}%"))
+    cur.execute("UPDATE Producto SET Costo=? WHERE Nombre LIKE ?", (cost, f"%{query}%"))
     conn.commit()
     affected = cur.rowcount
     conn.close()

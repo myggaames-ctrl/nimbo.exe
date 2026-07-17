@@ -2,21 +2,28 @@
 Herramienta de Generacion de Contenido
 """
 from core.tool_registry import register
-from google import genai
+from services.ollama_service import llamar_ollama
 import os
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-_gemini = None
-if GEMINI_API_KEY:
-    _gemini = genai.Client(api_key=GEMINI_API_KEY)
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 NEGOCIO = "Mi Cocina Electrodomesticos Guatemala - tienda de electrodomesticos y repuestos"
 
 def _generar(prompt):
-    if not _gemini:
-        return "Gemini no configurado."
+    """Intenta Ollama local (qwen2.5:7b) primero, cae a Gemini si Ollama no
+    esta corriendo o no responde."""
     try:
-        r = _gemini.models.generate_content(model="gemini-2.5-flash-lite", contents=prompt)
+        return llamar_ollama(prompt).text
+    except Exception:
+        pass
+
+    gemini_key = os.environ.get("GEMINI_API_KEY", "")
+    if not gemini_key:
+        return "Ollama y Gemini no estan disponibles ahora mismo."
+    try:
+        from google import genai
+        cliente = genai.Client(api_key=gemini_key)
+        r = cliente.models.generate_content(model="gemini-2.5-flash-lite", contents=prompt)
         return r.text
     except Exception as e:
         return f"Error: {e}"
@@ -201,7 +208,7 @@ def publicar_tool(data):
     
     # Buscar video generado
     import os
-    video_dir = "/home/ictor_axtor/micocina-dashboard/static/videos"
+    video_dir = os.path.join(BASE_DIR, "static", "videos")
     video_path = None
     if os.path.exists(video_dir):
         videos = sorted([f for f in os.listdir(video_dir) if f.endswith('.mp4')], reverse=True)

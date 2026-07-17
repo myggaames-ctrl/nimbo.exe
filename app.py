@@ -31,7 +31,8 @@ from core.auth import (
 from core.configuracion import init_configuracion, get_config, set_config
 import tools
 
-load_dotenv('/home/ictor_axtor/micocina-dashboard/.env')
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(BASE_DIR, '.env'))
 
 app = Flask(__name__)
 app.secret_key = "nimbo-secret-key-2026"
@@ -50,6 +51,11 @@ mail.init_app(app)
 # ── Login / Roles ──────────────────────────────────────────
 init_usuarios()
 init_configuracion()
+
+# ── Catalogo propio (Producto/Stock, independiente de Aronium) ─────────────
+from database.aronium import init_productos, migrar_productos_desde_aronium
+init_productos()
+migrar_productos_desde_aronium()
 
 from database.aronium import init_cotizaciones
 init_cotizaciones()
@@ -181,7 +187,7 @@ def admin_o_tecnico_required(f):
 # ── Configuración ──────────────────────────────────────────
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 ARONIUM_DB = os.environ.get(
-    "ARONIUM_DB",
+    "ARONIUM_DB_PATH",
     "/mnt/c/Users/Victor Paxtor/AppData/Local/Aronium/Data/pos.db"
 )
 
@@ -671,7 +677,10 @@ def chat():
     # ==================================================
     from core.nimbo import send as nimbo_send_gemini
     ctx_gemini = session.get("nimbo_ctx_gemini", {})
-    respuesta_tool, ctx_gemini = nimbo_send_gemini(mensaje, context=ctx_gemini, role=current_user.rol)
+    try:
+        respuesta_tool, ctx_gemini = nimbo_send_gemini(mensaje, context=ctx_gemini, role=current_user.rol)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
     session["nimbo_ctx_gemini"] = ctx_gemini
     if respuesta_tool:
         is_html = "<a " in str(respuesta_tool)
@@ -1184,12 +1193,12 @@ def db_customers():
 @app.route("/api/db/products/add", methods=["POST"])
 @login_required
 def db_add_product():
-    from database.aronium import connect
+    from database.aronium import nimbo_connect
     data = request.json
     try:
-        conn = connect()
+        conn = nimbo_connect()
         cur = conn.cursor()
-        cur.execute("INSERT INTO Product (Name, Code, Price, Cost, IsEnabled) VALUES (?, ?, ?, ?, 1)",
+        cur.execute("INSERT INTO Producto (Nombre, Codigo, Precio, Costo, Activo) VALUES (?, ?, ?, ?, 1)",
             (data["Name"], data["Code"], data["Price"], data["Cost"]))
         conn.commit()
         conn.close()
@@ -1200,12 +1209,12 @@ def db_add_product():
 @app.route("/api/db/products/<int:pid>", methods=["PUT"])
 @login_required
 def db_edit_product(pid):
-    from database.aronium import connect
+    from database.aronium import nimbo_connect
     data = request.json
     try:
-        conn = connect()
+        conn = nimbo_connect()
         cur = conn.cursor()
-        cur.execute("UPDATE Product SET Name=?, Code=?, Price=?, Cost=? WHERE Id=?",
+        cur.execute("UPDATE Producto SET Nombre=?, Codigo=?, Precio=?, Costo=? WHERE Id=?",
             (data["Name"], data["Code"], data["Price"], data["Cost"], pid))
         conn.commit()
         conn.close()
@@ -1216,11 +1225,11 @@ def db_edit_product(pid):
 @app.route("/api/db/products/<int:pid>", methods=["DELETE"])
 @login_required
 def db_delete_product(pid):
-    from database.aronium import connect
+    from database.aronium import nimbo_connect
     try:
-        conn = connect()
+        conn = nimbo_connect()
         cur = conn.cursor()
-        cur.execute("UPDATE Product SET IsEnabled=0 WHERE Id=?", (pid,))
+        cur.execute("UPDATE Producto SET Activo=0 WHERE Id=?", (pid,))
         conn.commit()
         conn.close()
         return jsonify({"ok": True})
@@ -1286,9 +1295,8 @@ def db_set_stock_minimo():
 @app.route("/api/download/<path:filename>")
 @login_required
 def download_file(filename):
-    import os
     from flask import send_file
-    filepath = f"/home/ictor_axtor/micocina-dashboard/{filename}"
+    filepath = os.path.join(BASE_DIR, filename)
     if os.path.exists(filepath):
         return send_file(filepath, as_attachment=True)
     return jsonify({"error": "Archivo no encontrado"}), 404
@@ -1301,8 +1309,7 @@ def db_alertas_precios():
     return jsonify(get_alertas_precios())
 
 
-import os
-UPLOAD_FOLDER = '/home/ictor_axtor/micocina-dashboard/static/fotos'
+UPLOAD_FOLDER = os.path.join(BASE_DIR, 'static', 'fotos')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 @app.route("/api/productos/foto", methods=["POST"])
@@ -1351,7 +1358,7 @@ def get_fotos_producto(producto_id):
     return jsonify(fotos)
 
 
-UPLOAD_FOLDER_SERVICIO = '/home/ictor_axtor/micocina-dashboard/static/fotos_servicio'
+UPLOAD_FOLDER_SERVICIO = os.path.join(BASE_DIR, 'static', 'fotos_servicio')
 
 @app.route("/api/servicio/fotos", methods=["POST"])
 @admin_o_tecnico_required

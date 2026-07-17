@@ -1,9 +1,12 @@
 """
 Herramienta de Clientes
 """
+import os
 import re
 from datetime import datetime
 from core.tool_registry import register
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 from database.aronium import (
     crear_cliente_completo, buscar_cliente_completo,
     get_todos_clientes, get_historial_cliente, get_clientes_inactivos, get_descuentos,
@@ -341,7 +344,7 @@ def excel_clientes_tool(data):
             c["TotalGastado"] or 0,
             c["UltimaCompra"] or ""
         ])
-    filename = "/home/ictor_axtor/micocina-dashboard/clientes_" + datetime.now().strftime("%Y%m%d") + ".xlsx"
+    filename = os.path.join(BASE_DIR, "clientes_" + datetime.now().strftime("%Y%m%d") + ".xlsx")
     wb.save(filename)
     basename = "clientes_" + datetime.now().strftime("%Y%m%d") + ".xlsx"
     return f"DOWNLOAD:{basename}"

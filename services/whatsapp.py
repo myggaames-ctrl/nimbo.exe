@@ -2,7 +2,8 @@ import os
 import requests
 from dotenv import load_dotenv
 
-load_dotenv('/home/ictor_axtor/micocina-dashboard/.env')
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+load_dotenv(os.path.join(BASE_DIR, '.env'))
 
 WA_TOKEN = os.getenv("WA_TOKEN", "")
 WA_PHONE_ID = os.getenv("WA_PHONE_ID", "")

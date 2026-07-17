@@ -1,5 +1,8 @@
+const os = require("os");
+const path = require("path");
+
 const { GatewayChatClient } = require(
-    "/home/ictor_axtor/.npm-global/lib/node_modules/openclaw/dist/gateway-chat-BNvrNtAY.js"
+    path.join(os.homedir(), ".npm-global/lib/node_modules/openclaw/dist/gateway-chat-BNvrNtAY.js")
 );
 
 (async () => {

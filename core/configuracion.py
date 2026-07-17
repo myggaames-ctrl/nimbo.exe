@@ -2,9 +2,11 @@
 Configuracion del negocio (clave/valor)
 Nimbo AI
 """
+import os
 import sqlite3
 
-NIMBO_DB = '/home/ictor_axtor/micocina-dashboard/nimbo.db'
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+NIMBO_DB = os.path.join(BASE_DIR, 'nimbo.db')
 
 DEFAULTS = {
     "negocio_nombre": "Mi Cocina",

@@ -1,8 +1,32 @@
 """
 Herramienta de Contabilidad
 """
+import os
 from core.tool_registry import register
 from database.aronium import registrar_gasto, get_gastos, get_balance_mes, get_valor_inventario, get_margen_productos
+from services.ollama_service import analizar_con_ollama
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _analisis_ia(prompt):
+    """Analisis financiero: intenta Ollama local (gemma2:9b) primero, cae a
+    Gemini si Ollama no esta corriendo. Retorna None si ninguno esta disponible."""
+    try:
+        return analizar_con_ollama(prompt).text
+    except Exception:
+        pass
+
+    gemini_key = os.environ.get("GEMINI_API_KEY", "")
+    if not gemini_key:
+        return None
+    try:
+        from google import genai
+        cliente = genai.Client(api_key=gemini_key)
+        r = cliente.models.generate_content(model="gemini-2.5-flash-lite", contents=prompt)
+        return r.text
+    except Exception:
+        return None
 
 def gasto_tool(data):
     if isinstance(data, str): return "Error: datos invalidos"
@@ -105,10 +129,7 @@ def sugerencias_precios_tool(data):
     buenos = [a for a in analizados if a["bien"]]
     bajos = [a for a in analizados if not a["bien"]]
 
-    import os
-    gemini_key = os.environ.get("GEMINI_API_KEY", "")
-
-    if not gemini_key:
+    def _resumen_sin_ia():
         resp = f"Analisis de precios ({len(analizados)} productos, margen objetivo 30%):\n\n"
         if buenos:
             resp += f"BIEN ({len(buenos)}):\n"
@@ -120,9 +141,6 @@ def sugerencias_precios_tool(data):
                 sugerido = f"Q{a['precio_sugerido']:.2f}" if a["precio_sugerido"] else "N/A"
                 resp += f"- {a['nombre']}: {a['margen_real']}% margen actual (Q{a['precio_actual']:.2f}) -> sugerido {sugerido}\n"
         return resp
-
-    from google import genai
-    cliente = genai.Client(api_key=gemini_key)
 
     tabla_buenos = "\n".join(
         f"- {a['nombre']}: costo Q{a['costo']:.2f}, precio Q{a['precio_actual']:.2f}, margen real {a['margen_real']}%"
@@ -163,8 +181,8 @@ Responde en espanol, de forma clara y directa, con:
 3. Cuales necesitan ajuste de precio y por cuanto deben subir (usa exactamente los precios sugeridos que te di, no otros)
 4. Una recomendacion practica para una tienda pequena en Guatemala: si el ajuste es grande, sugiere subir el precio de forma gradual para no espantar clientes. Si el grupo "NECESITA AJUSTE" esta vacio, dilo claramente y no inventes ajustes."""
 
-    r = cliente.models.generate_content(model="gemini-2.5-flash-lite", contents=prompt)
-    return r.text
+    texto = _analisis_ia(prompt)
+    return texto if texto else _resumen_sin_ia()
 
 register("contabilidad.sugerencias_precios", sugerencias_precios_tool)
 
@@ -223,14 +241,7 @@ register("contabilidad.equilibrio", equilibrio_tool)
 
 def analisis_completo_tool(data):
     from database.aronium import get_datos_completos_empresa
-    from google import genai
-    import os
-    
-    gemini_key = os.environ.get("GEMINI_API_KEY", "")
-    if not gemini_key:
-        return "Gemini no configurado."
-    
-    cliente = genai.Client(api_key=gemini_key)
+
     datos = get_datos_completos_empresa()
     
     prompt = f"""Eres el analista financiero y estratega de negocios de Mi Cocina Electrodomesticos Guatemala.
@@ -275,9 +286,9 @@ Con base en estos datos REALES proporciona:
 6. PROYECCION: Si implementa las estrategias, que resultado puede esperar
 
 Responde en espanol, de forma directa y practica para un negocio guatemalteco pequeno."""
-    
-    r = cliente.models.generate_content(model="gemini-2.5-flash-lite", contents=prompt)
-    return r.text
+
+    texto = _analisis_ia(prompt)
+    return texto if texto else "No pude generar el analisis: ni Ollama ni Gemini estan disponibles."
 
 register("contabilidad.analisis_completo", analisis_completo_tool)
 
@@ -356,7 +367,7 @@ def excel_contabilidad_tool(data):
         ])
     ws4.append(["TOTAL", "", "", "", "", inv["total_inventario"]])
     
-    filename = f"/home/ictor_axtor/micocina-dashboard/contabilidad_{now.strftime('%Y_%m')}.xlsx"
+    filename = os.path.join(BASE_DIR, f"contabilidad_{now.strftime('%Y_%m')}.xlsx")
     wb.save(filename)
     return f"DOWNLOAD:contabilidad_{now.strftime('%Y_%m')}.xlsx"
 

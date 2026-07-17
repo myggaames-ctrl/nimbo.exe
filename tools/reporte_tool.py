@@ -1,8 +1,11 @@
 """
 Herramienta de Reportes
 """
+import os
 from core.tool_registry import register
 from database.aronium import get_reporte_dia, get_reporte_periodo, get_cuadre_pos_dia, crear_ajuste_pos
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def reporte_dia_tool(data):
     r = get_reporte_dia()
@@ -149,7 +152,7 @@ def excel_reporte_tool(data):
         ws.append(list(row))
     conn.close()
 
-    filename = f"/home/ictor_axtor/micocina-dashboard/{titulo}.xlsx"
+    filename = os.path.join(BASE_DIR, f"{titulo}.xlsx")
     wb.save(filename)
     return f"DOWNLOAD:{titulo}.xlsx"
 

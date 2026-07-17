@@ -8,8 +8,13 @@ Chat en lenguaje natural en espanol que controla todo el negocio.
 - Backend: Flask (Python 3.10) en WSL2, puerto 5000
 - IA Principal: Google Gemini 2.5 Flash Lite via API
 - Agente PC: OpenClaw con Gemini (puerto 18789)
-- Base de datos 1: Aronium SQLite /mnt/c/Users/Victor Paxtor/AppData/Local/Aronium/Data/pos.db
-- Base de datos 2: Nimbo SQLite /home/ictor_axtor/micocina-dashboard/nimbo.db
+- Base de datos 1: Aronium SQLite /mnt/c/Users/Victor Paxtor/AppData/Local/Aronium/Data/pos.db -
+  ya NO es la fuente de productos/stock (ver seccion "Catalogo propio (Producto/Stock)" mas
+  abajo); se sigue usando solo para reportes de ventas reales hechas en la caja fisica de
+  Aronium (get_sales_today/get_sales_month/get_top_products/get_balance_mes) y su catalogo
+  nativo de clientes (get_customers) - nada de eso se toco en esta migracion.
+- Base de datos 2: Nimbo SQLite /home/ictor_axtor/micocina-dashboard/nimbo.db - desde esta
+  migracion tambien es la unica fuente de productos, stock y kardex (antes vivian en Aronium).
 
 ## Arranque diario
 - Terminal 1: ~/nimbo-start.sh
@@ -154,9 +159,11 @@ Usuario escribe mensaje
 - core/configuracion.py - Configuracion del negocio (clave/valor)
 - core/detectors/ - inventory, service, cliente, venta, proveedor, contenido, reporte, evento, contabilidad, cotizacion, caja
 - tools/ - mismo set de modulos, carga automatica via __init__.py
-- database/aronium.py - Todas las funciones de BD. get_products(search) intenta busqueda
-  fuzzy con difflib.SequenceMatcher (contra el nombre completo y cada palabra del nombre)
-  si la busqueda exacta (LIKE) no encuentra nada. services/inventory.py delega su search()
+- database/aronium.py - Todas las funciones de BD (el nombre del archivo es historico, de
+  cuando todo el acceso a datos pasaba por Aronium - ya no es el caso, ver "Catalogo propio
+  (Producto/Stock)" mas abajo). get_products(search) intenta busqueda fuzzy con
+  difflib.SequenceMatcher (contra el nombre completo y cada palabra del nombre) si la
+  busqueda exacta (LIKE) no encuentra nada. services/inventory.py delega su search()
   aqui para heredar el mismo fallback. get_product_by_id(id)/get_product_by_code(code) para
   lookup exacto (usado por Caja y por cotizacion.aceptar en vez de la busqueda fuzzy).
 - services/whatsapp.py - WhatsApp Business API
@@ -172,6 +179,66 @@ Usuario escribe mensaje
 - templates/login.html, setup.html, forgot_password.html, reset_password.html
 
 ## Modulos completados
+- Catalogo propio (Producto/Stock): hasta esta migracion, el catalogo de productos y las
+  cantidades en stock vivian unicamente en pos.db (Aronium) - Nimbo dependia de que Aronium
+  estuviera instalado y accesible (via ARONIUM_DB_PATH) para casi cualquier operacion de
+  inventario/ventas. Ahora viven en 2 tablas propias de nimbo.db:
+  - Producto (Id, Codigo, Nombre, Precio, Costo, Categoria, Descripcion, Unidad, Activo,
+    FechaCreado). Categoria y Unidad existen en el esquema pero ningun flujo las llena
+    todavia (quedan para una integracion futura, ej. Unidad con las presentaciones de
+    "Unidades de medida" mas abajo, que hoy vive en su propia tabla UnidadMedida sin
+    relacion con esta columna). Descripcion tampoco se usa activamente - la descripcion
+    "real" de un producto para el chat/pagina publica sigue siendo ProductoInfo
+    (set_descripcion_producto/get_descripcion_producto, ver seccion Contenido), Producto.
+    Descripcion solo se lee como fallback en get_product_by_code() si ProductoInfo no
+    tiene nada, igual que antes se leia Product.Description de Aronium.
+  - Stock (Id, ProductoId UNIQUE, Cantidad, StockMinimo, UltimaActualizacion). Aronium
+    soportaba multiples almacenes (WarehouseId); como nada en el codebase pasaba nunca un
+    warehouse_id distinto de 1, la tabla propia es 1 fila por producto y ese concepto se
+    dejo fuera. StockMinimo es un campo nuevo en el esquema pero NO esta conectado a nada
+    todavia (queda en 0) - el stock minimo por producto que de verdad usan get_alertas_stock/
+    get_pedidos_sugeridos/set_stock_minimo sigue siendo la tabla StockMinimo ya existente
+    (ProductId/ProductName/Minimo), que no se toco; son dos campos con el mismo proposito
+    sin consolidar, pendiente para una limpieza futura.
+  - database.aronium.init_productos() crea ambas tablas (se llama en app.py junto al resto
+    de init_*). database.aronium.migrar_productos_desde_aronium() se llama una sola vez
+    despues, tambien en app.py: si Producto ya tiene filas no hace nada (idempotente, para
+    no correr en cada arranque); si no, intenta conectar a pos.db (Aronium) - si existe y
+    tiene una tabla Product, copia cada producto preservando EXACTAMENTE el mismo Id que
+    tenia en Aronium (usa PRAGMA table_info para tolerar que el pos.db real no tenga
+    columnas Code/Description/IsEnabled) y suma su Stock por producto entre almacenes; si
+    pos.db no existe o no es alcanzable (negocio nuevo, ver ARONIUM_DB_PATH en .env),
+    Producto/Stock se quedan vacios sin error, listos para crear productos desde cero.
+    Preservar el mismo Id es critico: Kardex, GarantiaProducto, ItemCombo, UnidadMedida,
+    StockMinimo, Descuento (tipo producto), CodigoBarrasGenerado y ProductoProveedor ya
+    tenian filas en nimbo.db con un ProductId/ProductoId suelto (sin FK real) apuntando al
+    Id que el producto tenia en Aronium - si la migracion reasignara Ids nuevos esas
+    referencias quedarian huerfanas.
+  - Funciones migradas en database/aronium.py (mismos nombres, parametros y claves de
+    retorno que antes - Id/Name/Code/Price/Cost/Stock/Description en ingles, aunque las
+    columnas fisicas de Producto/Stock esten en espanol; nada que consuma estas funciones
+    en el resto del codebase cambio): get_products(), get_product_by_code(),
+    get_product_by_id(), get_low_stock(), add_stock(), remove_stock(), get_stock(),
+    _buscar_productos_similares() (fallback fuzzy), get_valor_inventario(),
+    get_margen_productos(), get_productos_sin_codigo(), asignar_codigo_barras(),
+    _codigo_ean_existe(). add_stock()/remove_stock() conservan el parametro warehouse_id
+    por compatibilidad de firma pero ya no lo usan. services/inventory.py (search,
+    search_barcode, list) y las herramientas de creacion/edicion/eliminacion de producto
+    (tools/inventory_tool.py, el flujo de creacion de producto por chat en core/nimbo.py,
+    y /api/db/products en app.py) tambien se migraron a la tabla Producto propia.
+    get_reporte_dia() tambien se migro en la parte que busca el costo de los productos
+    vendidos por Nimbo (Venta.Descripcion) - antes ese lookup de costo iba, por error de
+    diseno original, contra el Product de Aronium.
+  - Lo que SIGUE dependiendo de Aronium (fuera del alcance de esta migracion, connect()
+    sigue apuntando a pos.db para esto): get_sales_today()/get_sales_month()/
+    get_top_products() (reportes de ventas hechas directamente en la caja fisica de
+    Aronium, un sistema de ventas distinto al propio de Nimbo - ver Caja Registradora),
+    get_customers() (catalogo nativo de clientes de Aronium, no relacionado con la tabla
+    Cliente de Nimbo) y el calculo de costos_productos dentro de get_balance_mes(), que
+    suma el costo de los items de Document/DocumentItem (historial de ventas nativo de
+    Aronium) - ese calculo ya mezclaba ingresos de Nimbo (tabla Venta) con costos de
+    Aronium (Document/DocumentItem) desde antes de esta migracion, no se toco por no ser
+    parte del pedido y por el riesgo de cambiar numeros de contabilidad ya en uso.
 - Inventario: CRUD, kardex, alertas stock, fotos, descripcion
   - Alertas predictivas: database.aronium.get_alertas_predictivas() calcula, para cada
     producto, el promedio de unidades de SALIDA por dia en el Kardex de los ultimos 30 dias
@@ -911,8 +978,8 @@ Usuario escribe mensaje
     desglose linea por linea (mismo patron de fetch-on-click que verFotosServicio()).
 
 ## Tablas nimbo.db
-Cliente, OrdenServicio, HistorialOrden, Kardex, StockMinimo, ProductoFoto, ProductoInfo,
-FotoOrdenServicio, InformeRevision, TarifaManoObra,
+Producto, Stock, Cliente, OrdenServicio, HistorialOrden, Kardex, StockMinimo, ProductoFoto,
+ProductoInfo, FotoOrdenServicio, InformeRevision, TarifaManoObra,
 Venta, ResumenTrimestral, PagoFijo, RecordatorioPersonal, ChatHistorial,
 Gasto, ResumenContable, Proveedor, ContactoProveedor, ProductoProveedor,
 OrdenCompra, ItemOrdenCompra, HistorialPrecio, Usuario, PasswordResetToken, Configuracion,
@@ -946,6 +1013,12 @@ MAIL_SERVER, MAIL_PORT, MAIL_USERNAME, MAIL_PASSWORD, ADMIN_EMAIL
    PROVEEDOR_ORDEN_INICIO: que nunca se implemento en core/nimbo.py (gap preexistente,
    detectado al integrar Cuentas por pagar - ver esa seccion). La unica via funcional
    para crear una OrdenCompra por chat sigue siendo "genera orden para X"
+10. Stock.StockMinimo (columna nueva de la tabla Stock propia, ver "Catalogo propio
+    (Producto/Stock)") no esta consolidada con la tabla StockMinimo ya existente
+    (ProductId/ProductName/Minimo) - son dos lugares con el mismo dato, StockMinimo
+    sigue siendo el que de verdad usan las alertas/pedidos sugeridos.
+11. Categoria y Unidad de la tabla Producto existen en el esquema pero ningun flujo las
+    llena o las lee todavia (ver misma seccion).
 
 FLUJO EN TIENDA (pendiente):
 - Calculo automatico de comision POS solo cuando paga con tarjeta (Caja ya distingue

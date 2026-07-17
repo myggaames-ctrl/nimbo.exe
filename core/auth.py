@@ -3,13 +3,15 @@ Autenticacion y roles
 Nimbo AI
 """
 import json
+import os
 import secrets
 import sqlite3
 from datetime import datetime, timedelta
 from flask_login import UserMixin
 from werkzeug.security import generate_password_hash, check_password_hash
 
-NIMBO_DB = '/home/ictor_axtor/micocina-dashboard/nimbo.db'
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+NIMBO_DB = os.path.join(BASE_DIR, 'nimbo.db')
 
 ROLES = ("admin", "empleado", "tecnico")
 RESET_TOKEN_TTL_MINUTOS = 60
