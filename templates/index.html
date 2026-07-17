@@ -1497,6 +1497,7 @@ function showPanel(id) {
   if (id === 'confignegocio') loadConfigNegocio();
   if (id === 'caja') loadCajaEstado();
   if (id === 'servicio') { loadOrdenesServicio(); loadPipelineServicio(); }
+  if (id === 'chat') refocusInputActivo();
 }
 
 // ── CLOCK ──────────────────────────────────────────────
@@ -1575,6 +1576,7 @@ async function sendChat() {
   const msg = input.value.trim();
   if (!msg) return;
   input.value = '';
+  input.focus();
 
   const now = new Date().toLocaleTimeString('es-GT', {hour:'2-digit',minute:'2-digit'});
   addMsgToUI('user', msg, now);
@@ -1607,6 +1609,7 @@ const d = JSON.parse(text);
     document.getElementById('loading-msg')?.remove();
     if (d.response) addMsgToUI('assistant', d.response, new Date().toLocaleTimeString('es-GT',{hour:'2-digit',minute:'2-digit'}), d.html);
     else addMsgToUI('assistant', '⚠️ ' + (d.error || 'Error desconocido'), '');
+    input.focus();
   } catch(e) {
     console.error(e);
 
@@ -1617,6 +1620,7 @@ const d = JSON.parse(text);
         '⚠️ ' + e.message,
         ''
     );
+    input.focus();
   }
 }
 
@@ -2973,7 +2977,43 @@ function actualizarTotalDenom(containerId) {
 
 function cerrarModal(id) {
   document.getElementById(id).style.display = 'none';
+  refocusInputActivo();
 }
+
+// ── AUTO-FOCUS PERMANENTE (chat + buscador de Caja) ────────────────────
+// Permite usar el lector de codigo de barras (actua como teclado) sin tener
+// que hacer click primero en el campo correcto - reenfoca el input relevante
+// segun el panel activo (#chat-input si panel-chat esta activo,
+// #caja-buscar-producto si panel-caja esta activo Y hay turno abierto). No
+// hace nada si hay un modal abierto (el usuario puede estar escribiendo ahi,
+// ej. password de identificacion de cobro) - se llama DESPUES de cerrar un
+// modal, nunca mientras esta abierto.
+function refocusInputActivo() {
+  if (document.querySelector('.modal-overlay[style*="flex"]')) return;
+
+  const panelChat = document.getElementById('panel-chat');
+  if (panelChat && panelChat.classList.contains('active')) {
+    document.getElementById('chat-input')?.focus();
+    return;
+  }
+
+  const panelCaja = document.getElementById('panel-caja');
+  if (panelCaja && panelCaja.classList.contains('active')) {
+    const conTurno = document.getElementById('caja-con-turno');
+    if (conTurno && conTurno.style.display !== 'none') {
+      document.getElementById('caja-buscar-producto')?.focus();
+    }
+  }
+}
+
+// Reenfoca al hacer click en cualquier parte de la pantalla, salvo sobre un
+// control interactivo (boton, link, otro input/textarea/select) o dentro de
+// un modal - ahi el click debe hacer lo suyo (o el usuario esta escribiendo
+// en otro campo) sin que le robemos el foco.
+document.addEventListener('click', (e) => {
+  if (e.target.closest('button, a, input, textarea, select, .modal-overlay')) return;
+  refocusInputActivo();
+});
 
 async function loadResumenCajaDia() {
   try {
@@ -3018,6 +3058,7 @@ async function loadCajaEstado() {
       bajoEl.style.display = 'none';
     }
     loadCajaCarrito();
+    refocusInputActivo();
   } catch(e) {}
 }
 
@@ -3077,6 +3118,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const resultados = document.getElementById('caja-resultados-busqueda');
       if (d.error) {
         resultados.innerHTML = `<div class="error-box">${d.error}</div>`;
+        buscador.focus();
         return;
       }
       if (d.multiples) {
@@ -3091,8 +3133,10 @@ document.addEventListener('DOMContentLoaded', () => {
       buscador.value = '';
       cajaCarritoActual = d.items || [];
       renderCajaCarrito();
+      buscador.focus();
     });
   }
+  refocusInputActivo();
 });
 
 async function agregarProductoPorId(productoId) {
@@ -3101,11 +3145,12 @@ async function agregarProductoPorId(productoId) {
     body: JSON.stringify({producto_id: productoId, cantidad: 1})
   });
   const d = await r.json();
-  if (d.error) { alert(d.error); return; }
+  if (d.error) { alert(d.error); document.getElementById('caja-buscar-producto')?.focus(); return; }
   document.getElementById('caja-resultados-busqueda').innerHTML = '';
   document.getElementById('caja-buscar-producto').value = '';
   cajaCarritoActual = d.items || [];
   renderCajaCarrito();
+  document.getElementById('caja-buscar-producto')?.focus();
 }
 
 // -- Apertura de turno --
@@ -3289,6 +3334,7 @@ function abrirModalCobro(metodo) {
 function cerrarModalIdentificacionCobro() {
   cajaCobroMetodoPendiente = null;
   document.getElementById('modal-identificacion-cobro').style.display = 'none';
+  refocusInputActivo();
 }
 
 async function confirmarIdentificacionCobro() {

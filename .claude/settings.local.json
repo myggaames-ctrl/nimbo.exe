@@ -179,7 +179,8 @@
       "Bash(sqlite3 nimbo.db \"UPDATE Producto SET Codigo='7509999999999' WHERE Id=6;\")",
       "Bash(sqlite3 nimbo.db \"UPDATE Producto SET Codigo='' WHERE Id IN \\(4,6\\);\")",
       "Bash(sqlite3 -header -column nimbo.db \"SELECT * FROM Producto WHERE Id=15;\")",
-      "Bash(sqlite3 -header -column nimbo.db \"SELECT * FROM Kardex WHERE ProductId=15;\")"
+      "Bash(sqlite3 -header -column nimbo.db \"SELECT * FROM Kardex WHERE ProductId=15;\")",
+      "Bash(document)"
     ]
   }
 }

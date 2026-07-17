@@ -39,6 +39,19 @@ Usuario escribe mensaje
 -> 4. Si nada -> OpenClaw responde (recibe el contexto como resumen en el
      system prompt, ver openclaw_bridge.py send_to_openclaw(message, contexto))
 
+Auto-focus permanente en #chat-input (templates/index.html, funcion
+refocusInputActivo() + listener global `document.addEventListener('click', ...)`):
+al entrar al panel Chat (showPanel), despues de mandar un mensaje (sendChat, tanto
+si la respuesta llega bien como si falla), y al hacer click en cualquier parte de
+la pantalla que no sea un boton/link/input/textarea/select ni dentro de un modal
+abierto - asi el lector de codigo de barras (que escribe como si fuera un teclado)
+siempre le llega al chat sin que el usuario tenga que hacer click primero en el
+campo. Mismo mecanismo se reusa para el buscador de Caja, ver seccion Caja
+Registradora mas abajo - refocusInputActivo() decide a cual de los dos enfocar
+segun cual panel este activo (`panel-chat`/`panel-caja`), o no hace nada si hay un
+modal abierto encima (para no robarle el foco a un campo como la contraseña de
+identificacion de cobro).
+
 ## Login y roles
 - Flask-Login. Roles: admin (acceso total), empleado (solo inventario, ventas y clientes;
   el resto de categorias de intent quedan bloqueadas tanto en las rutas API como dentro
@@ -664,6 +677,14 @@ Usuario escribe mensaje
     con verificacion de stock de todos los items antes de descontar ninguno) + registra Venta
     + Kardex (via remove_stock) + genera el texto del ticket (services/ticket.py) en la misma
     respuesta. Reimpresion simplificada (sin detalle por producto) via /api/caja/imprimir-ticket.
+  - #caja-buscar-producto tiene auto-focus permanente (misma funcion refocusInputActivo() del
+    chat, ver seccion Arquitectura del chat) mientras el panel Caja este activo Y haya un turno
+    abierto (#caja-con-turno visible): al entrar al panel (loadCajaEstado, despues de resolver
+    si hay turno), despues de agregar un producto al carrito (por Enter o clickeando una
+    coincidencia de la lista de "multiples"), despues de cerrar cualquier modal de Caja
+    (cerrarModal/cerrarModalIdentificacionCobro llaman refocusInputActivo()), y al hacer click
+    en cualquier parte de la pantalla que no sea un control interactivo. Si no hay turno
+    abierto no se fuerza foco (el campo ni siquiera es visible).
   - Cambio: para Efectivo, "cuanto paga el cliente" es opcional (por defecto = total exacto);
     el desglose de billetes recibidos es opcional/colapsable ("detalle de billetes") - si se
     da, database.aronium._calcular_cambio_denominaciones() arma el vuelto en billetes
