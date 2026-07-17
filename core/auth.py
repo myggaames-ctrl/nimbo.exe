@@ -143,6 +143,22 @@ def existe_algun_usuario():
     return count > 0
 
 
+def existe_admin():
+    """A diferencia de existe_algun_usuario(), solo cuenta usuarios con Rol='admin'.
+    Lo usa el paso 2 del wizard de /setup para decidir si la cuenta admin ya se
+    creo en un intento anterior de ese mismo paso - existe_algun_usuario() conto
+    tambien empleados/tecnicos creados por otras vias (ej. el paso 6, opcional, de
+    un intento de onboarding anterior que se reinicio sin completarse), lo que
+    hacia que el paso 2 se saltara crear_usuario() en silencio aunque todavia no
+    hubiera ningun admin."""
+    conn = _connect()
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM Usuario WHERE Rol='admin'")
+    count = cur.fetchone()[0]
+    conn.close()
+    return count > 0
+
+
 def get_usuario_by_id(user_id):
     conn = _connect()
     cur = conn.cursor()

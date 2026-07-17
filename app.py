@@ -10,6 +10,7 @@ import csv
 import io
 import re
 import unicodedata
+import logging
 from functools import wraps
 from datetime import datetime
 from dotenv import load_dotenv
@@ -27,7 +28,7 @@ from core.tool_registry import list_tools
 from services.skills_service import SkillsService
 from services.mail_service import mail, enviar_reset_password
 from core.auth import (
-    init_usuarios, get_usuario_by_id, verify_login, existe_algun_usuario,
+    init_usuarios, get_usuario_by_id, verify_login, existe_algun_usuario, existe_admin,
     listar_usuarios, crear_usuario, set_usuario_activo, cambiar_password_usuario,
     set_permisos_usuario, MODULOS_DISPONIBLES,
     get_admin_activo, crear_token_reset, validar_token_reset, usar_token_reset
@@ -37,6 +38,9 @@ import tools
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(BASE_DIR, '.env'))
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("nimbo.setup")
 
 app = Flask(__name__)
 app.secret_key = "nimbo-secret-key-2026"
@@ -270,8 +274,18 @@ def setup_paso(paso):
                 return _avanzar_onboarding(2)
 
         elif paso == 2:
-            if existe_algun_usuario():
-                # La cuenta admin ya se creo en un intento anterior de este paso
+            if existe_admin():
+                # La cuenta admin ya se creo en un intento anterior de este paso.
+                # OJO: antes esto revisaba existe_algun_usuario() (cualquier fila
+                # en Usuario), lo que hacia que este paso se saltara crear_usuario()
+                # en silencio si ya habia un empleado/tecnico de un intento de
+                # onboarding anterior, aunque nunca se hubiera creado un admin -
+                # ver existe_admin() en core/auth.py.
+                logger.warning(
+                    "setup paso 2: ya existe un admin, se omite crear_usuario() "
+                    "(dueno_nombre=%r, username=%r)",
+                    request.form.get("dueno_nombre", ""), request.form.get("username", "")
+                )
                 return _avanzar_onboarding(3)
             dueno_nombre = request.form.get("dueno_nombre", "").strip()
             username = request.form.get("username", "").strip()
@@ -286,8 +300,16 @@ def setup_paso(paso):
                     crear_usuario(username, password, dueno_nombre, "admin")
                     set_config("dueno_nombre", dueno_nombre)
                     set_config("admin_email", email)
+                    logger.info(
+                        "setup paso 2: admin creado OK (username=%r, dueno_nombre=%r)",
+                        username, dueno_nombre
+                    )
                     return _avanzar_onboarding(3)
                 except Exception as e:
+                    logger.exception(
+                        "setup paso 2: fallo crear_usuario() (username=%r, dueno_nombre=%r)",
+                        username, dueno_nombre
+                    )
                     error = str(e)
 
         elif paso == 3:

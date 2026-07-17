@@ -185,7 +185,8 @@
       "Bash(journalctl -k --since \"-30 min\")",
       "Bash(ollama ps *)",
       "Bash(getent hosts *)",
-      "Bash(netstat -tlnp)"
+      "Bash(netstat -tlnp)",
+      "Bash(git log *)"
     ]
   }
 }
