@@ -1195,6 +1195,25 @@
       </div>
     </div>
 
+    <div class="modal-overlay" id="modal-importar-productos" style="display:none">
+      <div class="modal-box" style="max-width:560px">
+        <div class="card-title">📦 Importar productos desde Excel/CSV</div>
+        <div class="text-muted" style="font-size:13px;margin-bottom:10px">
+          Columnas: Nombre y Precio (obligatorias), Costo, Codigo, Stock, StockMinimo, Categoria (opcionales).
+          Si un producto no trae Codigo, se le genera uno automaticamente.
+        </div>
+        <div class="flex gap-2 mb-4">
+          <button class="btn btn-ghost btn-sm" onclick="descargarPlantillaProductos()">⬇️ Descargar plantilla</button>
+        </div>
+        <input type="file" id="importar-productos-file" accept=".csv,.xlsx,.xls" class="input">
+        <div class="flex gap-2" style="margin-top:12px">
+          <button class="btn btn-primary" onclick="importarProductosArchivo()">Importar</button>
+          <button class="btn btn-ghost" onclick="cerrarModal('modal-importar-productos')">Cerrar</button>
+        </div>
+        <div id="importar-productos-resultado" style="margin-top:14px;font-size:13px"></div>
+      </div>
+    </div>
+
     <!-- ══ SQL CONSOLE ══ -->
     <div class="panel" id="panel-sql">
       <div class="card">
@@ -1413,6 +1432,7 @@
         <input class="input" id="inv-search" placeholder="Buscar producto..." style="max-width:300px" oninput="searchInventory()">
         <button class="btn btn-primary" onclick="loadInventory()">↻ Recargar</button>
         <button class="btn btn-primary" onclick="addProduct()">+ Agregar</button>
+        <button class="btn btn-primary" onclick="abrirImportarProductos()">📦 Importar Excel/CSV</button>
       </div>
 
       <div class="card" style="padding:0;overflow:hidden">
@@ -2118,7 +2138,7 @@ async function loadInventory(search='') {
           <td>Q${p.Price || 0}</td>
           <td>Q${p.Cost || 0}</td>
           <td>${p.Stock || 0}</td>
-          <td><button class='btn btn-ghost btn-sm' onclick='subirFoto(${p.Id},"${p.Name}")'>📷</button> <button class='btn btn-ghost btn-sm' onclick='editProduct(${p.Id},"${p.Name}","${p.Code}",${p.Price},${p.Cost})'>✏️</button> <button class='btn btn-danger btn-sm' onclick='deleteProduct(${p.Id},"${p.Name}")'>🗑</button> <button class='btn btn-ghost btn-sm' onclick='addStock(${p.Id},"${p.Name}")'>+</button> <button class='btn btn-ghost btn-sm' onclick='removeStock(${p.Id},"${p.Name}")'>-</button></td>
+          <td><button class='btn btn-ghost btn-sm' onclick='subirFoto(${p.Id},"${p.Name}")'>📷</button> <button class='btn btn-ghost btn-sm' onclick='editProduct(${p.Id},"${p.Name}","${p.Code}",${p.Price},${p.Cost})'>✏️</button> <button class='btn btn-danger btn-sm' onclick='deleteProduct(${p.Id},"${p.Name}")'>🗑</button> <button class='btn btn-ghost btn-sm' onclick='addStock(${p.Id},"${p.Name}")'>+</button> <button class='btn btn-ghost btn-sm' onclick='removeStock(${p.Id},"${p.Name}")'>-</button> <button class='btn btn-ghost btn-sm' onclick='imprimirEtiqueta(${p.Id})' title='Imprimir etiqueta'>🏷</button></td>
         </tr>`
       ).join('');
     }
@@ -2134,6 +2154,116 @@ function searchInventory() {
   searchTimer = setTimeout(() => {
     loadInventory(document.getElementById('inv-search').value);
   }, 400);
+}
+
+// ── IMPORTACION MASIVA DE PRODUCTOS (Excel/CSV) ────────
+function abrirImportarProductos() {
+  document.getElementById('importar-productos-file').value = '';
+  document.getElementById('importar-productos-resultado').innerHTML = '';
+  document.getElementById('modal-importar-productos').style.display = 'flex';
+}
+
+function descargarPlantillaProductos() {
+  window.location = '/api/db/products/plantilla';
+}
+
+let _duplicadosImportacion = [];
+
+async function importarProductosArchivo() {
+  const input = document.getElementById('importar-productos-file');
+  const file = input.files[0];
+  if (!file) { alert('Selecciona un archivo primero.'); return; }
+  const formData = new FormData();
+  formData.append('archivo', file);
+  const resultadoDiv = document.getElementById('importar-productos-resultado');
+  resultadoDiv.innerHTML = 'Importando...';
+  try {
+    const r = await fetch('/api/db/products/import', {method: 'POST', body: formData});
+    const d = await r.json();
+    if (d.error) { resultadoDiv.innerHTML = `<span style="color:var(--red)">Error: ${d.error}</span>`; return; }
+    _duplicadosImportacion = (d.duplicados || []).map(x => ({fila: x.fila, producto_existente: x.producto_existente, accion: null}));
+    renderResultadoImportacion(d.creados, d.errores || []);
+    loadInventory();
+  } catch(e) {
+    resultadoDiv.innerHTML = `<span style="color:var(--red)">Error: ${e.message}</span>`;
+  }
+}
+
+function renderResultadoImportacion(creados, errores) {
+  const div = document.getElementById('importar-productos-resultado');
+  let html = `<div class="success-box">${creados} producto(s) importado(s) exitosamente.</div>`;
+
+  if (errores.length) {
+    html += `<div style="color:var(--red);margin-top:8px">${errores.length} fila(s) con error:</div>`;
+    html += '<ul style="margin:4px 0 0 18px;font-size:12px">' +
+      errores.map(e => `<li>Fila ${e.fila}: ${e.motivo}</li>`).join('') + '</ul>';
+  }
+
+  if (_duplicadosImportacion.length) {
+    html += `<div style="margin-top:12px;font-weight:600">${_duplicadosImportacion.length} producto(s) parecido(s) a uno ya existente:</div>`;
+    html += '<div id="importar-duplicados-lista" style="margin-top:6px"></div>';
+    html += `<div class="flex gap-2" style="margin-top:10px">
+      <button class="btn btn-ghost btn-sm" onclick="marcarTodosDuplicados('actualizar')">Actualizar todos</button>
+      <button class="btn btn-ghost btn-sm" onclick="marcarTodosDuplicados('saltar')">Saltar todos</button>
+      <button class="btn btn-primary btn-sm" onclick="confirmarDuplicadosImportacion()">Confirmar</button>
+    </div>`;
+  }
+
+  div.innerHTML = html;
+  if (_duplicadosImportacion.length) renderListaDuplicados();
+}
+
+function renderListaDuplicados() {
+  const cont = document.getElementById('importar-duplicados-lista');
+  if (!cont) return;
+  cont.innerHTML = _duplicadosImportacion.map((d, i) => {
+    const f = d.fila, e = d.producto_existente;
+    const marcado = a => d.accion === a ? 'btn-primary' : 'btn-ghost';
+    return `<div class="card" style="padding:8px;margin-bottom:6px;font-size:12px">
+      <div><b>${f.nombre}</b> (Q${f.precio}${f.stock != null ? ', stock ' + f.stock : ''}) se parece a
+        <b>${e.Name}</b> (Q${e.Price}, stock actual ${e.Stock})</div>
+      <div class="flex gap-2" style="margin-top:6px">
+        <button class="btn ${marcado('actualizar')} btn-sm" onclick="marcarDuplicado(${i},'actualizar')">Actualizar existente</button>
+        <button class="btn ${marcado('crear')} btn-sm" onclick="marcarDuplicado(${i},'crear')">Crear como nuevo</button>
+        <button class="btn ${marcado('saltar')} btn-sm" onclick="marcarDuplicado(${i},'saltar')">Saltar</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function marcarDuplicado(i, accion) {
+  _duplicadosImportacion[i].accion = accion;
+  renderListaDuplicados();
+}
+
+function marcarTodosDuplicados(accion) {
+  _duplicadosImportacion.forEach(d => d.accion = accion);
+  renderListaDuplicados();
+}
+
+async function confirmarDuplicadosImportacion() {
+  const resoluciones = _duplicadosImportacion.map(d => ({
+    accion: d.accion || 'saltar',
+    fila: d.fila,
+    producto_existente: d.producto_existente
+  }));
+  const r = await fetch('/api/db/products/import/resolver', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({resoluciones})
+  });
+  const d = await r.json();
+  _duplicadosImportacion = [];
+  document.getElementById('importar-productos-resultado').innerHTML +=
+    `<div class="success-box" style="margin-top:8px">${d.actualizados} actualizado(s), ${d.creados} creado(s) como nuevo, ${d.saltados} salteado(s).</div>`;
+  loadInventory();
+}
+
+async function imprimirEtiqueta(id) {
+  const r = await fetch('/api/db/products/' + id + '/etiqueta');
+  const d = await r.json();
+  if (d.ok) window.open(d.ruta, '_blank');
+  else alert('Error: ' + d.error);
 }
 
 // ── ANALYTICS ─────────────────────────────────────────

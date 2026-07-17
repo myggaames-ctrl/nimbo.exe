@@ -246,6 +246,117 @@ def get_stock(product_id, warehouse_id=1):
     return row[0] if row else 0
 
 
+# ── IMPORTACION MASIVA DE PRODUCTOS (Excel/CSV) ─────────────────────────
+# Usado por app.py /api/db/products/import (parseo del archivo) y
+# /api/db/products/import/resolver (duplicados). Ver CLAUDE.md seccion
+# "Importacion masiva de productos".
+
+def buscar_producto_duplicado(nombre, codigo=None):
+    """Busca si ya existe un producto activo con el mismo Codigo (match exacto)
+    o un Nombre similar (mismo umbral/criterio que _buscar_productos_similares,
+    UMBRAL_SIMILITUD_PRODUCTO). Retorna el producto existente (mismas claves
+    que get_product_by_id: Id, Name, Code, Price, Cost, Stock) o None."""
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    if codigo:
+        cur.execute("SELECT Id FROM Producto WHERE Codigo=? AND Activo=1 LIMIT 1", (codigo,))
+        row = cur.fetchone()
+        if row:
+            conn.close()
+            return get_product_by_id(row["Id"])
+
+    cur.execute("SELECT Id, Nombre FROM Producto WHERE Activo=1")
+    candidatos = cur.fetchall()
+    conn.close()
+
+    nombre_l = (nombre or "").lower().strip()
+    mejor_id, mejor_ratio = None, 0
+    for r in candidatos:
+        ratio = difflib.SequenceMatcher(None, nombre_l, (r["Nombre"] or "").lower().strip()).ratio()
+        if ratio > mejor_ratio:
+            mejor_ratio, mejor_id = ratio, r["Id"]
+    if mejor_id and mejor_ratio >= UMBRAL_SIMILITUD_PRODUCTO:
+        return get_product_by_id(mejor_id)
+    return None
+
+
+def crear_producto_importado(fila):
+    """Inserta un producto nuevo a partir de una fila ya normalizada y validada
+    del importador masivo (nombre, precio, costo, codigo, stock, stock_minimo,
+    categoria - los opcionales llegan en None si la celda del archivo venia
+    vacia, todavia SIN el default aplicado; se aplican aqui mismo: costo 0,
+    stock 0, stock_minimo 5). Si no trae codigo se le genera un EAN-13
+    automaticamente (mismo criterio que 'generar codigo' del chat). Retorna el
+    Id del producto creado."""
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cur.execute(
+        "INSERT INTO Producto (Codigo, Nombre, Precio, Costo, Categoria, Unidad, Activo, FechaCreado) "
+        "VALUES (?,?,?,?,?,?,1,?)",
+        (fila.get("codigo") or "", fila["nombre"], fila["precio"], fila.get("costo") or 0,
+         fila.get("categoria") or None, "unidad", ahora)
+    )
+    producto_id = cur.lastrowid
+    cur.execute(
+        "INSERT INTO Stock (ProductoId, Cantidad, StockMinimo, UltimaActualizacion) VALUES (?,?,?,?)",
+        (producto_id,
+         fila["stock"] if fila.get("stock") is not None else 0,
+         fila["stock_minimo"] if fila.get("stock_minimo") is not None else 5,
+         ahora)
+    )
+    conn.commit()
+    conn.close()
+
+    if not fila.get("codigo"):
+        asignar_codigo_barras(producto_id, fila["nombre"])
+
+    return producto_id
+
+
+def actualizar_producto_importado(producto_id, fila):
+    """Actualiza un producto existente con los datos de una fila importada,
+    cuando el usuario elige 'actualizar' ante un duplicado detectado por
+    buscar_producto_duplicado(). Solo pisa los campos que la fila trae
+    (distinto de None) - una fila con Costo/Stock/StockMinimo/Categoria en
+    blanco NO borra lo que el producto ya tenia (para que reimportar solo para
+    actualizar precios no vacie el stock por accidente). Precio si es
+    obligatorio en la fila, siempre se actualiza. Si la fila trae Codigo y el
+    producto no tenia uno todavia, se lo asigna; si ya tenia uno no se pisa
+    (evita choques accidentales de codigos)."""
+    conn = nimbo_connect()
+    cur = conn.cursor()
+    ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    cur.execute("SELECT Codigo FROM Producto WHERE Id=?", (producto_id,))
+    actual = cur.fetchone()
+    codigo_actual = actual["Codigo"] if actual else None
+
+    campos, valores = ["Precio=?"], [fila["precio"]]
+    if fila.get("costo") is not None:
+        campos.append("Costo=?"); valores.append(fila["costo"])
+    if fila.get("categoria"):
+        campos.append("Categoria=?"); valores.append(fila["categoria"])
+    if fila.get("codigo") and not codigo_actual:
+        campos.append("Codigo=?"); valores.append(fila["codigo"])
+    valores.append(producto_id)
+    cur.execute(f"UPDATE Producto SET {', '.join(campos)} WHERE Id=?", valores)
+
+    if fila.get("stock") is not None or fila.get("stock_minimo") is not None:
+        cur.execute("SELECT Cantidad, StockMinimo FROM Stock WHERE ProductoId=?", (producto_id,))
+        stock_row = cur.fetchone()
+        nueva_cantidad = fila["stock"] if fila.get("stock") is not None else (stock_row["Cantidad"] if stock_row else 0)
+        nuevo_minimo = fila["stock_minimo"] if fila.get("stock_minimo") is not None else (stock_row["StockMinimo"] if stock_row else 5)
+        if stock_row:
+            cur.execute("UPDATE Stock SET Cantidad=?, StockMinimo=?, UltimaActualizacion=? WHERE ProductoId=?",
+                (nueva_cantidad, nuevo_minimo, ahora, producto_id))
+        else:
+            cur.execute("INSERT INTO Stock (ProductoId, Cantidad, StockMinimo, UltimaActualizacion) VALUES (?,?,?,?)",
+                (producto_id, nueva_cantidad, nuevo_minimo, ahora))
+
+    conn.commit()
+    conn.close()
+
 
 # Kardex y Stock Minimo
 import sqlite3 as _sqlite3

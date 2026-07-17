@@ -266,6 +266,55 @@ Usuario escribe mensaje
   - Widget en el dashboard (/api/inventario/alertas-predictivas, @login_required igual que
     /api/db/alertas - visible para empleado y admin): muestra solo los productos CRITICO con
     sus dias estimados; si no hay ninguno muestra "Sin productos criticos".
+  - Importacion masiva de productos (Excel/CSV): boton "📦 Importar Excel/CSV" en el panel
+    Inventario del dashboard (templates/index.html, junto a "+ Agregar"), abre el modal
+    modal-importar-productos. Columnas reconocidas (con o sin acentos/mayusculas/espacios,
+    app.py _normalizar_header): Nombre y Precio obligatorias; Costo, Codigo, Stock,
+    StockMinimo, Categoria opcionales. Boton "⬇️ Descargar plantilla" dentro del modal
+    (GET /api/db/products/plantilla) genera un .xlsx en memoria (openpyxl) con esas columnas
+    y 3 filas de ejemplo, sin guardar nada en disco.
+    - POST /api/db/products/import (multipart, campo "archivo", @login_required):
+      app.py._leer_archivo_productos() detecta .csv (modulo csv, decodifica utf-8-sig para
+      tolerar el BOM que agrega Excel) o .xlsx/.xls (openpyxl, data_only=True). Cada fila se
+      normaliza a un dict (nombre, precio, costo, codigo, stock, stock_minimo, categoria) -
+      los opcionales quedan en None si la celda vino vacia, SIN aplicarles todavia ningun
+      default (el default se aplica recien al crear, ver mas abajo) para poder distinguir
+      "no vino en el archivo" de "vino en 0" cuando se trata de una actualizacion. Filas sin
+      Nombre se ignoran en silencio (fila vacia); filas con Precio faltante o <= 0 se reportan
+      en "errores" (fila, motivo) sin bloquear el resto del archivo.
+    - Deteccion de duplicados: database.aronium.buscar_producto_duplicado(nombre, codigo)
+      busca primero por Codigo exacto (si la fila trae uno) y si no por similitud de Nombre
+      (mismo difflib.SequenceMatcher y UMBRAL_SIMILITUD_PRODUCTO que usa la busqueda fuzzy de
+      get_products()). Las filas sin duplicado se crean de inmediato
+      (database.aronium.crear_producto_importado - aqui si se aplican los defaults: Costo 0,
+      Stock 0, StockMinimo 5; si la fila no trae Codigo se le genera un EAN-13 automatico via
+      asignar_codigo_barras(), igual que "generar codigo" del chat). Las filas con duplicado
+      NO se crean todavia - la respuesta del endpoint las devuelve en "duplicados" (la fila
+      entrante + el producto existente que matcheo) para que el dashboard le pregunte al
+      usuario que hacer con cada una, en vez de decidir solo.
+    - El modal muestra cada duplicado con 3 botones - Actualizar existente / Crear como nuevo
+      / Saltar (un boton mas que lo pedido originalmente: "crear como nuevo" cubre el caso de
+      un falso positivo de la busqueda fuzzy, ej. "Licuadora Oster" vs "Licuadora Oster Mini"
+      son productos distintos aunque el nombre se parezca) - mas botones "Actualizar todos" /
+      "Saltar todos" para no tener que decidir fila por fila si el usuario ya sabe que quiere
+      para todo el lote. Al confirmar, el frontend manda TODAS las filas+decisiones juntas
+      (sin volver a subir el archivo) a POST /api/db/products/import/resolver (JSON, no
+      multipart): "actualizar" llama a database.aronium.actualizar_producto_importado(), que
+      solo pisa los campos que la fila trae (Costo/Stock/StockMinimo/Categoria en None no se
+      tocan) - para que reimportar un archivo que solo trae precios actualizados no vacie el
+      stock existente por accidente; el Codigo del producto existente tampoco se pisa si ya
+      tenia uno (evita choques de codigos). "crear" llama a crear_producto_importado()
+      igual que una fila sin duplicado. "saltar" no hace nada.
+  - Etiquetas desde el dashboard: boton 🏷 por fila en la tabla de Inventario
+    (GET /api/db/products/<id>/etiqueta, @login_required) - si el producto no tiene Codigo se
+    lo genera de una vez (asignar_codigo_barras) y genera su PDF de etiqueta con
+    services/barcode_service.generar_etiqueta_producto_pdf() (la misma funcion que ya usaba
+    el comando de chat "etiqueta de X"), devuelve la ruta y el frontend la abre en pestana
+    nueva. Antes de esto la unica forma de generar una etiqueta era escribiendole al chat.
+  - El escaneo de codigo de barras (el lector USB/Bluetooth actua como teclado, escribe el
+    codigo + Enter en el campo que este enfocado) ya funciona sin cambios adicionales en
+    #inv-search: get_products() ya busca por Nombre O Codigo, asi que enfocar el buscador de
+    Inventario y escanear encuentra el producto igual que escribir su nombre.
 - Ventas: flujo completo, WhatsApp, descuento stock automatico
 - Clientes: historial completo, Excel, cumpleanos. "historial de Juan Perez" (cliente.historial,
   tools/cliente_tool.py) muestra todo desde el primer dia: datos (telefono/email/NIT/fecha de

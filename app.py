@@ -6,6 +6,10 @@ import os
 import sqlite3
 import subprocess
 import json
+import csv
+import io
+import re
+import unicodedata
 from functools import wraps
 from datetime import datetime
 from dotenv import load_dotenv
@@ -1235,6 +1239,203 @@ def db_delete_product(pid):
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+# ── Importacion masiva de productos (Excel/CSV) ─────────────────────────
+# Columnas reconocidas (con o sin acentos/mayusculas/espacios, ver
+# _normalizar_header): Nombre y Precio son obligatorias, Costo/Codigo/Stock/
+# StockMinimo/Categoria son opcionales. Ver CLAUDE.md seccion "Importacion
+# masiva de productos" para el flujo completo (deteccion de duplicados,
+# generacion automatica de codigo de barras).
+COLUMNAS_IMPORTACION_PRODUCTOS = {
+    "nombre": "nombre", "precio": "precio", "costo": "costo",
+    "codigo": "codigo", "stock": "stock", "stockminimo": "stock_minimo",
+    "categoria": "categoria",
+}
+
+
+def _normalizar_header(h):
+    h = unicodedata.normalize("NFD", str(h or "")).encode("ascii", "ignore").decode("utf-8")
+    return re.sub(r"[^a-z0-9]", "", h.lower())
+
+
+def _parsear_numero_importado(valor):
+    if valor is None:
+        return None
+    texto = str(valor).strip().replace("Q", "").replace("q", "").replace(",", "")
+    if texto == "":
+        return None
+    return float(texto)
+
+
+def _leer_filas_csv_productos(archivo):
+    texto = archivo.stream.read().decode("utf-8-sig")
+    return list(csv.reader(io.StringIO(texto)))
+
+
+def _leer_filas_excel_productos(archivo):
+    import openpyxl
+    wb = openpyxl.load_workbook(archivo, data_only=True)
+    ws = wb.active
+    return [list(row) for row in ws.iter_rows(values_only=True)]
+
+
+def _leer_archivo_productos(archivo):
+    """Parsea un archivo .csv o .xlsx de importacion masiva de productos.
+    Primera fila = encabezados. Retorna (filas_validas, errores):
+    filas_validas es una lista de dicts normalizados (nombre, precio, costo,
+    codigo, stock, stock_minimo, categoria - los opcionales quedan en None si
+    la celda venia vacia, sin aplicar todavia ningun default, ver
+    database.aronium.crear_producto_importado) y errores es una lista de
+    {"fila": numero, "motivo": texto} para filas que no se pudieron importar
+    (nombre o precio faltante/invalido) - no bloquean el resto del archivo."""
+    ext = archivo.filename.rsplit(".", 1)[-1].lower() if "." in archivo.filename else ""
+    if ext == "csv":
+        filas_crudas = _leer_filas_csv_productos(archivo)
+    elif ext in ("xlsx", "xls"):
+        filas_crudas = _leer_filas_excel_productos(archivo)
+    else:
+        raise ValueError("Formato no soportado. Usa un archivo .csv o .xlsx")
+
+    if not filas_crudas:
+        return [], []
+
+    encabezados = [_normalizar_header(h) for h in filas_crudas[0]]
+    columnas = {}
+    for idx, h in enumerate(encabezados):
+        campo = COLUMNAS_IMPORTACION_PRODUCTOS.get(h)
+        if campo:
+            columnas[campo] = idx
+
+    if "nombre" not in columnas or "precio" not in columnas:
+        raise ValueError("El archivo debe tener al menos las columnas Nombre y Precio.")
+
+    def _celda(fila, campo):
+        idx = columnas.get(campo)
+        if idx is None or idx >= len(fila):
+            return None
+        valor = fila[idx]
+        return None if valor is None or str(valor).strip() == "" else valor
+
+    filas_validas, errores = [], []
+    for i, fila in enumerate(filas_crudas[1:], start=2):
+        nombre = _celda(fila, "nombre")
+        if not nombre:
+            continue  # fila vacia, se ignora sin reportar error
+
+        nombre = str(nombre).strip()
+        precio = _parsear_numero_importado(_celda(fila, "precio"))
+        if precio is None or precio <= 0:
+            errores.append({"fila": i, "motivo": f"'{nombre}': precio invalido o faltante"})
+            continue
+
+        codigo = _celda(fila, "codigo")
+        categoria = _celda(fila, "categoria")
+
+        filas_validas.append({
+            "nombre": nombre,
+            "precio": precio,
+            "costo": _parsear_numero_importado(_celda(fila, "costo")),
+            "codigo": str(codigo).strip() if codigo else None,
+            "stock": _parsear_numero_importado(_celda(fila, "stock")),
+            "stock_minimo": _parsear_numero_importado(_celda(fila, "stock_minimo")),
+            "categoria": str(categoria).strip() if categoria else None,
+        })
+
+    return filas_validas, errores
+
+
+@app.route("/api/db/products/plantilla")
+@login_required
+def db_products_plantilla():
+    import openpyxl
+    from flask import send_file
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Productos"
+    ws.append(["Nombre", "Precio", "Costo", "Codigo", "Stock", "StockMinimo", "Categoria"])
+    ws.append(["Licuadora Oster Clasica 3 velocidades", 450, 280, "", 15, 5, "Electrodomesticos"])
+    ws.append(["Cuchilla oster original", 45, 20, "7501234567890", 30, 10, "Repuestos"])
+    ws.append(["Olla de presion 8 litros", 380, "", "", "", "", "Ollas"])
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    return send_file(
+        buffer, as_attachment=True, download_name="plantilla_productos.xlsx",
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+
+@app.route("/api/db/products/import", methods=["POST"])
+@login_required
+def db_products_import():
+    from database.aronium import crear_producto_importado, buscar_producto_duplicado
+    if "archivo" not in request.files:
+        return jsonify({"error": "No se envio ningun archivo"}), 400
+    archivo = request.files["archivo"]
+    if archivo.filename == "":
+        return jsonify({"error": "Archivo vacio"}), 400
+
+    try:
+        filas, errores = _leer_archivo_productos(archivo)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": f"No se pudo leer el archivo: {e}"}), 400
+
+    creados = 0
+    duplicados = []
+    for fila in filas:
+        existente = buscar_producto_duplicado(fila["nombre"], fila.get("codigo"))
+        if existente:
+            duplicados.append({"fila": fila, "producto_existente": existente})
+            continue
+        crear_producto_importado(fila)
+        creados += 1
+
+    return jsonify({"creados": creados, "duplicados": duplicados, "errores": errores})
+
+
+@app.route("/api/db/products/import/resolver", methods=["POST"])
+@login_required
+def db_products_import_resolver():
+    from database.aronium import crear_producto_importado, actualizar_producto_importado
+    data = request.json or {}
+    resoluciones = data.get("resoluciones", [])
+
+    creados, actualizados, saltados = 0, 0, 0
+    for r in resoluciones:
+        accion = r.get("accion")
+        fila = r.get("fila")
+        if not fila:
+            continue
+        if accion == "actualizar":
+            producto_id = (r.get("producto_existente") or {}).get("Id")
+            if not producto_id:
+                continue
+            actualizar_producto_importado(producto_id, fila)
+            actualizados += 1
+        elif accion == "crear":
+            crear_producto_importado(fila)
+            creados += 1
+        else:
+            saltados += 1
+
+    return jsonify({"creados": creados, "actualizados": actualizados, "saltados": saltados})
+
+
+@app.route("/api/db/products/<int:pid>/etiqueta")
+@login_required
+def db_product_etiqueta(pid):
+    from database.aronium import get_product_by_id, asignar_codigo_barras
+    from services.barcode_service import generar_etiqueta_producto_pdf
+    producto = get_product_by_id(pid)
+    if not producto:
+        return jsonify({"error": "Producto no encontrado"}), 404
+    nombre = producto["Name"].strip()
+    codigo = producto.get("Code") or asignar_codigo_barras(pid, nombre)
+    ruta = generar_etiqueta_producto_pdf(nombre, producto["Price"], codigo)
+    return jsonify({"ok": True, "ruta": f"/static/{ruta}"})
 
 
 @app.route("/api/db/stock/add", methods=["POST"])
