@@ -1,34 +1,40 @@
 import tools
 from core.action_engine import ActionEngine
 from core.chat_context import obtener_historial_reciente, resumen_texto
-from openclaw_bridge import send_to_openclaw
-from services.ollama_service import llamar_ollama
-import os
+from services.ollama_service import llamar_ollama, MENSAJE_TIMEOUT
 import re
 import unicodedata
 
 _engine = ActionEngine()
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+
+SISTEMA_FALLBACK = """Eres Nimbo, el asistente de gestion de "Mi Cocina Electrodomesticos",
+una tienda de electrodomesticos y repuestos en Guatemala. Respondes en espanol guatemalteco,
+de forma breve y directa. El sistema puede: buscar y gestionar inventario/productos, registrar
+ventas, buscar y gestionar clientes, crear y dar seguimiento a ordenes de servicio tecnico
+(reparaciones), gestionar proveedores, ver contabilidad/gastos/balance, y generar contenido
+para redes sociales - si el usuario pregunta algo del negocio que no reconociste como comando,
+ayudalo sugiriendo como pedirlo. Si pregunta algo sin relacion con el negocio (cultura general,
+charla casual), respondes normalmente como un asistente util, sin forzar el tema del negocio."""
 
 
-def _generar_ia(prompt):
-    """Intenta Ollama local (qwen2.5:7b) primero, cae a Gemini si Ollama no
-    esta corriendo. Retorna None si ninguno esta disponible."""
-    try:
-        return llamar_ollama(prompt).text
-    except Exception:
-        pass
+def _fallback_ollama(message: str, contexto: str = "") -> str:
+    """Ultimo recurso del chat: cuando ningun detector matcheo y la aclaracion
+    de intencion vaga tampoco aplico (ver _analizar_intencion_vaga), en vez de
+    mandar el mensaje a OpenClaw (que ahora solo queda como opcion manual, ver
+    boton en el dashboard / app.py /api/openclaw/chat) se le pasa directo a
+    Ollama con un system prompt que lo situa como Nimbo."""
+    prompt = message
+    if contexto:
+        prompt = (
+            "Contexto de conversacion reciente (puede ser de dias anteriores):\n"
+            f"{contexto}\n\nMensaje del usuario: {message}"
+        )
+    texto = llamar_ollama(prompt, sistema=SISTEMA_FALLBACK)
+    if texto:
+        return texto
+    return "No pude conectarme con el modelo de IA local (Ollama). Verifica que este corriendo (ollama serve)."
 
-    if not GEMINI_API_KEY:
-        return None
-    try:
-        from google import genai
-        cliente = genai.Client(api_key=GEMINI_API_KEY)
-        r = cliente.models.generate_content(model="gemini-2.5-flash-lite", contents=prompt)
-        return r.text
-    except Exception:
-        return None
 
 TRANSLATE_PROMPT = """Eres un traductor de comandos para un sistema de inventario.
 Convierte el mensaje del usuario a uno de estos comandos exactos:
@@ -55,8 +61,13 @@ def _translate(message: str, contexto: str = "") -> str:
             "Contexto de conversacion reciente (puede ser de dias anteriores):\n"
             f"{contexto}\n\n{prompt}"
         )
-    texto = _generar_ia(prompt)
-    if not texto:
+    texto = llamar_ollama(prompt)
+    # MENSAJE_TIMEOUT no es un comando traducido valido - se trata igual que
+    # None (cae al siguiente paso del pipeline) en vez de intentar ejecutarlo
+    # como si fuera un comando real. A diferencia de _fallback_ollama() o las
+    # tools de contabilidad/evento/contenido, aqui "texto" es un valor
+    # intermedio, no la respuesta final que ve el usuario.
+    if not texto or texto == MENSAJE_TIMEOUT:
         return None
     cmd = texto.strip().lower()
     if cmd == "ninguno" or not cmd:
@@ -95,17 +106,19 @@ Mensaje del usuario: {message}
 Respuesta:"""
 
 def _analizar_intencion_vaga(message: str, contexto: str = "") -> str:
-    """Le pregunta a la IA (Ollama, o Gemini si Ollama no esta corriendo) si el mensaje
-    es una intencion de negocio expresada de forma vaga.
-    Retorna la pregunta de clarificacion en espanol, o None si no aplica."""
+    """Le pregunta a Ollama si el mensaje es una intencion de negocio
+    expresada de forma vaga. Retorna la pregunta de clarificacion en espanol,
+    o None si no aplica (o si Ollama no esta disponible)."""
     prompt = CLARIFICACION_PROMPT.format(message=message)
     if contexto:
         prompt = (
             "Contexto de conversacion reciente (puede ser de dias anteriores):\n"
             f"{contexto}\n\n{prompt}"
         )
-    texto = _generar_ia(prompt)
-    if not texto:
+    texto = llamar_ollama(prompt)
+    # Mismo criterio que en _translate(): MENSAJE_TIMEOUT no es una pregunta
+    # de clarificacion valida, se trata como "no aplico".
+    if not texto or texto == MENSAJE_TIMEOUT:
         return None
     texto = texto.strip()
     if not texto or texto.upper() == "NINGUNO":
@@ -220,7 +233,7 @@ def _detectar_cambio_decision(message: str, step: str):
 
 
 def _intentar_detectar(message: str, role: str, context: dict, contexto_historial: str = ""):
-    """Corre deteccion directa (detectores) y, si falla, traduccion via Gemini.
+    """Corre deteccion directa (detectores) y, si falla, traduccion via Ollama.
     Retorna (respuesta, context) si algo se detecto, o None si nada aplico."""
     result = _engine.execute(message, role)
     if result:
@@ -686,7 +699,7 @@ def send(message: str, context: dict = None, role: str = "admin") -> tuple:
     # parte de un comando de negocio (ver auditoria: varios steps de texto libre
     # absorbian cualquier mensaje, incluida una cancelacion, como si fuera la
     # respuesta esperada). Solo aplica si hay un step activo - sin flujo en curso,
-    # "cancelar" sigue el camino normal (detectores -> Gemini -> OpenClaw).
+    # "cancelar" sigue el camino normal (detectores -> Ollama -> fallback final).
     if context and context.get("step") and _es_cancelacion(message):
         # Si el flujo llego a arrancar con VENTA_INICIO, registrar_venta_tool (y el
         # resto de caminos que reusan el mismo marcador: seleccion entre varios
@@ -707,7 +720,7 @@ def send(message: str, context: dict = None, role: str = "admin") -> tuple:
 
     # Contexto de conversaciones anteriores (hasta 10 mensajes / ~500 tokens, ver
     # core/chat_context.py). Se calcula una sola vez por mensaje y se reutiliza en
-    # todos los llamados a Gemini/OpenClaw de esta funcion, para que Nimbo entienda
+    # todos los llamados a Ollama de esta funcion, para que Nimbo entienda
     # referencias como "cuantas quedan?" aunque el tema se haya hablado dias antes.
     contexto_historial = resumen_texto(obtener_historial_reciente())
 
@@ -730,7 +743,7 @@ def send(message: str, context: dict = None, role: str = "admin") -> tuple:
         if role != "admin":
             return ("No entendi esa instruccion. Si necesitas ayuda con algo fuera de "
                     "inventario, ventas o clientes, contacta a un administrador."), context
-        return send_to_openclaw(combinado, contexto_historial), context
+        return _fallback_ollama(combinado, contexto_historial), context
 
     # Flujo de cliente nuevo (arrancado por CLIENTE_NUEVO_INICIO, ver
     # tools/cliente_tool.py nuevo_cliente_tool) - pregunta el grupo antes de crear.
@@ -875,8 +888,8 @@ El script debe incluir:
 
 En espanol guatemalteco natural."""
 
-        texto = _generar_ia(prompt)
-        return (texto if texto else "Ollama y Gemini no estan disponibles ahora mismo."), context
+        texto = llamar_ollama(prompt)
+        return (texto if texto else "Ollama no esta disponible ahora mismo."), context
 
     # Flujo de programacion de contenido
     if step == "prog_waiting_frecuencia":
@@ -916,8 +929,8 @@ Genera un calendario para 7 dias con:
 
 En espanol, practico y realista para una tienda de electrodomesticos en Guatemala."""
 
-        texto = _generar_ia(prompt)
-        return (texto if texto else "Ollama y Gemini no estan disponibles ahora mismo."), context
+        texto = llamar_ollama(prompt)
+        return (texto if texto else "Ollama no esta disponible ahora mismo."), context
 
     # Flujo de nuevo proveedor
     if step == "proveedor_waiting_contacto":
@@ -2112,22 +2125,24 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         context = {"step": "producto_waiting_precio", "prod_nombre": nombre, "prod_cantidad": 0, "prod_codigo": codigo}
         return f"¿A qué precio se vende {nombre}?", context
 
-    # Intento 1 y 2: deteccion directa + traduccion Gemini
+    # Intento 1 y 2: deteccion directa + traduccion via Ollama
     detectado = _intentar_detectar(message, role, context, contexto_historial)
     if detectado:
         return detectado
 
-    # Intento 3: el mensaje no coincidio con ningun intent. Antes de mandarlo a
-    # OpenClaw, se analiza si es una intencion de negocio expresada de forma vaga
-    # (ver CLARIFICACION_PROMPT). Si Gemini genera una pregunta de clarificacion,
-    # se guarda el mensaje original en el contexto y se le pregunta al usuario.
+    # Intento 3: el mensaje no coincidio con ningun intent. Antes de caer al
+    # fallback final, se analiza si es una intencion de negocio expresada de
+    # forma vaga (ver CLARIFICACION_PROMPT). Si Ollama genera una pregunta de
+    # clarificacion, se guarda el mensaje original en el contexto y se le
+    # pregunta al usuario.
     pregunta = _analizar_intencion_vaga(message, contexto_historial)
     if pregunta:
         context = {"step": "clarificando", "original_message": message}
         return pregunta, context
 
-    # Intento 4: OpenClaw
+    # Intento 4: fallback final - Ollama directo (OpenClaw ya no es automatico,
+    # queda solo como opcion manual en el dashboard, ver app.py /api/openclaw/chat).
     if role != "admin":
         return ("No entendi esa instruccion. Si necesitas ayuda con algo fuera de "
                 "inventario, ventas o clientes, contacta a un administrador."), context
-    return send_to_openclaw(message, contexto_historial), context
+    return _fallback_ollama(message, contexto_historial), context

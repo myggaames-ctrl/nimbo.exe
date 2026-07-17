@@ -6,8 +6,24 @@ Chat en lenguaje natural en espanol que controla todo el negocio.
 
 ## Stack
 - Backend: Flask (Python 3.10) en WSL2, puerto 5000
-- IA Principal: Google Gemini 2.5 Flash Lite via API
-- Agente PC: OpenClaw con Gemini (puerto 18789)
+- IA Principal: Ollama local (http://localhost:11434) - un unico modelo, qwen2.5:7b, para
+  todo (chat, traduccion, contenido Y analisis financieros/estrategicos - ver
+  services/ollama_service.py y seccion "Arquitectura del chat" mas abajo). Se probo primero
+  con gemma2:9b aparte para los analisis, pero se descarto: alternar entre 2 modelos hacia
+  que Ollama descargara uno para cargar el otro en cada llamada (penalidad de recarga que por
+  si sola podia agotar el timeout) y arriesgaba quedarse sin RAM con ambos cargados a la vez
+  (~11GB combinados, causo que el servidor de Nimbo se cayera por presion de memoria durante
+  las pruebas). Gemini API ya NO se usa en ningun punto del
+  chat ni de las herramientas de analisis/contenido - fue reemplazado por completo. Sigue
+  quedando un bloque de codigo en app.py (ruta /api/chat, "Paso 2") que llama a Gemini como
+  segundo intento despues de core.nimbo.send(), pero es codigo muerto desde este cambio:
+  send() ahora SIEMPRE devuelve una respuesta no vacia (el fallback final ya es Ollama, ver
+  mas abajo), asi que ese bloque nunca se alcanza en la practica. No se limpio porque no
+  formaba parte del pedido (solo se toco core/nimbo.py y las tools de contabilidad/evento/
+  contenido), queda pendiente para una limpieza futura.
+- Agente PC: OpenClaw con Gemini (puerto 18789) - ya NO es el fallback automatico del chat
+  (ver Arquitectura del chat), pero se mantiene como opcion manual: boton en el dashboard y
+  la ruta /api/openclaw/chat en app.py siguen intactos, sin cambios.
 - Base de datos 1: Aronium SQLite /mnt/c/Users/Victor Paxtor/AppData/Local/Aronium/Data/pos.db -
   ya NO es la fuente de productos/stock (ver seccion "Catalogo propio (Producto/Stock)" mas
   abajo); se sigue usando solo para reportes de ventas reales hechas en la caja fisica de
@@ -28,16 +44,67 @@ Usuario escribe mensaje
 -> 0. Carga los ultimos 10 mensajes de ChatHistorial (core/chat_context.py,
      resumen_texto()), recortados a ~500 tokens. Puede incluir dias anteriores,
      no solo la sesion actual. Se calcula una vez por mensaje y se pasa a todos
-     los pasos que llaman a Gemini/OpenClaw abajo, para resolver referencias
+     los pasos que llaman a Ollama abajo, para resolver referencias
      como "cuantas quedan?" sin repetir el nombre del producto.
 -> 1. Verifica contexto activo (flujos conversacionales)
 -> 2. ActionEngine -> IntentDetector -> Detectores -> Tool
--> 3. Si no detecta -> Gemini traduce (con el contexto reciente) -> intenta de nuevo
--> 3.5. Si sigue sin detectar -> Gemini analiza si es una intencion de negocio vaga
-        (tambien con contexto) y genera una pregunta de clarificacion
-        (context.step = "clarificando")
--> 4. Si nada -> OpenClaw responde (recibe el contexto como resumen en el
-     system prompt, ver openclaw_bridge.py send_to_openclaw(message, contexto))
+-> 3. Si no detecta -> Ollama traduce (con el contexto reciente, _translate() en
+     core/nimbo.py, modelo qwen2.5:7b via services.ollama_service.llamar_ollama) ->
+     intenta de nuevo
+-> 3.5. Si sigue sin detectar -> Ollama analiza si es una intencion de negocio vaga
+        (tambien con contexto, _analizar_intencion_vaga()) y genera una pregunta de
+        clarificacion (context.step = "clarificando")
+-> 4. Si nada -> fallback final directo a Ollama (_fallback_ollama(), con
+     SISTEMA_FALLBACK como system prompt situandolo como Nimbo) - ya NO cae a
+     OpenClaw automaticamente. Si Ollama no esta corriendo se muestra un aviso
+     pidiendo verificarlo, en vez de fallar en silencio; si esta corriendo pero
+     tarda mas del timeout (ver services/ollama_service.py mas abajo) se avisa que
+     esta procesando, sin decir que esta caido (son dos mensajes distintos, ver
+     MENSAJE_TIMEOUT abajo). OpenClaw sigue existiendo como opcion MANUAL (boton en
+     el dashboard, /api/openclaw/chat en app.py) - ver Stack arriba. Este mismo
+     _fallback_ollama() tambien se usa cuando la clarificacion del paso 3.5 tampoco
+     logra detectar nada en la respuesta del usuario (step "clarificando", ver mas
+     abajo en send()).
+- services/ollama_service.py: llamar_ollama(prompt, modelo="qwen2.5:7b", sistema=None,
+  timeout=TIMEOUT_SEGUNDOS) y analizar_ollama(prompt) son las unicas dos funciones de
+  entrada a Ollama en todo el codebase. analizar_ollama(prompt) es solo
+  llamar_ollama(prompt, timeout=TIMEOUT_ANALISIS_SEGUNDOS) - mismo (y unico) modelo
+  que el resto (ver Stack arriba, se probo con gemma2:9b aparte y se descarto por
+  RAM/latencia), pero con mas tiempo porque sus prompts son mas largos/complejos.
+  TIMEOUT_SEGUNDOS = 180 (chat/traduccion/contenido), TIMEOUT_ANALISIS_SEGUNDOS = 300
+  (analisis financieros/estrategicos) - subidos desde 60s despues de que las pruebas
+  mostraran que este hardware (CPU sin GPU) supera 60s facilmente con prompts largos
+  o al recargar un modelo distinto en memoria.
+  - Nunca lanzan excepcion: si Ollama no esta corriendo (o responde algo invalido)
+    devuelven None; si la llamada se corta especificamente por timeout devuelven
+    MENSAJE_TIMEOUT ("Ollama esta procesando, esto puede tardar un momento...") en
+    vez de None - Ollama SI esta corriendo, solo tardo mas de la cuenta, y antes ese
+    caso se mostraba con el mismo texto engañoso que "Ollama no esta corriendo"
+    (confundio a mas de un chequeo manual). Como MENSAJE_TIMEOUT es un string no
+    vacio, el patron `texto if texto else "<mensaje fijo>"` que ya usaban todos los
+    callers (core/nimbo.py, tools/contabilidad_tool.py, tools/evento_tool.py,
+    tools/contenido_tool.py) lo deja pasar tal cual sin que haya hecho falta tocar
+    ninguno de esos call sites - excepto _translate() y _analizar_intencion_vaga()
+    en core/nimbo.py, que SI se les agrego un chequeo explicito
+    `if not texto or texto == MENSAJE_TIMEOUT: return None` porque ahi "texto" es un
+    valor intermedio (se reinterpreta como comando traducido o pregunta de
+    clarificacion), no la respuesta final que ve el usuario - sin ese chequeo,
+    MENSAJE_TIMEOUT se hubiera colado como si fuera un comando real o una pregunta
+    real en vez de caer al siguiente paso del pipeline como corresponde.
+  - ollama_disponible() hace un chequeo rapido con GET /api/tags (igual que
+    `curl http://localhost:11434/api/tags`) para quien quiera verificar
+    disponibilidad sin hacer una llamada de chat completa - no la usa ningun caller
+    todavia (ver mas abajo el aviso sobre confundirla con MENSAJE_TIMEOUT).
+  - Con un solo modelo siempre cargado no hay penalidad de recarga entre llamadas
+    (antes, alternar entre 2 modelos distintos podia consumir el timeout completo
+    solo en la recarga). Los analisis largos (sugerencias_precios_tool,
+    analisis_completo_tool) igual pueden superar TIMEOUT_ANALISIS_SEGUNDOS por lo
+    largo del prompt en si - en ese caso sugerencias_precios_tool cae a su resumen
+    determinista sin IA (_resumen_sin_ia(), ya existia antes de este cambio) y
+    analisis_completo_tool muestra MENSAJE_TIMEOUT tal cual ("Ollama esta
+    procesando, esto puede tardar un momento...", sin el prefijo "No pude generar
+    el analisis:" - ese prefijo solo se antepone cuando texto es None/vacio, no
+    cuando ya trae MENSAJE_TIMEOUT, que es un string no vacio y se devuelve directo).
 
 Auto-focus permanente en #chat-input (templates/index.html, funcion
 refocusInputActivo() + listener global `document.addEventListener('click', ...)`):

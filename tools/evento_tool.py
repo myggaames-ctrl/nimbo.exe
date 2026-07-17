@@ -3,28 +3,7 @@ Herramienta de Eventos y Fidelizacion de Clientes
 """
 from core.tool_registry import register
 from database.aronium import get_analisis_clientes
-from services.ollama_service import llamar_ollama
-import os
-
-
-def _generar_ia(prompt):
-    """Intenta Ollama local (qwen2.5:7b) primero, cae a Gemini si Ollama no
-    esta corriendo. Retorna None si ninguno esta disponible."""
-    try:
-        return llamar_ollama(prompt).text
-    except Exception:
-        pass
-
-    gemini_key = os.environ.get("GEMINI_API_KEY", "")
-    if not gemini_key:
-        return None
-    try:
-        from google import genai
-        cliente = genai.Client(api_key=gemini_key)
-        r = cliente.models.generate_content(model="gemini-2.5-flash-lite", contents=prompt)
-        return r.text
-    except Exception:
-        return None
+from services.ollama_service import llamar_ollama, analizar_ollama
 
 
 def analisis_clientes_tool(data):
@@ -52,8 +31,8 @@ Con base en estos datos:
 
 Responde en espanol, de forma practica y especifica para Guatemala."""
 
-    texto = _generar_ia(prompt)
-    return texto if texto else "Ollama y Gemini no estan disponibles ahora mismo."
+    texto = analizar_ollama(prompt)
+    return texto if texto else "Ollama no esta disponible ahora mismo."
 
 register("evento.analisis", analisis_clientes_tool)
 
@@ -85,9 +64,9 @@ El mensaje debe ser:
 - Sin ser demasiado comercial
 - Firmado como Mi Cocina Electrodomesticos"""
 
-    texto = _generar_ia(prompt)
+    texto = llamar_ollama(prompt)
     if not texto:
-        return "Ollama y Gemini no estan disponibles ahora mismo."
+        return "Ollama no esta disponible ahora mismo."
     mensaje = texto.strip()
 
     if c.get("Telefono"):
@@ -130,8 +109,8 @@ Para el evento incluye:
 
 Se creativo pero realista para Guatemala."""
 
-    texto = _generar_ia(prompt)
-    return texto if texto else "Ollama y Gemini no estan disponibles ahora mismo."
+    texto = llamar_ollama(prompt)
+    return texto if texto else "Ollama no esta disponible ahora mismo."
 
 register("evento.sugerir", sugerir_evento_tool)
 

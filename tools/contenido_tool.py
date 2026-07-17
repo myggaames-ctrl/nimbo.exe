@@ -9,25 +9,6 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 NEGOCIO = "Mi Cocina Electrodomesticos Guatemala - tienda de electrodomesticos y repuestos"
 
-def _generar(prompt):
-    """Intenta Ollama local (qwen2.5:7b) primero, cae a Gemini si Ollama no
-    esta corriendo o no responde."""
-    try:
-        return llamar_ollama(prompt).text
-    except Exception:
-        pass
-
-    gemini_key = os.environ.get("GEMINI_API_KEY", "")
-    if not gemini_key:
-        return "Ollama y Gemini no estan disponibles ahora mismo."
-    try:
-        from google import genai
-        cliente = genai.Client(api_key=gemini_key)
-        r = cliente.models.generate_content(model="gemini-2.5-flash-lite", contents=prompt)
-        return r.text
-    except Exception as e:
-        return f"Error: {e}"
-
 def post_tool(data):
     if isinstance(data, str): return "Error: datos invalidos"
     red = data.get("red", "general")
@@ -54,7 +35,8 @@ Tono: profesional pero cercano, en español guatemalteco
 Incluye precio si es relevante con Q (quetzales)
 No inventes precios especificos si no los sabes."""
 
-    return _generar(prompt)
+    texto = llamar_ollama(prompt)
+    return texto if texto else "Ollama no esta disponible ahora mismo."
 
 register("contenido.post", post_tool)
 
@@ -77,7 +59,8 @@ Incluye:
 - Nota sobre garantia y servicio
 Formato limpio y profesional en espanol."""
 
-    return _generar(prompt)
+    texto = llamar_ollama(prompt)
+    return texto if texto else "Ollama no esta disponible ahora mismo."
 
 register("contenido.catalogo", catalogo_tool)
 
@@ -95,7 +78,8 @@ Mezcla: productos especificos, tips de uso, promociones, contenido educativo, te
 Para cada idea indica: tipo de red, formato (foto/video/carrusel), tema, objetivo.
 En espanol, enfocado en Guatemala."""
 
-    return _generar(prompt)
+    texto = llamar_ollama(prompt)
+    return texto if texto else "Ollama no esta disponible ahora mismo."
 
 register("contenido.ideas", ideas_tool)
 

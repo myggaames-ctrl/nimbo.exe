@@ -4,29 +4,10 @@ Herramienta de Contabilidad
 import os
 from core.tool_registry import register
 from database.aronium import registrar_gasto, get_gastos, get_balance_mes, get_valor_inventario, get_margen_productos
-from services.ollama_service import analizar_con_ollama
+from services.ollama_service import analizar_ollama
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-
-def _analisis_ia(prompt):
-    """Analisis financiero: intenta Ollama local (gemma2:9b) primero, cae a
-    Gemini si Ollama no esta corriendo. Retorna None si ninguno esta disponible."""
-    try:
-        return analizar_con_ollama(prompt).text
-    except Exception:
-        pass
-
-    gemini_key = os.environ.get("GEMINI_API_KEY", "")
-    if not gemini_key:
-        return None
-    try:
-        from google import genai
-        cliente = genai.Client(api_key=gemini_key)
-        r = cliente.models.generate_content(model="gemini-2.5-flash-lite", contents=prompt)
-        return r.text
-    except Exception:
-        return None
 
 def gasto_tool(data):
     if isinstance(data, str): return "Error: datos invalidos"
@@ -181,7 +162,7 @@ Responde en espanol, de forma clara y directa, con:
 3. Cuales necesitan ajuste de precio y por cuanto deben subir (usa exactamente los precios sugeridos que te di, no otros)
 4. Una recomendacion practica para una tienda pequena en Guatemala: si el ajuste es grande, sugiere subir el precio de forma gradual para no espantar clientes. Si el grupo "NECESITA AJUSTE" esta vacio, dilo claramente y no inventes ajustes."""
 
-    texto = _analisis_ia(prompt)
+    texto = analizar_ollama(prompt)
     return texto if texto else _resumen_sin_ia()
 
 register("contabilidad.sugerencias_precios", sugerencias_precios_tool)
@@ -287,8 +268,8 @@ Con base en estos datos REALES proporciona:
 
 Responde en espanol, de forma directa y practica para un negocio guatemalteco pequeno."""
 
-    texto = _analisis_ia(prompt)
-    return texto if texto else "No pude generar el analisis: ni Ollama ni Gemini estan disponibles."
+    texto = analizar_ollama(prompt)
+    return texto if texto else "No pude generar el analisis: Ollama no esta disponible ahora mismo."
 
 register("contabilidad.analisis_completo", analisis_completo_tool)
 
