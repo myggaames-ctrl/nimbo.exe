@@ -29,6 +29,23 @@ class InventoryDetector:
         r"^crear\s+(.+?)\s*/\s*precio:\s*(\d+\.?\d*)\s*/\s*costo:\s*(\d+\.?\d*)$",
     ]
 
+    # Sintaxis natural: "agregar/nuevo/crear producto NOMBRE precio N [costo N] [stock N]".
+    # Costo y stock son opcionales y se buscan en cualquier orden dentro del resto
+    # del texto (group 3) en detect() - a diferencia de CREATE_PATTERNS (que exige
+    # la sintaxis rigida "NOMBRE / precio: N / costo: N" y siempre trae costo), este
+    # patron puede devolver el intent sin "cost" (falta costo) para que el flujo
+    # conversacional en core/nimbo.py (PRODUCTO_NUEVO_INICIO:) pregunte lo que falte.
+    CREATE_NATURAL_PATTERNS = [
+        r"^(?:agregar|agrega|nuevo|crear)\s+producto\s+(.+?)\s+precio\s+(\d+\.?\d*)(.*)$",
+    ]
+
+    IMPORTAR_EXACT = [
+        "importar productos", "cargar productos", "importar producto", "cargar producto",
+        "importar productos desde excel", "importar productos desde csv",
+        "cargar productos desde excel", "cargar productos desde csv",
+        "importar excel", "cargar excel", "importar inventario",
+    ]
+
     ADD_STOCK_PATTERNS = [
         r"^agrega[r]?\s+(\d+)\s+(.+?)(?:\s+al?\s+stock)?$",
         r"^entr[ao]\s+(\d+)\s+(.+)$",
@@ -103,6 +120,9 @@ class InventoryDetector:
         if text in self.ALERTAS_PREDICTIVAS_EXACT:
             return {"intent": "inventory.alertas_predictivas"}
 
+        if text in self.IMPORTAR_EXACT:
+            return {"intent": "inventory.importar_instrucciones"}
+
         if text in self.KARDEX_EXACT:
             return {"intent": "inventory.kardex", "query": ""}
 
@@ -125,6 +145,19 @@ class InventoryDetector:
                     "price": float(match.group(2)),
                     "cost": float(match.group(3))
                 }
+
+        for pattern in self.CREATE_NATURAL_PATTERNS:
+            match = re.search(pattern, text)
+            if match:
+                data = {"intent": "inventory.create", "query": match.group(1).strip(), "price": float(match.group(2))}
+                resto = match.group(3) or ""
+                m_costo = re.search(r"costo\s+(\d+\.?\d*)", resto)
+                m_stock = re.search(r"(?:stock|cantidad)\s+(\d+\.?\d*)", resto)
+                if m_costo:
+                    data["cost"] = float(m_costo.group(1))
+                if m_stock:
+                    data["quantity"] = float(m_stock.group(1))
+                return data
 
         for pattern in self.ADD_STOCK_PATTERNS:
             match = re.search(pattern, text)

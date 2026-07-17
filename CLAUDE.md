@@ -315,6 +315,47 @@ Usuario escribe mensaje
     codigo + Enter en el campo que este enfocado) ya funciona sin cambios adicionales en
     #inv-search: get_products() ya busca por Nombre O Codigo, asi que enfocar el buscador de
     Inventario y escanear encuentra el producto igual que escribir su nombre.
+  - Importar productos y crear producto desde el chat (complementa la importacion masiva
+    del dashboard, ver arriba):
+    - "importar productos" / "cargar productos" (y variantes: "importar/cargar producto",
+      "importar productos desde excel/csv", "importar excel", "importar inventario" -
+      IMPORTAR_EXACT en core/detectors/inventory_detector.py) no sube ningun archivo por
+      chat (no es posible) - tools/inventory_tool.py importar_instrucciones_tool() responde
+      con los pasos para usar el boton "📦 Importar Excel/CSV" del dashboard (Inventario) y
+      un link `<a href="/">` para llegar ahi.
+    - "agregar producto X precio N costo N stock N" / "nuevo producto X precio N ..." /
+      "crear producto X precio N ..." (CREATE_NATURAL_PATTERNS en inventory_detector.py,
+      distinto del patron rigido preexistente "crear NOMBRE / precio: N / costo: N") crea el
+      producto de una sola vez si el mensaje ya trae Precio y Costo (Stock es siempre
+      opcional, si no viene se crea con 0 - nunca se pregunta). Costo y Stock se buscan en
+      cualquier orden despues de "precio N", asi que "... precio 95 stock 10 costo 28"
+      tambien funciona igual que "... precio 95 costo 28 stock 10".
+    - Si falta Precio y/o Costo, create_product_tool (tools/inventory_tool.py) retorna el
+      marcador PRODUCTO_NUEVO_INICIO:nombre|precio|costo|cantidad (los que faltan van vacios)
+      que arranca el step producto_waiting_precio (si falta precio) o directo
+      producto_waiting_costo (si el precio ya vino) en core/nimbo.py, preguntando solo lo que
+      falta uno por uno. Al completarse llama a tools/inventory_tool._crear_producto_directo()
+      (extraida como funcion compartida - antes esta insercion estaba duplicada entre
+      create_product_tool y el step waiting_cost de un flujo distinto, ver mas abajo).
+    - Este flujo es DISTINTO del ya existente waiting_price/waiting_cost (arrancado cuando
+      "agregar N [producto]" no encuentra el producto - ver seccion Kardex/Stock mas abajo si
+      aplica): ese es un fallback de "agregar stock a un producto que no existe todavia", no
+      un comando explicito de creacion, y nunca parsea precio/costo/stock que ya vengan en el
+      mensaje original (siempre pregunta ambos desde cero). Se dejaron ambos flujos separados
+      a proposito para no mezclar sus dos disparadores distintos, aunque los dos terminan
+      llamando a la misma _crear_producto_directo().
+    - Se encontro y corrigio un choque real entre detectores al implementar esto:
+      core/detectors/contabilidad_detector.py.PATTERNS_GASTO tiene un patron generico
+      `"(.+) costo N"` (para "la reparacion costo 200" = gasto), y ContabilidadDetector se
+      revisa antes que InventoryDetector en core/intent_detector.py - por eso "nuevo producto
+      X precio N costo N" (sin Stock al final, asi que "costo N" queda literal al final del
+      mensaje) se interpretaba como un gasto en vez de una creacion de producto. Se le agrego
+      un lookahead negativo a ese patron para excluir mensajes que empiecen con
+      "agregar/agrega/nuevo/crear producto " - mismo tipo de fix que ya existia para
+      "cliente aprobo/rechazo" (cliente_detector.py) y "garantia de reparacion"
+      (garantia_detector.py).
+    - Categoria "inventory" ya era de empleado, asi que estos comandos tambien quedan
+      disponibles para el rol empleado sin cambios adicionales.
 - Ventas: flujo completo, WhatsApp, descuento stock automatico
 - Clientes: historial completo, Excel, cumpleanos. "historial de Juan Perez" (cliente.historial,
   tools/cliente_tool.py) muestra todo desde el primer dia: datos (telefono/email/NIT/fecha de

@@ -160,7 +160,10 @@
       "Bash(sqlite3 nimbo.db \"UPDATE Producto SET Precio=45.0, Costo=20.0 WHERE Id=4;\")",
       "Bash(sqlite3 nimbo.db \"DELETE FROM Stock WHERE ProductoId=12;\")",
       "Bash(sqlite3 nimbo.db \"DELETE FROM CodigoBarrasGenerado WHERE ProductoId=12;\")",
-      "Bash(sqlite3 nimbo.db \"DELETE FROM Producto WHERE Id=12;\")"
+      "Bash(sqlite3 nimbo.db \"DELETE FROM Producto WHERE Id=12;\")",
+      "Bash(sqlite3 nimbo.db \"DELETE FROM Stock WHERE ProductoId=13;\")",
+      "Bash(sqlite3 nimbo.db \"DELETE FROM Kardex WHERE ProductId=13;\")",
+      "Bash(sqlite3 nimbo.db \"DELETE FROM Producto WHERE Id=13;\")"
     ]
   }
 }

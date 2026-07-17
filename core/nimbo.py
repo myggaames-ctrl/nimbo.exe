@@ -310,6 +310,23 @@ def _intentar_detectar(message: str, role: str, context: dict, contexto_historia
             return (f"Cliente {nombre}. Que tipo de cliente es? "
                     f"(detallista, mayorista, especial o vip - por defecto detallista):"), context
 
+        if str(result).startswith("PRODUCTO_NUEVO_INICIO:"):
+            # Arrancado por tools/inventory_tool.py create_product_tool cuando el
+            # mensaje ("agregar/nuevo/crear producto X precio N [costo N] [stock N]")
+            # no traia precio y/o costo. El stock nunca se pregunta aqui (si no vino
+            # en el mensaje se crea con 0, ver producto_waiting_costo mas abajo).
+            partes = str(result).replace("PRODUCTO_NUEVO_INICIO:", "").split("|")
+            nombre = partes[0]
+            precio = partes[1] if len(partes) > 1 else ""
+            costo = partes[2] if len(partes) > 2 else ""
+            cantidad = float(partes[3]) if len(partes) > 3 and partes[3] else 0
+            context = {"step": "producto_waiting_precio", "prod_nombre": nombre, "prod_cantidad": cantidad}
+            if precio:
+                context["prod_precio"] = float(precio)
+                context["step"] = "producto_waiting_costo"
+                return f"¿Cuál es el costo de {nombre}?", context
+            return f"¿A qué precio se vende {nombre}?", context
+
         if str(result).startswith("COMBO_INICIO:"):
             nombre_combo = str(result).replace("COMBO_INICIO:", "").strip()
             context = {"step": "combo_crear_waiting_producto", "combo_nombre": nombre_combo, "combo_items": []}
@@ -1938,6 +1955,32 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         except Exception as e:
             context = {}
             return f"Error al crear producto: {e}", context
+
+    # Flujo de creacion de producto explicita por chat ("agregar/nuevo/crear
+    # producto X precio N ..."), arrancado por PRODUCTO_NUEVO_INICIO: mas arriba.
+    # Distinto del flujo waiting_price/waiting_cost de arriba (ese es un fallback
+    # de "agregar N [producto]" cuando el producto no existe, no un comando de
+    # creacion explicita) - se mantienen separados para no mezclar los dos gatillos.
+    if step == "producto_waiting_precio":
+        try:
+            precio = float(message.strip().replace("Q","").replace("q","").strip())
+        except:
+            return "Por favor escribe solo el precio en números. Ej: 95", context
+        context["prod_precio"] = precio
+        context["step"] = "producto_waiting_costo"
+        return f"¿Cuál es el costo de {context['prod_nombre']}?", context
+
+    if step == "producto_waiting_costo":
+        try:
+            costo = float(message.strip().replace("Q","").replace("q","").strip())
+        except:
+            return "Por favor escribe solo el costo en números. Ej: 40", context
+        from tools.inventory_tool import _crear_producto_directo
+        nombre = context["prod_nombre"].title()
+        precio = context["prod_precio"]
+        cantidad = context.get("prod_cantidad", 0)
+        context = {}
+        return _crear_producto_directo(nombre, precio, costo, cantidad), context
 
     # Intento 1 y 2: deteccion directa + traduccion Gemini
     detectado = _intentar_detectar(message, role, context, contexto_historial)

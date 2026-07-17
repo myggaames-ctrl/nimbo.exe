@@ -124,11 +124,11 @@ def delete_product_tool(data):
 register("inventory.delete", delete_product_tool)
 
 
-def create_product_tool(data):
-    name = data.get("query", "").title()
-    price = data.get("price", 0)
-    cost = data.get("cost", 0)
-    quantity = data.get("quantity", 0)
+def _crear_producto_directo(name, price, cost, quantity):
+    """Insercion real del producto, ya con precio y costo resueltos (los dos
+    obligatorios). Usada tanto por create_product_tool (cuando el mensaje ya
+    trae todo) como por el step producto_waiting_costo en core/nimbo.py (cuando
+    el flujo conversacional termino de completar los campos que faltaban)."""
     conn = nimbo_connect()
     cur = conn.cursor()
     cur.execute(
@@ -138,11 +138,44 @@ def create_product_tool(data):
     conn.commit()
     product_id = cur.lastrowid
     conn.close()
-    if quantity > 0:
+    if quantity and quantity > 0:
         add_stock(product_id, quantity)
-    return f"Producto '{name}' creado. Precio: Q{price}, Costo: Q{cost}, Stock: {quantity}."
+    return f"Producto '{name}' creado. Precio: Q{price}, Costo: Q{cost}, Stock: {int(quantity or 0)}."
+
+
+def create_product_tool(data):
+    query = (data.get("query") or "").strip()
+    price = data.get("price")
+    cost = data.get("cost")
+    quantity = data.get("quantity") or 0
+
+    if price is None or cost is None:
+        # Falta precio y/o costo - arranca el flujo conversacional en
+        # core/nimbo.py (marcador PRODUCTO_NUEVO_INICIO:) para completarlos uno
+        # por uno. El stock nunca se pregunta - si no vino en el mensaje se crea
+        # el producto con 0 y se puede agregar despues con "agregar N [producto]".
+        precio_str = "" if price is None else str(price)
+        costo_str = "" if cost is None else str(cost)
+        return f"PRODUCTO_NUEVO_INICIO:{query}|{precio_str}|{costo_str}|{quantity}"
+
+    return _crear_producto_directo(query.title(), price, cost, quantity)
 
 register("inventory.create", create_product_tool)
+
+
+def importar_instrucciones_tool(data):
+    return (
+        "Para importar productos en lote desde Excel o CSV:\n"
+        "1. Ve al Dashboard, seccion 'Inventario' (menu lateral).\n"
+        "2. Haz clic en el boton '📦 Importar Excel/CSV'.\n"
+        "3. Si no tienes el archivo listo, descarga la plantilla desde ese mismo modal - "
+        "trae las columnas correctas y un ejemplo.\n"
+        "4. Sube tu archivo (.xlsx o .csv). Solo Nombre y Precio son obligatorios "
+        "(Costo, Codigo, Stock, StockMinimo y Categoria son opcionales).\n\n"
+        '<a href="/" style="color:var(--accent)">🔗 Ir al Dashboard</a>'
+    )
+
+register("inventory.importar_instrucciones", importar_instrucciones_tool)
 
 def set_min_stock_tool(data):
     from database.aronium import set_stock_minimo, get_products

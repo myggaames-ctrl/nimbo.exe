@@ -13,7 +13,15 @@ class ContabilidadDetector:
         r"^pague?\s+(?:el?\s+|la\s+)?(.+?)\s+[Qq]?(\d+\.?\d*)$",
         r"^gaste?\s+[Qq]?(\d+\.?\d*)\s+(?:en\s+)?(.+)$",
         r"^gaste?\s+(\d+\.?\d*)\s+(?:en\s+)?(.+)$",
-        r"^(.+?)\s+costo\s+[Qq]?(\d+\.?\d*)$",
+        # Lookahead negativo: sin esto, "agregar/nuevo/crear producto X precio N
+        # costo N" (sin stock al final, ver core/detectors/inventory_detector.py
+        # CREATE_NATURAL_PATTERNS) matcheaba aqui primero (ContabilidadDetector se
+        # revisa antes que InventoryDetector en core/intent_detector.py) e
+        # interpretaba la creacion del producto como un gasto - mismo tipo de
+        # ambiguedad entre detectores que ya existia con "cliente aprobo/rechazo"
+        # (ver core/detectors/cliente_detector.py) o "garantia de reparacion"
+        # (ver core/detectors/garantia_detector.py).
+        r"^(?!(?:agregar|agrega|nuevo|crear)\s+producto\s+)(.+?)\s+costo\s+[Qq]?(\d+\.?\d*)$",
         r"^costo\s+(?:de\s+)?(.+?)\s+[Qq]?(\d+\.?\d*)$",
     ]
 
