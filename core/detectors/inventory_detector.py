@@ -11,6 +11,20 @@ def singularize(text):
         return text[:-1]
     return text
 
+def es_codigo_barras(text):
+    """True si el texto es un codigo de barras 'pelado' (mismo criterio que
+    InventoryDetector.BARCODE_PATTERNS). Se expone a nivel de modulo (no solo
+    dentro de detect()) porque core/nimbo.py tambien lo usa dentro de los steps
+    barcode_waiting_* - si el usuario escanea un codigo NUEVO mientras todavia
+    esta contestando la pregunta de un escaneo anterior (si/no/cantidad), hay
+    que reconocer que es un escaneo nuevo en vez de intentar parsear el codigo
+    como si fuera la cantidad a vender (ver barcode_waiting_accion)."""
+    text = normalize(text)
+    for pattern in InventoryDetector.BARCODE_PATTERNS:
+        if re.match(pattern, text):
+            return True
+    return False
+
 class InventoryDetector:
 
     EXACT = ["inventario", "productos", "listar productos", "mostrar productos", "que tenemos", "que hay", "que productos hay", "que productos tenemos", "que tenemos en inventario", "que hay en inventario"]

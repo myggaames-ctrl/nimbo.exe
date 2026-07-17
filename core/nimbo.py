@@ -113,6 +113,46 @@ def _analizar_intencion_vaga(message: str, contexto: str = "") -> str:
     return texto
 
 
+def _iniciar_flujo_barcode(resultado):
+    """Parsea el resultado de tools/inventory_tool.py escanear_codigo_tool()
+    (marcador BARCODE_INICIO: si encontro el producto, o
+    CODIGO_NO_ENCONTRADO_INICIO: si no) y arma el texto + contexto para
+    arrancar el flujo de escaneo. Se llama tanto desde _intentar_detectar()
+    (escaneo nuevo, sin flujo previo) como directo desde los steps
+    barcode_waiting_accion/barcode_waiting_crear (escaneo que interrumpe la
+    pregunta pendiente de un escaneo anterior). Retorna None si `resultado` no
+    es ninguno de los dos marcadores."""
+    resultado = str(resultado)
+
+    if resultado.startswith("BARCODE_INICIO:"):
+        partes = resultado.replace("BARCODE_INICIO:", "").split("|", 5)
+        producto_id, nombre, precio, stock, codigo, foto = partes
+        context = {
+            "step": "barcode_waiting_accion",
+            "barcode_producto_id": int(producto_id),
+            "barcode_nombre": nombre,
+            "barcode_precio": float(precio),
+            "barcode_stock": float(stock),
+        }
+        texto = ""
+        if foto:
+            ruta = foto if foto.startswith(("http://", "https://", "/")) else f"/{foto}"
+            texto += f'<img src="{ruta}" style="max-width:220px;border-radius:8px;margin-bottom:6px"><br>'
+        texto += (f"<b>{nombre}</b><br>"
+                  f"Código: {codigo or '—'}<br>"
+                  f"Precio: Q{precio}<br>"
+                  f"Existencias: {int(float(stock))}<br><br>"
+                  f"¿Quieres vender este producto? (si/no) o escribe la cantidad")
+        return texto, context
+
+    if resultado.startswith("CODIGO_NO_ENCONTRADO_INICIO:"):
+        codigo = resultado.replace("CODIGO_NO_ENCONTRADO_INICIO:", "").strip()
+        context = {"step": "barcode_waiting_crear", "barcode_codigo_nuevo": codigo}
+        return f"Código '{codigo}' no registrado. ¿Quieres agregarlo como producto nuevo? (si/no)", context
+
+    return None
+
+
 # Frases que, escritas a mitad de cualquier flujo conversacional, cancelan ese flujo
 # en vez de interpretarse como el dato que el step actual esperaba (ver salida
 # universal en send()).
@@ -327,36 +367,13 @@ def _intentar_detectar(message: str, role: str, context: dict, contexto_historia
                 return f"¿Cuál es el costo de {nombre}?", context
             return f"¿A qué precio se vende {nombre}?", context
 
-        if str(result).startswith("BARCODE_INICIO:"):
-            # Arrancado por tools/inventory_tool.py escanear_codigo_tool cuando el
-            # codigo escaneado SI matcheo un producto. Arma el texto con foto (si
-            # tiene) + nombre/precio/stock y pregunta si vender.
-            partes = str(result).replace("BARCODE_INICIO:", "").split("|", 5)
-            producto_id, nombre, precio, stock, codigo, foto = partes
-            context = {
-                "step": "barcode_waiting_accion",
-                "barcode_producto_id": int(producto_id),
-                "barcode_nombre": nombre,
-                "barcode_precio": float(precio),
-                "barcode_stock": float(stock),
-            }
-            texto = ""
-            if foto:
-                ruta = foto if foto.startswith(("http://", "https://", "/")) else f"/{foto}"
-                texto += f'<img src="{ruta}" style="max-width:220px;border-radius:8px;margin-bottom:6px"><br>'
-            texto += (f"<b>{nombre}</b><br>"
-                      f"Código: {codigo or '—'}<br>"
-                      f"Precio: Q{precio}<br>"
-                      f"Existencias: {int(float(stock))}<br><br>"
-                      f"¿Quieres vender este producto? (si/no) o escribe la cantidad")
-            return texto, context
-
-        if str(result).startswith("CODIGO_NO_ENCONTRADO_INICIO:"):
-            # Arrancado por escanear_codigo_tool cuando el codigo escaneado no
-            # matchea ningun producto registrado.
-            codigo = str(result).replace("CODIGO_NO_ENCONTRADO_INICIO:", "").strip()
-            context = {"step": "barcode_waiting_crear", "barcode_codigo_nuevo": codigo}
-            return f"Código '{codigo}' no registrado. ¿Quieres agregarlo como producto nuevo? (si/no)", context
+        if str(result).startswith("BARCODE_INICIO:") or str(result).startswith("CODIGO_NO_ENCONTRADO_INICIO:"):
+            # Arrancado por tools/inventory_tool.py escanear_codigo_tool. Factorizado
+            # en _iniciar_flujo_barcode() porque los steps barcode_waiting_accion y
+            # barcode_waiting_crear tambien lo llaman directo, cuando el mensaje que
+            # llega a mitad de esos steps resulta ser un escaneo NUEVO (no la
+            # respuesta si/no/cantidad que se estaba esperando) - ver esos steps.
+            return _iniciar_flujo_barcode(result)
 
         if str(result).startswith("COMBO_INICIO:"):
             nombre_combo = str(result).replace("COMBO_INICIO:", "").strip()
@@ -2018,6 +2035,19 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
     # BARCODE_INICIO:/CODIGO_NO_ENCONTRADO_INICIO: mas arriba, ver
     # tools/inventory_tool.py escanear_codigo_tool).
     if step == "barcode_waiting_accion":
+        # Si el mensaje que llega ahora es EN SI MISMO un codigo de barras (el
+        # cajero escaneo otro producto antes de contestar la pregunta anterior -
+        # muy comun escaneando varios articulos seguidos), se trata como un
+        # escaneo nuevo en vez de intentar interpretarlo como la cantidad a
+        # vender del producto anterior (un codigo numerico de 13 digitos, leido
+        # como cantidad, siempre da "stock insuficiente" - ese era el bug).
+        from core.detectors.inventory_detector import es_codigo_barras, normalize as _normalize_barcode
+        if es_codigo_barras(message):
+            from tools.inventory_tool import escanear_codigo_tool
+            nuevo = _iniciar_flujo_barcode(escanear_codigo_tool(_normalize_barcode(message)))
+            if nuevo:
+                return nuevo
+
         resp = message.strip().lower()
         nombre = context["barcode_nombre"]
         producto_id = context["barcode_producto_id"]
@@ -2056,6 +2086,15 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         return f"Venta: {cantidad}x {nombre} = Q{total}. Nombre del cliente (o 'sin nombre'):", context
 
     if step == "barcode_waiting_crear":
+        # Mismo caso que en barcode_waiting_accion: si en vez de responder
+        # si/no el usuario escanea otro codigo, se arranca el escaneo nuevo.
+        from core.detectors.inventory_detector import es_codigo_barras, normalize as _normalize_barcode
+        if es_codigo_barras(message):
+            from tools.inventory_tool import escanear_codigo_tool
+            nuevo = _iniciar_flujo_barcode(escanear_codigo_tool(_normalize_barcode(message)))
+            if nuevo:
+                return nuevo
+
         resp = message.strip().lower()
         codigo = context.get("barcode_codigo_nuevo", "")
         if resp in ("no", "n"):
