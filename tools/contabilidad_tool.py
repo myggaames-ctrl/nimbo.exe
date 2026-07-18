@@ -3,7 +3,7 @@ Herramienta de Contabilidad
 """
 import os
 from core.tool_registry import register
-from database.aronium import registrar_gasto, get_gastos, get_balance_mes, get_valor_inventario, get_margen_productos
+from database.nimbo_db import registrar_gasto, get_gastos, get_balance_mes, get_valor_inventario, get_margen_productos
 from services.ollama_service import analizar_ollama
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -169,7 +169,7 @@ register("contabilidad.sugerencias_precios", sugerencias_precios_tool)
 
 
 def equilibrio_tool(data):
-    from database.aronium import get_gastos, get_pagos_fijos, get_margen_productos, get_balance_mes
+    from database.nimbo_db import get_gastos, get_pagos_fijos, get_margen_productos, get_balance_mes
     from datetime import datetime
     
     # Gastos operativos del mes
@@ -221,7 +221,7 @@ register("contabilidad.equilibrio", equilibrio_tool)
 
 
 def analisis_completo_tool(data):
-    from database.aronium import get_datos_completos_empresa
+    from database.nimbo_db import get_datos_completos_empresa
 
     datos = get_datos_completos_empresa()
     
@@ -278,7 +278,7 @@ def excel_contabilidad_tool(data):
     import openpyxl
     from openpyxl.styles import Font, PatternFill, Alignment
     from datetime import datetime
-    from database.aronium import get_balance_mes, get_gastos, get_margen_productos, get_valor_inventario, get_reporte_periodo, nimbo_connect
+    from database.nimbo_db import get_balance_mes, get_gastos, get_margen_productos, get_valor_inventario, get_reporte_periodo, nimbo_connect
     
     now = datetime.now()
     mes = now.month
@@ -356,7 +356,7 @@ register("contabilidad.excel", excel_contabilidad_tool)
 
 
 def comparacion_meses_tool(data):
-    from database.aronium import get_comparacion_meses
+    from database.nimbo_db import get_comparacion_meses
     meses = get_comparacion_meses(6)
     
     resp = "Comparacion ultimos 6 meses:\n\n"
@@ -380,7 +380,7 @@ register("contabilidad.comparacion", comparacion_meses_tool)
 
 
 def flujo_proyectado_tool(data):
-    from database.aronium import get_flujo_caja_proyectado
+    from database.nimbo_db import get_flujo_caja_proyectado
     f = get_flujo_caja_proyectado()
     signo = "sobraran" if f["positivo"] else "faltaran"
     resp = f"Proyeccion de flujo de caja para {f['mes_proyectado']}:\n\n"
@@ -398,7 +398,7 @@ register("contabilidad.flujo_proyectado", flujo_proyectado_tool)
 
 
 def flujo_proyectado_detalle_tool(data):
-    from database.aronium import get_flujo_caja_proyectado
+    from database.nimbo_db import get_flujo_caja_proyectado
     f = get_flujo_caja_proyectado()
     ing = f["ingresos"]
     egr = f["egresos"]
@@ -453,7 +453,7 @@ def _resumen_iva(d):
 
 
 def declaracion_iva_tool(data):
-    from database.aronium import get_declaracion_iva
+    from database.nimbo_db import get_declaracion_iva
     from services.pdf_iva import generar_pdf_declaracion_iva
     d = get_declaracion_iva()
     filename = generar_pdf_declaracion_iva(d)
@@ -465,7 +465,7 @@ register("contabilidad.declaracion_iva", declaracion_iva_tool)
 
 
 def iva_rapido_tool(data):
-    from database.aronium import get_declaracion_iva
+    from database.nimbo_db import get_declaracion_iva
     d = get_declaracion_iva()
     if d["a_favor"]:
         return (f"Para {d['periodo']}: tienes credito fiscal a favor de Q{abs(d['iva_a_pagar']):.2f} "

@@ -2,7 +2,7 @@
 Herramienta de Cuentas por Cobrar
 """
 from core.tool_registry import register
-from database.aronium import (
+from database.nimbo_db import (
     buscar_cliente_completo, crear_cuenta_cobrar, get_cuenta_por_id,
     registrar_pago_cliente, get_cuentas_cobrar, get_cuentas_cliente
 )

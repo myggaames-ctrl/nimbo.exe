@@ -2,7 +2,7 @@
 Herramienta de Garantias
 """
 from core.tool_registry import register
-from database.aronium import (
+from database.nimbo_db import (
     get_products, set_garantia_producto, get_garantia_por_numero,
     get_garantias_cliente, get_garantias_por_vencer
 )

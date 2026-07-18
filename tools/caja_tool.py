@@ -2,7 +2,7 @@
 Herramienta de Caja Registradora
 """
 from core.tool_registry import register
-from database.aronium import get_turno_abierto, retirar_caja
+from database.nimbo_db import get_turno_abierto, retirar_caja
 
 
 def abrir_caja_tool(data):

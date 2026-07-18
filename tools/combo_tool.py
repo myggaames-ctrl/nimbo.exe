@@ -5,7 +5,7 @@ import json
 import os
 import re
 from core.tool_registry import register
-from database.aronium import (
+from database.nimbo_db import (
     get_products, get_combos, buscar_combos, vender_combo, DESCUENTO_COMBO_SUGERIDO
 )
 

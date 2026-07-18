@@ -2,7 +2,7 @@
 Herramienta de Tarifas de Mano de Obra (Servicio Tecnico)
 """
 from core.tool_registry import register
-from database.aronium import crear_tarifa, get_tarifas
+from database.nimbo_db import crear_tarifa, get_tarifas
 
 
 def agregar_tarifa_tool(data):

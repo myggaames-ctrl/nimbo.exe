@@ -73,7 +73,7 @@ class ReporteDetector:
         r"^cuando\s+compra\s+de\s+nuevo\s+(.+)$",
     ]
 
-    # Metas semanales de ventas (ver database.aronium.set_meta_semanal /
+    # Metas semanales de ventas (ver database.nimbo_db.set_meta_semanal /
     # get_progreso_meta_semanal). Se revisa antes que PATTERNS_META_PROGRESO
     # porque este exige un monto (digitos) y es mas especifico.
     PATTERNS_META_DEFINIR = [

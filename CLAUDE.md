@@ -168,7 +168,7 @@ identificacion de cobro).
      (08:00 default), hora cierre (18:00 default).
   5. Configuracion de caja (opcional, se puede saltar): fondo inicial de caja en Q. Si
      se da un monto, ademas de guardarlo en caja_fondo_inicial se escribe tambien en
-     Configuracion.caja_fondo_sugerido - la misma clave que database.aronium.
+     Configuracion.caja_fondo_sugerido - la misma clave que database.nimbo_db.
      cerrar_turno() usa para sugerir el fondo del turno siguiente (ver seccion Caja
      Registradora) - asi el primer "abrir caja" del negocio (por chat o desde la UI) ya
      llega con este monto sugerido en vez de pedir contar denominacion por denominacion.
@@ -239,9 +239,11 @@ identificacion de cobro).
 - core/configuracion.py - Configuracion del negocio (clave/valor)
 - core/detectors/ - inventory, service, cliente, venta, proveedor, contenido, reporte, evento, contabilidad, cotizacion, caja
 - tools/ - mismo set de modulos, carga automatica via __init__.py
-- database/aronium.py - Todas las funciones de BD (el nombre del archivo es historico, de
+- database/nimbo_db.py - Todas las funciones de BD (se llamaba database/aronium.py, de
   cuando todo el acceso a datos pasaba por Aronium - ya no es el caso, ver "Catalogo propio
-  (Producto/Stock)" mas abajo). get_products(search) intenta busqueda fuzzy con
+  (Producto/Stock)" mas abajo; se renombro a nimbo_db.py y se actualizaron todos los imports
+  del proyecto para que el nombre del archivo refleje lo que hace hoy). get_products(search)
+  intenta busqueda fuzzy con
   difflib.SequenceMatcher (contra el nombre completo y cada palabra del nombre) si la
   busqueda exacta (LIKE) no encuentra nada. services/inventory.py delega su search()
   aqui para heredar el mismo fallback. get_product_by_id(id)/get_product_by_code(code) para
@@ -280,8 +282,8 @@ identificacion de cobro).
     get_pedidos_sugeridos/set_stock_minimo sigue siendo la tabla StockMinimo ya existente
     (ProductId/ProductName/Minimo), que no se toco; son dos campos con el mismo proposito
     sin consolidar, pendiente para una limpieza futura.
-  - database.aronium.init_productos() crea ambas tablas (se llama en app.py junto al resto
-    de init_*). database.aronium.migrar_productos_desde_aronium() se llama una sola vez
+  - database.nimbo_db.init_productos() crea ambas tablas (se llama en app.py junto al resto
+    de init_*). database.nimbo_db.migrar_productos_desde_aronium() se llama una sola vez
     despues, tambien en app.py: si Producto ya tiene filas no hace nada (idempotente, para
     no correr en cada arranque); si no, intenta conectar a pos.db (Aronium) - si existe y
     tiene una tabla Product, copia cada producto preservando EXACTAMENTE el mismo Id que
@@ -294,7 +296,7 @@ identificacion de cobro).
     tenian filas en nimbo.db con un ProductId/ProductoId suelto (sin FK real) apuntando al
     Id que el producto tenia en Aronium - si la migracion reasignara Ids nuevos esas
     referencias quedarian huerfanas.
-  - Funciones migradas en database/aronium.py (mismos nombres, parametros y claves de
+  - Funciones migradas en database/nimbo_db.py (mismos nombres, parametros y claves de
     retorno que antes - Id/Name/Code/Price/Cost/Stock/Description en ingles, aunque las
     columnas fisicas de Producto/Stock esten en espanol; nada que consuma estas funciones
     en el resto del codebase cambio): get_products(), get_product_by_code(),
@@ -320,7 +322,7 @@ identificacion de cobro).
     Aronium (Document/DocumentItem) desde antes de esta migracion, no se toco por no ser
     parte del pedido y por el riesgo de cambiar numeros de contabilidad ya en uso.
 - Inventario: CRUD, kardex, alertas stock, fotos, descripcion
-  - Alertas predictivas: database.aronium.get_alertas_predictivas() calcula, para cada
+  - Alertas predictivas: database.nimbo_db.get_alertas_predictivas() calcula, para cada
     producto, el promedio de unidades de SALIDA por dia en el Kardex de los ultimos 30 dias
     (DIAS_HISTORIAL_CONSUMO - incluye ventas y salidas manuales, cualquier egreso real de
     stock, no solo Razon='Venta') y proyecta dias_restantes = stock_actual / promedio_diario.
@@ -328,7 +330,7 @@ identificacion de cobro).
     DIAS_ADVERTENCIA_STOCK) u OK (>21 dias); un producto sin ninguna salida en el periodo
     queda en SIN_DATOS (dias_restantes=None, no hay tasa de consumo con la que proyectar) en
     vez de asumir que nunca se agota. Lista ordenada de mas a menos urgente.
-    database.aronium.get_prediccion_producto(query) hace lo mismo para un solo producto
+    database.nimbo_db.get_prediccion_producto(query) hace lo mismo para un solo producto
     (busqueda fuzzy con get_products(), mismo criterio que el resto del sistema).
   - Desde el chat: "alertas de inventario" / "alertas predictivas" (inventory.
     alertas_predictivas) lista los productos CRITICO/ADVERTENCIA agrupados; "cuando se acaban
@@ -362,11 +364,11 @@ identificacion de cobro).
       "no vino en el archivo" de "vino en 0" cuando se trata de una actualizacion. Filas sin
       Nombre se ignoran en silencio (fila vacia); filas con Precio faltante o <= 0 se reportan
       en "errores" (fila, motivo) sin bloquear el resto del archivo.
-    - Deteccion de duplicados: database.aronium.buscar_producto_duplicado(nombre, codigo)
+    - Deteccion de duplicados: database.nimbo_db.buscar_producto_duplicado(nombre, codigo)
       busca primero por Codigo exacto (si la fila trae uno) y si no por similitud de Nombre
       (mismo difflib.SequenceMatcher y UMBRAL_SIMILITUD_PRODUCTO que usa la busqueda fuzzy de
       get_products()). Las filas sin duplicado se crean de inmediato
-      (database.aronium.crear_producto_importado - aqui si se aplican los defaults: Costo 0,
+      (database.nimbo_db.crear_producto_importado - aqui si se aplican los defaults: Costo 0,
       Stock 0, StockMinimo 5; si la fila no trae Codigo se le genera un EAN-13 automatico via
       asignar_codigo_barras(), igual que "generar codigo" del chat). Las filas con duplicado
       NO se crean todavia - la respuesta del endpoint las devuelve en "duplicados" (la fila
@@ -379,7 +381,7 @@ identificacion de cobro).
       "Saltar todos" para no tener que decidir fila por fila si el usuario ya sabe que quiere
       para todo el lote. Al confirmar, el frontend manda TODAS las filas+decisiones juntas
       (sin volver a subir el archivo) a POST /api/db/products/import/resolver (JSON, no
-      multipart): "actualizar" llama a database.aronium.actualizar_producto_importado(), que
+      multipart): "actualizar" llama a database.nimbo_db.actualizar_producto_importado(), que
       solo pisa los campos que la fila trae (Costo/Stock/StockMinimo/Categoria en None no se
       tocan) - para que reimportar un archivo que solo trae precios actualizados no vacie el
       stock existente por accidente; el Codigo del producto existente tampoco se pisa si ya
@@ -448,7 +450,7 @@ identificacion de cobro).
     (Servicio Tecnico), GAR-XXXX/GARR-XXXX (garantias), COT-XXXX (cotizaciones) - y
     "QNNN" (mencion de precio, no codigo). Produce intent "inventory.scan_barcode".
     - tools/inventory_tool.py escanear_codigo_tool(codigo) busca con
-      database.aronium.get_product_by_code_ci() (case-insensitive - el mensaje ya paso
+      database.nimbo_db.get_product_by_code_ci() (case-insensitive - el mensaje ya paso
       por CommandNormalizer, todo en minusculas, y algunos codigos legados como "LIC001"
       se guardaron con mayusculas).
     - Si encuentra el producto: arranca BARCODE_INICIO: (core/nimbo.py) que muestra foto
@@ -471,9 +473,9 @@ identificacion de cobro).
 - Clientes: historial completo, Excel, cumpleanos. "historial de Juan Perez" (cliente.historial,
   tools/cliente_tool.py) muestra todo desde el primer dia: datos (telefono/email/NIT/fecha de
   alta), estadisticas (total gastado, producto favorito, frecuencia de compra en dias promedio,
-  ultima visita, descuento tipo cliente si tiene uno configurado - ver database.aronium.
+  ultima visita, descuento tipo cliente si tiene uno configurado - ver database.nimbo_db.
   get_descuentos), compras (Descripcion + Total + metodo de pago), ordenes de servicio,
-  cotizaciones y garantias activas. database.aronium.get_historial_cliente(cliente_id,
+  cotizaciones y garantias activas. database.nimbo_db.get_historial_cliente(cliente_id,
   meses=None) trae ventas/ordenes/cotizaciones/garantias vigentes (meses=None = sin limite de
   tiempo; si se pasa un numero, acota las ventas a esos ultimos meses). "resumen de Juan Perez"
   (cliente.resumen) es la version corta: solo estadisticas + garantias activas, sin la lista
@@ -486,9 +488,9 @@ identificacion de cobro).
   al marcar una orden como ENTREGADO (tools/service_tool.py cambiar_estado_tool), en vez de
   actualizar el estado de una vez, retorna el marcador ENTREGA_GARANTIA_INICIO:OS-XXXX que
   arranca el step servicio_waiting_dias_garantia en core/nimbo.py (pregunta "Cuantos dias de
-  garantia tiene esta reparacion?", default database.aronium.DIAS_GARANTIA_REPARACION_DEFAULT
+  garantia tiene esta reparacion?", default database.nimbo_db.DIAS_GARANTIA_REPARACION_DEFAULT
   = 30, acepta 'default' o un numero). Con la respuesta ya se marca ENTREGADO
-  (actualizar_estado_orden) y se genera la garantia (database.aronium.
+  (actualizar_estado_orden) y se genera la garantia (database.nimbo_db.
   generar_garantia_reparacion) - reutiliza la MISMA tabla GarantiaVenta de las garantias de
   producto, distinguida por la columna Tipo ('producto' default o 'reparacion', agregada con
   ALTER TABLE en init_garantias() porque la tabla ya existia de antes) y OrdenServicioId (para
@@ -498,9 +500,9 @@ identificacion de cobro).
   manda en ENTREGADO e incluye "Su reparacion tiene garantia GARR-XXXX valida hasta [fecha]"
   (services/whatsapp.py enviar_notificacion_orden, parametro garantia).
   - "garantia de reparacion OS-0001" (service.ver_garantia_reparacion) muestra el estado y
-    vencimiento de la garantia de esa orden (database.aronium.get_garantia_reparacion_por_orden).
+    vencimiento de la garantia de esa orden (database.nimbo_db.get_garantia_reparacion_por_orden).
   - "reclamacion garantia OS-0001" / "reclamar garantia OS-0001" (service.reclamar_garantia,
-    database.aronium.reclamar_garantia_reparacion): verifica que la garantia siga VIGENTE (si
+    database.nimbo_db.reclamar_garantia_reparacion): verifica que la garantia siga VIGENTE (si
     esta VENCIDA o ya fue RECLAMADA antes, rechaza con el motivo), la marca RECLAMADA (unico
     lugar del codebase que usa ese estado - antes quedaba sin comando de chat, ver seccion
     Garantias) y crea una OrdenServicio nueva sin costo para el mismo cliente/equipo,
@@ -510,7 +512,7 @@ identificacion de cobro).
     de un cliente) de core/detectors/garantia_detector.py, que se revisa antes que
     ServiceDetector - se le agrego un lookahead negativo para excluir "reparacion".
   - Fotos del equipo al recibirlo: tabla FotoOrdenServicio en nimbo.db (Id, OrdenId,
-    NumeroOrden, RutaFoto, Descripcion, Fecha - database.aronium.init_fotos_servicio/
+    NumeroOrden, RutaFoto, Descripcion, Fecha - database.nimbo_db.init_fotos_servicio/
     agregar_foto_orden/get_fotos_orden). Se suben desde el dashboard, no desde el chat (subir
     un archivo por chat no es posible) - panel "Servicio Tecnico" en el menu lateral
     (admin y tecnico - categoria "service" en core/action_engine.py, ver seccion "Flujo de
@@ -537,7 +539,7 @@ identificacion de cobro).
     informe de revision con presupuesto automatico, aprobacion/rechazo del cliente y tarifas
     de mano de obra configurables.
     - Asignar tecnico: OrdenServicio.TecnicoId/TecnicoNombre (ALTER TABLE, migracion en
-      database.aronium.init_servicio_tecnico_ext() - reemplazan a la columna vieja "Tecnico",
+      database.nimbo_db.init_servicio_tecnico_ext() - reemplazan a la columna vieja "Tecnico",
       texto libre que nunca se conecto a ningun flujo). Al crear una orden, despues de
       "problema" el step service_waiting_tecnico (core/nimbo.py) lista los tecnicos activos
       (core.auth.listar_tecnicos()) y pide un numero, o "ninguno" para no asignar todavia (o
@@ -547,13 +549,13 @@ identificacion de cobro).
       equipo, cliente y problema descrito.
     - Informe de revision: tabla InformeRevision en nimbo.db (Id, OrdenId, NumeroOrden,
       TecnicoId, TecnicoNombre, Descripcion, ProductosNecesarios [JSON: [{nombre, cantidad,
-      costo}]], ManoObra, Total, Fecha - database.aronium.init_informes_revision/
+      costo}]], ManoObra, Total, Fecha - database.nimbo_db.init_informes_revision/
       crear_informe_revision/get_informes_orden). "informe OS-0001: necesita cuchilla 1
       unidad y empaque 2 unidades mano de obra 75" (service.informe,
       core/detectors/service_detector.py + tools/service_tool.py informe_tool): separa el
       texto por " mano de obra N" al final, parte el resto por "," o " y " en items
       individuales ("cuchilla 1 unidad"), y por cada uno busca el producto en el inventario
-      (database.aronium.get_products(), mismo fuzzy fallback que el resto del sistema) para
+      (database.nimbo_db.get_products(), mismo fuzzy fallback que el resto del sistema) para
       resolver el precio (Price, no Cost - es lo que se le cobra al cliente) automaticamente;
       si un producto no matchea nada se registra con costo Q0 y se avisa en la respuesta ("no
       encontre en inventario: X"). El TecnicoId/TecnicoNombre del informe se toma de
@@ -585,7 +587,7 @@ identificacion de cobro).
       (mismo tipo de ambiguedad que ya existia entre GarantiaDetector/ServiceDetector, ver
       mas arriba).
     - Tarifas de mano de obra: tabla TarifaManoObra en nimbo.db (Id, Descripcion, Precio,
-      Activo - database.aronium.init_tarifas_mano_obra/crear_tarifa/get_tarifas). "agregar
+      Activo - database.nimbo_db.init_tarifas_mano_obra/crear_tarifa/get_tarifas). "agregar
       tarifa revision basica Q50" (tarifa.agregar) / "ver tarifas" (tarifa.listar) - detector
       nuevo core/detectors/tarifa_detector.py + tools/tarifa_tool.py. Es solo un catalogo de
       referencia (no hay ningun lugar del codigo que lo consulte automaticamente): el tecnico
@@ -601,7 +603,7 @@ identificacion de cobro).
       "mano", "obra", "presupuesto", "tecnico(s)", "informe(s)", "tarifa(s)", "aprobo",
       "rechazo", "asigna(da/do)", "necesita", "revision" al VOCABULARIO.
     - Widget de pipeline: GET /api/servicio/pipeline (@admin_o_tecnico_required,
-      database.aronium.get_pipeline_servicio() - COUNT(*) por Estado) alimenta una fila de
+      database.nimbo_db.get_pipeline_servicio() - COUNT(*) por Estado) alimenta una fila de
       tarjetas en panel-servicio (RECEPCION | REVISION | PRESUPUESTO | APROBADO | REPARACION
       | LISTO | ENTREGADO, mismo estilo .stat-card del Dashboard) mas una tarjeta aparte para
       RECHAZADO (solo se muestra si hay al menos una) porque no es parte de la secuencia del
@@ -621,7 +623,7 @@ identificacion de cobro).
   (costo / (1 - 6% comision POS - 30% margen objetivo)) y le pasa a Gemini los productos ya separados
   en dos grupos (saludable / necesita ajuste) para que solo narre el analisis sin recalcular ni inventar
   precios. Usa tambien get_balance_mes() (gastos operativos, ingresos) como contexto. Admin-only.
-  - Declaracion mensual de IVA (SAT-2046, declaraguate.com): database.aronium.
+  - Declaracion mensual de IVA (SAT-2046, declaraguate.com): database.nimbo_db.
     get_declaracion_iva(mes=None, anio=None) - si no se especifica periodo, usa el mes recien
     cerrado (mes actual - 1), no el mes en curso todavia incompleto, porque ese es el periodo
     que efectivamente toca declarar dentro de los primeros 10 dias habiles del mes actual.
@@ -646,16 +648,16 @@ identificacion de cobro).
       al 10 de cada mes ("Recuerda declarar el IVA del mes pasado") - el plazo real de la SAT
       es en dias habiles, aqui se aproxima como dias de calendario 1-10.
 - Reportes: dia/mes/trimestre/semestre/anual, Excel, automatico 5:30pm, limpieza anual
-  - Patrones de venta: database.aronium.get_patrones_ventas(dias_historial=90) analiza el
+  - Patrones de venta: database.nimbo_db.get_patrones_ventas(dias_historial=90) analiza el
     historial de Venta de los ultimos 90 dias y detecta: dia de la semana con mas/menos
     ventas (y el ratio entre ambos), mejor hora del dia, productos que se venden juntos
     frecuentemente, tendencia (ultimas 4 semanas vs las 4 anteriores) y clientes con un ciclo
     de compra regular (con su proxima compra estimada). "Productos juntos" se calcula
     agrupando por Venta.Id y extrayendo los nombres de producto de Venta.Descripcion de forma
     best-effort (_extraer_items_venta - misma logica que _productos_de_descripcion en
-    tools/cliente_tool.py, duplicada en database/aronium.py en vez de importada porque
+    tools/cliente_tool.py, duplicada en database/nimbo_db.py en vez de importada porque
     database/ no debe depender de tools/; solo las ventas multi-producto de Caja generan mas
-    de un item por venta, ver seccion Caja). database.aronium.get_prediccion_compra_cliente
+    de un item por venta, ver seccion Caja). database.nimbo_db.get_prediccion_compra_cliente
     (query) hace la prediccion de ciclo para UN cliente especifico (busqueda fuzzy con
     buscar_cliente_completo): requiere minimo 3 compras con fecha valida, calcula el promedio
     y la desviacion estandar de los dias entre compras consecutivas, y marca "regular": True
@@ -699,25 +701,25 @@ identificacion de cobro).
   enviada", "aceptaron la cotizacion COT-0001" (descuenta stock y crea Venta automaticamente,
   ver cotizacion.aceptar en tools/cotizacion_tool.py), "rechazaron la cotizacion COT-0001".
   Las cotizaciones ENVIADA/PENDIENTE que llegan a su FechaVencimiento pasan a VENCIDA
-  automaticamente (database.aronium.marcar_cotizaciones_vencidas(), se corre de forma lazy
+  automaticamente (database.nimbo_db.marcar_cotizaciones_vencidas(), se corre de forma lazy
   cada vez que se consultan) y aparecen en /api/recordatorios ("vence hoy" / "vencio").
   Widget en el dashboard (contadores Pendientes/Enviadas/Aceptadas de la semana + lista de
   activas con dias restantes) via /api/cotizaciones/resumen. Si aplica un descuento (ver
   Descuentos abajo) se muestra en el resumen del chat, en el PDF (subtotal + descuento +
   total) y se guarda como texto en Cotizacion.Notas.
-- Descuentos: tabla Descuento en nimbo.db (database.aronium.init_descuentos/crear_descuento/
+- Descuentos: tabla Descuento en nimbo.db (database.nimbo_db.init_descuentos/crear_descuento/
   get_descuentos/get_descuento_por_id/buscar_descuentos/desactivar_descuento). 4 tipos:
   cliente (ClienteId), temporada (FechaInicio/FechaFin), producto (ProductoId, referencia
   al Product.Id de Aronium igual que el resto del sistema), monto (MontoMinimo, "compras
   mayores a"). Cada descuento define Porcentaje o MontoFijo (uno de los dos).
-  database.aronium.calcular_descuento(cliente_id, productos, total, fecha=None) evalua
+  database.nimbo_db.calcular_descuento(cliente_id, productos, total, fecha=None) evalua
   todos los descuentos activos y devuelve el mejor (mayor monto en quetzales) - los
   descuentos NO se acumulan, se aplica solo uno. Para tipo "producto" la base del calculo
   es la suma de los subtotales de los items del carrito que coincidan con ese ProductoId,
   no el total completo; para cliente/temporada/monto la base es el total completo. Se
   aplica automaticamente (sin que el usuario tenga que pedirlo) en los 3 lugares donde se
   cierra una venta: paso venta_waiting_pago del flujo de venta simple en core/nimbo.py,
-  database.aronium.cobrar_carrito() (caja) y _finalizar_cotizacion() en core/nimbo.py
+  database.nimbo_db.cobrar_carrito() (caja) y _finalizar_cotizacion() en core/nimbo.py
   (cotizaciones). El descuento aplicado se muestra en la respuesta del chat, se anota en
   Venta.Descripcion / Cotizacion.Notas (no hay columnas de descuento en esas tablas) y en
   Caja tambien aparece en el ticket (services/ticket.py, lineas Subtotal/Descuento antes
@@ -734,7 +736,7 @@ identificacion de cobro).
 - Caja Registradora: panel "Caja" en el menu lateral (empleado y admin), pantalla tablet
   (botones grandes) en templates/index.html. Solo puede haber un turno (CajaTurno) ABIERTO
   a la vez en toda la tienda. Denominaciones fijas: Q200, Q100, Q50, Q20, Q10, Q5, Q1
-  (database.aronium.DENOMINACIONES).
+  (database.nimbo_db.DENOMINACIONES).
   - "abrir caja"/"cerrar caja" por chat (flujo conversacional en core/nimbo.py, steps
     caja_abrir_denom/caja_cerrar_denom, uno por denominacion) o desde la UI (modal con grid
     de 7 inputs, mismo componente reusado para apertura/cierre/detalle de billetes al cobrar).
@@ -754,12 +756,12 @@ identificacion de cobro).
     abierto no se fuerza foco (el campo ni siquiera es visible).
   - Cambio: para Efectivo, "cuanto paga el cliente" es opcional (por defecto = total exacto);
     el desglose de billetes recibidos es opcional/colapsable ("detalle de billetes") - si se
-    da, database.aronium._calcular_cambio_denominaciones() arma el vuelto en billetes
+    da, database.nimbo_db._calcular_cambio_denominaciones() arma el vuelto en billetes
     disponibles (greedy, mayor a menor) para el registro anti-fraude; si no se da, solo se
     registra el monto total (sin desglose para ese movimiento).
   - Cada movimiento de caja (MovimientoCaja: FONDO/VENTA/RETIRO/AJUSTE) puede guardar un JSON
     de Denominaciones que representa el DELTA neto por denominacion (positivo = entra,
-    negativo = sale). database.aronium.get_denominaciones_actuales() sirve para saber el
+    negativo = sale). database.nimbo_db.get_denominaciones_actuales() sirve para saber el
     desglose fisico actual del turno (suma de esos deltas) y detectar sencillo bajo
     (denominaciones pequenas Q20/Q10/Q5/Q1 sumando menos de Q200).
   - Retiro de caja: "retirar Q500 de caja [para/por motivo]" (chat) o boton "Retirar" en la
@@ -770,12 +772,12 @@ identificacion de cobro).
     Estado=CERRADO. El conteo fisico completo tambien se guarda en un MovimientoCaja tipo
     AJUSTE para auditoria. Un empleado no puede editar ventas ya cerradas (no existe endpoint
     para eso).
-  - FondoInicial es inmutable: se fija una unica vez en el INSERT de database.aronium.abrir_turno()
+  - FondoInicial es inmutable: se fija una unica vez en el INSERT de database.nimbo_db.abrir_turno()
     y no existe en todo el codebase ninguna funcion/endpoint que le haga UPDATE despues (la
     consola SQL del dashboard es solo SELECT y solo contra Aronium/pos.db, nunca contra
     nimbo.db). La unica forma de corregir un fondo mal capturado es que un admin anule el turno.
   - Fondo inicial automatico: al abrir un turno nuevo, si existe un turno CERRADO previo,
-    database.aronium.get_ultimo_cierre_denominaciones() recupera el desglose que se conto
+    database.nimbo_db.get_ultimo_cierre_denominaciones() recupera el desglose que se conto
     fisicamente en su cierre (el JSON guardado en el MovimientoCaja tipo AJUSTE de ese turno)
     y se ofrece como fondo inicial sugerido: por chat, Nimbo pregunta "abrir con este mismo
     fondo? (si/no)" (step caja_abrir_confirmar_sugerido en core/nimbo.py) en vez de pedir cada
@@ -796,24 +798,24 @@ identificacion de cobro).
   (GAR-XXXX) es una garantia real generada por una venta concreta - guarda copia del
   cliente/producto (ClienteNombre/ClienteTelefono/ProductoNombre denormalizados, igual
   que Cotizacion) y las 2 fechas de vencimiento ya calculadas (FechaVencimientoFabrica/
-  FechaVencimientoPropias). Estado (VIGENTE/VENCIDA/RECLAMADA): database.aronium.
+  FechaVencimientoPropias). Estado (VIGENTE/VENCIDA/RECLAMADA): database.nimbo_db.
   marcar_garantias_vencidas() (lazy, igual que las cotizaciones) solo marca VENCIDA
   cuando YA pasaron AMBAS fechas - si cualquiera de las dos sigue vigente, el producto
   sigue cubierto. RECLAMADA no se toca automaticamente; el unico lugar que la usa es
   "reclamacion garantia OS-XXXX" para garantias de reparacion (ver seccion Servicio
   Tecnico) - las garantias de producto no tienen todavia un comando de chat para
-  reclamarlas, se marcarian igual via database.aronium si hiciera falta.
-  - Integracion con ventas: database.aronium.generar_garantia_venta() se llama
+  reclamarlas, se marcarian igual via database.nimbo_db si hiciera falta.
+  - Integracion con ventas: database.nimbo_db.generar_garantia_venta() se llama
     automaticamente (una vez por cada linea de producto distinta) desde los 3 lugares
     donde se cierra una venta - paso venta_waiting_pago/venta_waiting_pago_mixto_tarjeta
-    en core/nimbo.py (via el helper _registrar_venta_chat), database.aronium.
+    en core/nimbo.py (via el helper _registrar_venta_chat), database.nimbo_db.
     cobrar_carrito() (caja) y tools/cotizacion_tool.py aceptar_cotizacion_tool() (cuando
     se acepta una cotizacion). Si el producto no tiene GarantiaProducto configurada usa
     30 dias propios y 0 de fabrica por defecto. El numero de garantia se muestra en la
     respuesta del chat, en el ticket de caja (services/ticket.py, seccion GARANTIAS antes
     del pie) y en el mensaje de factura por WhatsApp (services/whatsapp.py
     enviar_factura_whatsapp, parametro garantia).
-  - Recordatorios: get_recordatorios() (database/aronium.py) agrega un recordatorio por
+  - Recordatorios: get_recordatorios() (database/nimbo_db.py) agrega un recordatorio por
     cada garantia que vence en los proximos 7 dias (get_garantias_por_vencer(dias=7)).
   - Detector core/detectors/garantia_detector.py + herramienta tools/garantia_tool.py.
     Comandos de chat: "garantia de cuchilla es 30 dias" (configura solo DiasPropia, sin
@@ -825,18 +827,18 @@ identificacion de cobro).
     core/action_engine.py).
 - Combos/Kits: 2 tablas en nimbo.db. ProductoCombo (Nombre/Descripcion/PrecioCombo/Activo)
   + ItemCombo (ComboId, ProductoId de Aronium, ProductoNombre, Cantidad - N filas por
-  combo). database.aronium.DESCUENTO_COMBO_SUGERIDO = 0.08 (8%) es el descuento por
+  combo). database.nimbo_db.DESCUENTO_COMBO_SUGERIDO = 0.08 (8%) es el descuento por
   defecto que se sugiere sobre la suma de precios individuales, tanto en la creacion
   manual como en las sugerencias con Gemini.
   - "crear combo Kit Licuadora" inicia un flujo conversacional en core/nimbo.py (steps
     combo_crear_waiting_producto/seleccion/cantidad, igual que las cotizaciones: agrega
     productos + cantidad en loop hasta 'listo') y al terminar sugiere el precio con 8% de
     descuento (step combo_crear_waiting_precio, el admin puede aceptar con "si" o escribir
-    su propio monto) antes de guardar el combo (database.aronium.crear_combo).
+    su propio monto) antes de guardar el combo (database.nimbo_db.crear_combo).
   - "ver combos" lista los combos activos con su precio y detalle de productos
-    (tools/combo_tool.py, database.aronium.get_combos()).
+    (tools/combo_tool.py, database.nimbo_db.get_combos()).
   - "vender combo Kit Licuadora" es una venta directa de una sola vez (a diferencia de
-    "crear combo", no es un flujo de varios pasos) - database.aronium.vender_combo()
+    "crear combo", no es un flujo de varios pasos) - database.nimbo_db.vender_combo()
     busca el combo por nombre (buscar_combos, fuzzy LIKE), verifica stock de todos sus
     productos antes de descontar ninguno, descuenta el stock de cada uno, registra una
     sola Venta por el PrecioCombo (ya con el descuento incluido, via
@@ -845,7 +847,7 @@ identificacion de cobro).
     metodo de pago (mantiene el comando de un solo paso); para atribuir la venta a un
     cliente especifico o cobrar por caja, hay que vender los productos del combo por
     separado con descuento manual en vez de usar este comando.
-  - "sugerir combos" (database.aronium via tools/combo_tool.py sugerir_combos_tool):
+  - "sugerir combos" (database.nimbo_db via tools/combo_tool.py sugerir_combos_tool):
     manda el inventario actual con stock > 0 (nombre, precio, stock) a Gemini pidiendole
     exactamente 3 combos logicos en JSON estricto (nombre/descripcion/productos, usando
     los nombres exactos del inventario). Gemini solo decide QUE productos van juntos
@@ -897,7 +899,7 @@ identificacion de cobro).
     calculada como Stock / CantidadPorUnidad. Para que esto funcione en la lista completa
     de inventario tambien se agrego Product.Id al SELECT de InventoryService.list() en
     services/inventory.py (antes solo lo traia InventoryService.search(), que delega en
-    database.aronium.get_products()).
+    database.nimbo_db.get_products()).
   - Se aprovecho para corregir un bug preexistente en core/nimbo.py venta_waiting_seleccion
     (el paso donde se elige un producto entre varios resultados similares al vender): nunca
     descontaba stock, sin importar el flujo. Ahora descuenta cantidad x CantidadPorUnidad
@@ -906,9 +908,9 @@ identificacion de cobro).
 - Programa de lealtad (puntos): 2 tablas en nimbo.db. PuntosCliente (1 fila por cliente) -
   PuntosAcumulados (historico de por vida, nunca baja), PuntosUsados y PuntosCancelados
   (ambos tambien acumulativos; el saldo disponible para canjear = Acumulados - Usados -
-  Cancelados, ver database.aronium.get_saldo_puntos). MovimientoPuntos es el detalle
+  Cancelados, ver database.nimbo_db.get_saldo_puntos). MovimientoPuntos es el detalle
   (GANADO/USADO/CANCELADO) de cada cambio, con VentaId para saber a que venta corresponde.
-  Constantes en database/aronium.py: PUNTOS_POR_QUETZAL=1 (1 punto por cada Q1 de compra,
+  Constantes en database/nimbo_db.py: PUNTOS_POR_QUETZAL=1 (1 punto por cada Q1 de compra,
   sobre el total ya con todos los descuentos/creditos aplicados), PUNTOS_POR_CANJE=100,
   VALOR_CANJE=Q10 (asi que 1 punto = Q0.10), DESCUENTO_EXTRA_ORO=5%. Los puntos no vencen
   (no hay ninguna funcion que reste PuntosCancelados via chat - ese campo del esquema queda
@@ -917,21 +919,21 @@ identificacion de cobro).
     PuntosAcumulados (no el saldo disponible - el nivel no baja solo porque el cliente
     canjeo puntos): Bronce 0-499, Plata 500-999, Oro 1000+ (5% de descuento extra en cada
     compra, ver mas abajo).
-  - "Canjear" no descuenta nada de inmediato: database.aronium.canjear_puntos() resta el
+  - "Canjear" no descuenta nada de inmediato: database.nimbo_db.canjear_puntos() resta el
     saldo (PuntosUsados) y el credito en quetzales queda pendiente como un MovimientoPuntos
-    Tipo='USADO' con VentaId=NULL. database.aronium.calcular_ajuste_puntos(cliente_id, total)
+    Tipo='USADO' con VentaId=NULL. database.nimbo_db.calcular_ajuste_puntos(cliente_id, total)
     - llamada ANTES de insertar cualquier Venta - busca ese credito pendiente
     (peek_credito_puntos_pendiente) y lo resta del total (topado al total de esa venta, sin
     partir el canje si sobra), y encima resta el 5% extra si el cliente es nivel Oro.
-    database.aronium.consumir_credito_puntos_pendiente(cliente_id, venta_id) - llamada
+    database.nimbo_db.consumir_credito_puntos_pendiente(cliente_id, venta_id) - llamada
     DESPUES de insertar, ya con el venta_id conocido - marca esos movimientos pendientes
-    como aplicados a esa venta. database.aronium.ganar_puntos() se llama al final con el
+    como aplicados a esa venta. database.nimbo_db.ganar_puntos() se llama al final con el
     Total ya ajustado (se ganan puntos sobre lo que el cliente realmente termina pagando).
-    database.aronium.formatear_nota_ajuste_puntos() arma la nota que se anexa a la
+    database.nimbo_db.formatear_nota_ajuste_puntos() arma la nota que se anexa a la
     Descripcion de la Venta cuando aplico alguno de los dos ajustes.
   - Integrado en los 4 lugares donde se cierra una venta: core/nimbo.py
     venta_waiting_pago/venta_waiting_pago_mixto_tarjeta (venta simple del chat),
-    database.aronium.cobrar_carrito() (caja) y database.aronium.registrar_venta_cliente()
+    database.nimbo_db.cobrar_carrito() (caja) y database.nimbo_db.registrar_venta_cliente()
     (usada por cotizacion.aceptar y por combo.vender - aunque los combos hoy siempre venden
     a "Consumidor Final" sin cliente, asi que en la practica no ganan ni canjean puntos, ver
     seccion Combos arriba). En todos los casos se ganan puntos automaticamente si hay
@@ -956,7 +958,7 @@ identificacion de cobro).
 - Codigos de barras y etiquetas: tabla CodigoBarrasGenerado en nimbo.db (Id, ProductoId,
   ProductoNombre, CodigoEAN, FechaGenerado) - registra el historico de codigos generados,
   ya que Aronium solo guarda el Code final en Product sin quien/cuando lo asigno.
-  database.aronium.generar_ean13() arma un EAN-13 con prefijo 20 (rango 200-299, reservado
+  database.nimbo_db.generar_ean13() arma un EAN-13 con prefijo 20 (rango 200-299, reservado
   por GS1 para "restricted circulation numbers" de uso interno de tienda, no requiere
   registro ante GS1) + 10 digitos random + digito verificador estandar EAN-13, y reintenta
   hasta que no choque ni con ningun Product.Code existente en Aronium ni con uno ya generado
@@ -969,7 +971,7 @@ identificacion de cobro).
     producto no tenia Code todavia se lo asigna primero (asignar_codigo_barras) para no
     exigir el paso "generar codigo" antes como requisito separado.
   - "etiquetas de todos los productos sin codigo" (etiqueta.lote_sin_codigo): recorre
-    database.aronium.get_productos_sin_codigo() (Product.Code NULL o vacio), genera un
+    database.nimbo_db.get_productos_sin_codigo() (Product.Code NULL o vacio), genera un
     EAN-13 nuevo para cada uno y arma un solo PDF con todas las etiquetas.
   - services/barcode_service.py genera el PDF con reportlab: una pagina por etiqueta, tamano
     fijo 5x3cm (50mm x 30mm, estandar de impresora de etiquetas continua) - nombre truncado,
@@ -990,7 +992,7 @@ identificacion de cobro).
     o port forwarding configurado entre Windows y WSL2 (mismo tipo de limitacion que el
     Pendiente #5 de mas abajo con el link de cotizaciones por WhatsApp).
   - Ruta publica /producto/<codigo> en app.py (sin login) + templates/producto_publico.html:
-    busca el producto por Code (database.aronium.get_product_by_code, que ahora tambien trae
+    busca el producto por Code (database.nimbo_db.get_product_by_code, que ahora tambien trae
     Product.Description de Aronium), muestra foto (ProductoFoto en nimbo.db) + nombre +
     precio + descripcion (ProductoInfo en nimbo.db si existe, si no la Description nativa de
     Aronium) - nunca stock ni costo. 404 con pagina propia si el codigo no matchea ningun
@@ -1000,19 +1002,19 @@ identificacion de cobro).
     (CATEGORIAS_EMPLEADO en core/action_engine.py) - generar codigos/etiquetas es una tarea
     operativa de bodega, igual que el resto de inventario, no una decision de precios.
 - Grupos de cliente: columna Cliente.GrupoCliente (TEXT DEFAULT 'detallista', agregada con
-  ALTER TABLE en database.aronium.init_grupos_cliente() porque Cliente ya existia de antes,
+  ALTER TABLE en database.nimbo_db.init_grupos_cliente() porque Cliente ya existia de antes,
   mismo patron que GarantiaVenta.Tipo). Tabla GrupoDescuento (Grupo UNIQUE, PorcentajeDescuento,
   PuntosMultiplicador) - se siembra con GRUPOS_CLIENTE_DEFAULT en el mismo init: detallista
   (0%, x1), mayorista (10%, x1), especial (0%, x1), vip (15%, x2). "Especial" no tiene
   porcentaje fijo a proposito - su "descuento personalizable por cliente" sale siempre del
   Descuento individual (tipo='cliente') que ya existia antes de este feature, nunca de
   GrupoDescuento.
-  - database.aronium.calcular_descuento() ahora primero recorre los Descuento normales
+  - database.nimbo_db.calcular_descuento() ahora primero recorre los Descuento normales
     (cliente/temporada/producto/monto) igual que antes; solo si el cliente NO tiene un
     Descuento individual activo (tipo='cliente') agrega el descuento automatico del grupo
     como un candidato mas a competir por "el que mas le convenga" con temporada/producto/
     monto - el individual nunca compite contra el del grupo, tiene prioridad absoluta.
-    database.aronium.ganar_puntos() multiplica los puntos ganados por el PuntosMultiplicador
+    database.nimbo_db.ganar_puntos() multiplica los puntos ganados por el PuntosMultiplicador
     del grupo del cliente (VIP = puntos dobles) - como ambas funciones son el unico punto de
     entrada para descuentos/puntos en los 3-4 lugares donde se cierra una venta (venta simple
     del chat, caja, cotizacion, combo), el grupo se aplica automaticamente en todos sin tocar
@@ -1043,12 +1045,12 @@ identificacion de cobro).
   MontoPagado, MontoPendiente, FechaCreada, FechaVencimiento, Estado, Notas, VentaId - esta
   ultima no estaba en el pedido original, se agrego para poder vincular una cuenta a la venta
   a credito que la genero, igual que OrdenServicioId en GarantiaVenta) + PagoCuenta (historial
-  de abonos: Id, CuentaId, Monto, MetodoPago, Fecha, Notas). database.aronium.
+  de abonos: Id, CuentaId, Monto, MetodoPago, Fecha, Notas). database.nimbo_db.
   DIAS_VENCIMIENTO_CUENTA_DEFAULT = 30 (no especificado en el pedido, mismo criterio que el
   resto de defaults del sistema - GarantiaProducto 30 dias propios, Cotizacion 15 dias) se usa
   cuando se crea una cuenta sin fecha de vencimiento explicita (comando "X debe QN") o cuando
   el step de fecha en el flujo de venta a credito no logra interpretar la respuesta.
-  - Estado (PENDIENTE/PAGADO_PARCIAL/PAGADO/VENCIDO): database.aronium.
+  - Estado (PENDIENTE/PAGADO_PARCIAL/PAGADO/VENCIDO): database.nimbo_db.
     marcar_cuentas_vencidas() es lazy (igual que marcar_cotizaciones_vencidas()/
     marcar_garantias_vencidas() - se corre cada vez que se consultan cuentas) y marca VENCIDO
     cualquier cuenta PENDIENTE o PAGADO_PARCIAL cuya FechaVencimiento ya paso. Un abono sobre
@@ -1057,7 +1059,7 @@ identificacion de cobro).
     queda con saldo la siguiente llamada a marcar_cuentas_vencidas() la vuelve a marcar VENCIDO
     porque la fecha sigue en el pasado.
   - "Juan Perez pago Q100" (cuentacobrar.pagar, tools/cuenta_cobrar_tool.py) no especifica a
-    que cuenta aplica el abono si el cliente tiene varias pendientes: database.aronium.
+    que cuenta aplica el abono si el cliente tiene varias pendientes: database.nimbo_db.
     registrar_pago_cliente() lo reparte FIFO (la cuenta pendiente mas antigua primero) hasta
     agotar el monto o las cuentas; el sobrante (si el abono es mayor a toda la deuda) se
     reporta en la respuesta sin aplicarse a nada.
@@ -1069,7 +1071,7 @@ identificacion de cobro).
     listar) lista todo lo que tenga MontoPendiente > 0 sin importar el estado; "cuentas
     vencidas" (cuentacobrar.vencidas) filtra solo Estado='VENCIDO'; "cuanto debe Juan Perez" /
     "deuda de Juan Perez" (cuentacobrar.consultar) trae solo las cuentas pendientes de ese
-    cliente (database.aronium.get_cuentas_cliente(query, solo_pendientes=True) por defecto).
+    cliente (database.nimbo_db.get_cuentas_cliente(query, solo_pendientes=True) por defecto).
   - Detector core/detectors/cuenta_cobrar_detector.py - se revisa antes que ClienteDetector/
     VentaDetector en core/intent_detector.py, aunque en la practica no hay ambiguedad real: a
     diferencia de "Juan Perez es mayorista" (ClienteDetector), los patrones de esta categoria
@@ -1102,15 +1104,15 @@ identificacion de cobro).
   denormalizados desde Proveedor.WhatsApp igual que el resto de tablas del sistema copian
   datos del cliente/proveedor al momento, Descripcion, MontoTotal, MontoPagado,
   MontoPendiente, FechaCreada, FechaVencimiento, Estado, OrdenCompraId, Notas) + PagoPagar
-  (historial de pagos: Id, CuentaId, Monto, MetodoPago, Fecha, Notas). database.aronium.
+  (historial de pagos: Id, CuentaId, Monto, MetodoPago, Fecha, Notas). database.nimbo_db.
   DIAS_VENCIMIENTO_PAGAR_DEFAULT = 30 (mismo criterio que DIAS_VENCIMIENTO_CUENTA_DEFAULT).
   Estado (PENDIENTE/PAGADO_PARCIAL/PAGADO/VENCIDO) usa el mismo criterio lazy que Cuentas por
-  cobrar: database.aronium.marcar_pagos_vencidos() se corre cada vez que se consultan cuentas.
+  cobrar: database.nimbo_db.marcar_pagos_vencidos() se corre cada vez que se consultan cuentas.
   - "debo Q500 a Distribuidora Oster" (cuentapagar.crear) / "debo Q500 a Distribuidora Oster
     por repuestos" (con descripcion) buscan el proveedor con buscar_proveedor (mismo fuzzy
     match LIKE que el resto de proveedor_tool.py) - si no existe, piden registrarlo primero.
     "pague Q200 a Distribuidora Oster" (cuentapagar.pagar) reparte el pago FIFO entre las
-    cuentas pendientes mas antiguas del proveedor (database.aronium.registrar_pago_proveedor,
+    cuentas pendientes mas antiguas del proveedor (database.nimbo_db.registrar_pago_proveedor,
     misma logica que registrar_pago_cliente de Cuentas por cobrar). "cuentas por pagar"
     (cuentapagar.listar) lista todo con MontoPendiente > 0; "pagos vencidos" (cuentapagar.
     vencidas) filtra Estado='VENCIDO'; "cuanto le debo a Distribuidora Oster" (cuentapagar.
@@ -1126,10 +1128,10 @@ identificacion de cobro).
     categoria "proveedor", tambien admin-only.
   - Integracion con ordenes de compra: la unica via funcional para crear una OrdenCompra
     desde el chat es "genera orden para X" / "crear orden para X" / "pedir a X" (proveedor.
-    generar_orden en tools/proveedor_tool.py, arma la orden con database.aronium.
+    generar_orden en tools/proveedor_tool.py, arma la orden con database.nimbo_db.
     get_pedidos_sugeridos()) - el otro intent relacionado, proveedor.orden_compra ("pedir a X
     N producto a QN"), retorna un marcador PROVEEDOR_ORDEN_INICIO: que nunca fue implementado
-    en core/nimbo.py (gap preexistente, no se toco en este feature). database.aronium.
+    en core/nimbo.py (gap preexistente, no se toco en este feature). database.nimbo_db.
     crear_orden_compra() ahora retorna (numero, orden_id) en vez de solo numero, para poder
     vincular la CuentaPagar a la orden. generar_orden_tool ya no responde directo: retorna el
     marcador ORDEN_COMPRA_PAGO_INICIO:orden_id|numero|proveedor_id|proveedor_nombre|whatsapp|
@@ -1143,7 +1145,7 @@ identificacion de cobro).
   - Widget en el dashboard (/api/cuentaspagar/resumen, admin-only): total por pagar, pagos
     vencidos (rojo) y proximos a vencer en 3 dias (naranja) - misma estructura visual que el
     widget de Cuentas por cobrar.
-- Flujo de caja proyectado: database.aronium.get_flujo_caja_proyectado() calcula ingresos,
+- Flujo de caja proyectado: database.nimbo_db.get_flujo_caja_proyectado() calcula ingresos,
   egresos y flujo neto proyectados para el mes calendario siguiente. Admin-only (categoria
   "contabilidad" no esta en CATEGORIAS_EMPLEADO).
   - Ingresos = promedio de ventas de los ultimos 3 meses YA CERRADOS (excluye el mes actual,
@@ -1163,7 +1165,7 @@ identificacion de cobro).
     solo se usaba como recordatorio (nombre, dia, frecuencia), sin monto en quetzales
     (equilibrio_tool en tools/contabilidad_tool.py ya traia un comentario explicito "No
     tenemos montos, solo recordatorios" y sumaba Q0 de pagos fijos al punto de equilibrio).
-    Se agrego la columna Monto (migracion database.aronium.init_pagos_fijos_ext(), ALTER
+    Se agrego la columna Monto (migracion database.nimbo_db.init_pagos_fijos_ext(), ALTER
     TABLE con try/except OperationalError, mismo patron que Cliente.GrupoCliente) - ahora es
     obligatorio pedirla al crear un pago fijo nuevo por chat (step nuevo pago_waiting_monto
     en core/nimbo.py, entre pago_waiting_frecuencia y el guardado final) y se corrigio
@@ -1171,7 +1173,7 @@ identificacion de cobro).
     esta migracion quedan en Q0 hasta que se les fije un monto manualmente: "pago fijo renta
     es Q1500" / "monto del pago fijo de renta es 1500" (intent pago.monto,
     core/detectors/evento_detector.py + tools/evento_tool.py monto_pago_tool,
-    database.aronium.set_monto_pago_fijo - busca por nombre con LIKE, si coincide con mas de
+    database.nimbo_db.set_monto_pago_fijo - busca por nombre con LIKE, si coincide con mas de
     un pago fijo activo pide ser mas especifico en vez de actualizar el primero al azar).
     "ver pagos" (pago.listar) ahora tambien muestra el monto de cada uno.
   - Desde el chat: "flujo de caja" / "flujo de caja proyectado" / "cuanto dinero tendre el

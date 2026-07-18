@@ -330,7 +330,7 @@ def _intentar_detectar(message: str, role: str, context: dict, contexto_historia
 
         if str(result).startswith("ENTREGA_GARANTIA_INICIO:"):
             numero_orden = str(result).replace("ENTREGA_GARANTIA_INICIO:", "").strip()
-            from database.aronium import DIAS_GARANTIA_REPARACION_DEFAULT
+            from database.nimbo_db import DIAS_GARANTIA_REPARACION_DEFAULT
             context = {"step": "servicio_waiting_dias_garantia", "servicio_numero_orden": numero_orden}
             return (f"Cuantos dias de garantia tiene esta reparacion? "
                     f"(por defecto {DIAS_GARANTIA_REPARACION_DEFAULT}, escribe el numero o 'default')"), context
@@ -338,7 +338,7 @@ def _intentar_detectar(message: str, role: str, context: dict, contexto_historia
         if str(result).startswith("COTIZACION_INICIO:"):
             cliente_nombre = str(result).replace("COTIZACION_INICIO:", "").strip()
             if cliente_nombre:
-                from database.aronium import buscar_cliente_completo
+                from database.nimbo_db import buscar_cliente_completo
                 clientes = buscar_cliente_completo(cliente_nombre)
                 if clientes:
                     c = clientes[0]
@@ -395,7 +395,7 @@ def _intentar_detectar(message: str, role: str, context: dict, contexto_historia
 
         if str(result).startswith("REEMBOLSO_INICIO:"):
             venta_id = int(str(result).replace("REEMBOLSO_INICIO:", "").strip())
-            from database.aronium import get_venta_por_id, get_cliente_por_id, get_total_reembolsado_venta
+            from database.nimbo_db import get_venta_por_id, get_cliente_por_id, get_total_reembolsado_venta
             venta = get_venta_por_id(venta_id)
             if not venta:
                 return f"No encontre la venta #{venta_id}.", context
@@ -418,7 +418,7 @@ def _intentar_detectar(message: str, role: str, context: dict, contexto_historia
 
         if str(result).startswith("CAMBIO_PRODUCTO_INICIO:"):
             venta_id = int(str(result).replace("CAMBIO_PRODUCTO_INICIO:", "").strip())
-            from database.aronium import get_venta_por_id, get_items_venta
+            from database.nimbo_db import get_venta_por_id, get_items_venta
             venta = get_venta_por_id(venta_id)
             if not venta:
                 return f"No encontre la venta #{venta_id}.", context
@@ -444,7 +444,7 @@ def _intentar_detectar(message: str, role: str, context: dict, contexto_historia
             return f"Venta #{venta_id}. Cambiando {cantidad}x {nombre}. Que producto nuevo se lleva?", context
 
         if str(result) == "CAJA_ABRIR_INICIO":
-            from database.aronium import DENOMINACIONES, get_ultimo_cierre_denominaciones, get_fondo_sugerido
+            from database.nimbo_db import DENOMINACIONES, get_ultimo_cierre_denominaciones, get_fondo_sugerido
             sugerido = get_ultimo_cierre_denominaciones()
             if sugerido:
                 total = sum(int(k) * int(v) for k, v in sugerido.items())
@@ -461,7 +461,7 @@ def _intentar_detectar(message: str, role: str, context: dict, contexto_historia
             return f"Abriendo turno de caja. Fondo inicial: cuantos billetes/monedas de Q{DENOMINACIONES[0]} hay?", context
 
         if str(result) == "CAJA_CERRAR_INICIO":
-            from database.aronium import get_turno_abierto
+            from database.nimbo_db import get_turno_abierto
             turno = get_turno_abierto()
             esperado = turno["EfectivoEsperado"] if turno else 0
             context = {"step": "caja_cerrar_total"}
@@ -474,7 +474,7 @@ def _intentar_detectar(message: str, role: str, context: dict, contexto_historia
 
         if str(result).startswith("CAJA_ANULAR_CONFIRMAR:"):
             motivo = str(result).replace("CAJA_ANULAR_CONFIRMAR:", "").strip()
-            from database.aronium import get_turno_abierto, anular_turno
+            from database.nimbo_db import get_turno_abierto, anular_turno
             from flask_login import current_user
             turno = get_turno_abierto()
             if not turno:
@@ -531,7 +531,7 @@ def _siguiente_paso_venta_credito(context: dict, prefijo: str = "", aviso: str =
     tools/reembolso_tool.py) antes de pedir el metodo de pago - mismo criterio
     interactivo que el canje de puntos, implementado solo en la venta simple del
     chat (no en Caja/Cotizaciones, mismo alcance que puntos de lealtad)."""
-    from database.aronium import get_credito_cliente
+    from database.nimbo_db import get_credito_cliente
     cliente_id = context.get("venta_cliente_id")
     credito = get_credito_cliente(cliente_id) if cliente_id else 0
     if credito > 0:
@@ -546,12 +546,12 @@ def _registrar_venta_chat(cliente_id, descripcion, total, producto_id=None, prod
                            metodo_pago="", monto_tarjeta=0):
     """Inserta la Venta del flujo de venta simple del chat (un solo producto),
     actualiza la ultima compra del cliente y genera la garantia del producto
-    (ver database.aronium.generar_garantia_venta). Usado tanto por el pago de un
+    (ver database.nimbo_db.generar_garantia_venta). Usado tanto por el pago de un
     solo metodo como por el pago mixto (efectivo + tarjeta) y la venta a credito.
     monto_tarjeta es el monto REAL cobrado con tarjeta (todo el total si
     metodo_pago='tarjeta', la porcion de tarjeta si fue mixto, 0 en cualquier
     otro caso) - se usa para el cuadre de POS, ver get_cuadre_pos_dia."""
-    from database.aronium import nimbo_connect, generar_garantia_venta
+    from database.nimbo_db import nimbo_connect, generar_garantia_venta
     from datetime import datetime
     conn = nimbo_connect()
     cur = conn.cursor()
@@ -583,7 +583,7 @@ def _finalizar_cotizacion(context: dict):
     """Registra la cotizacion, genera el PDF y arma los links de descarga/WhatsApp."""
     import urllib.parse
     from datetime import datetime
-    from database.aronium import crear_cotizacion, calcular_descuento
+    from database.nimbo_db import crear_cotizacion, calcular_descuento
     from services.pdf_cotizacion import generar_pdf_cotizacion
 
     items = context.get("cot_items", [])
@@ -638,7 +638,7 @@ def _procesar_cambio_confirmar(context: dict, producto_nuevo_id, producto_nuevo_
     productos - la venta original no guarda precio por item, ver CLAUDE.md seccion
     Caja) y decide el siguiente paso: confirmar directo si no hay diferencia, o
     preguntar el metodo si hay que cobrar/devolver algo."""
-    from database.aronium import get_products
+    from database.nimbo_db import get_products
     nombre_viejo = context.get("cambio_producto_viejo_nombre", "")
     cantidad_viejo = context.get("cambio_producto_viejo_cantidad", 1)
     productos_viejo = get_products(search=nombre_viejo)
@@ -662,7 +662,7 @@ def _procesar_cambio_confirmar(context: dict, producto_nuevo_id, producto_nuevo_
 
 
 def _finalizar_cambio(context: dict, metodo: str):
-    from database.aronium import procesar_cambio_producto, get_turno_abierto
+    from database.nimbo_db import procesar_cambio_producto, get_turno_abierto
     venta_id = context.get("cambio_venta_id")
     nombre_viejo = context.get("cambio_producto_viejo_nombre", "")
     cantidad_viejo = context.get("cambio_producto_viejo_cantidad", 1)
@@ -710,7 +710,7 @@ def send(message: str, context: dict = None, role: str = "admin") -> tuple:
         venta_ctx = context.get("venta_ctx")
         aviso_stock = ""
         if venta_ctx and venta_ctx.get("producto_id"):
-            from database.aronium import add_stock
+            from database.nimbo_db import add_stock
             add_stock(venta_ctx["producto_id"], venta_ctx["cantidad"])
             aviso_stock = f" Se repuso el stock de {venta_ctx['producto']} ({venta_ctx['cantidad']} unidad(es))."
         return f"De acuerdo, empecemos de nuevo. ¿En que te puedo ayudar?{aviso_stock}", {}
@@ -748,7 +748,7 @@ def send(message: str, context: dict = None, role: str = "admin") -> tuple:
     # Flujo de cliente nuevo (arrancado por CLIENTE_NUEVO_INICIO, ver
     # tools/cliente_tool.py nuevo_cliente_tool) - pregunta el grupo antes de crear.
     if step == "cliente_waiting_grupo":
-        from database.aronium import crear_cliente_completo, set_grupo_cliente, GRUPOS_CLIENTE
+        from database.nimbo_db import crear_cliente_completo, set_grupo_cliente, GRUPOS_CLIENTE
         nombre = context.get("cliente_nombre", "")
         telefono = context.get("cliente_telefono", "")
         txt = message.strip().lower()
@@ -787,7 +787,7 @@ def send(message: str, context: dict = None, role: str = "admin") -> tuple:
         return "¿De cuanto es el pago (en quetzales)?", context
 
     if step == "pago_waiting_monto":
-        from database.aronium import agregar_pago_fijo
+        from database.nimbo_db import agregar_pago_fijo
         nombre = context.get("pago_nombre", "")
         dia = context.get("pago_dia", 1)
         frecuencia = context.get("pago_frecuencia", "mensual")
@@ -841,7 +841,7 @@ def send(message: str, context: dict = None, role: str = "admin") -> tuple:
         return f"Descripcion corta (max 100 caracteres, para WhatsApp/redes):", context
 
     if step == "desc_waiting_corta":
-        from database.aronium import set_descripcion_producto
+        from database.nimbo_db import set_descripcion_producto
         corta = message.strip()[:100]
         set_descripcion_producto(context["desc_producto_id"], context["desc_nombre"], context["desc_descripcion"], corta)
         nombre = context["desc_nombre"]
@@ -949,7 +949,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         return "Cargo del contacto? (ej: Vendedor, Gerente, Representante):", context
 
     if step == "proveedor_waiting_contacto_cargo":
-        from database.aronium import agregar_contacto_proveedor
+        from database.nimbo_db import agregar_contacto_proveedor
         cargo = message.strip().title()
         agregar_contacto_proveedor(
             context["proveedor_id"],
@@ -976,7 +976,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
 
     if step == "ordencompra_waiting_fecha":
         from datetime import datetime, timedelta
-        from database.aronium import DIAS_VENCIMIENTO_PAGAR_DEFAULT, crear_cuenta_pagar
+        from database.nimbo_db import DIAS_VENCIMIENTO_PAGAR_DEFAULT, crear_cuenta_pagar
         txt = message.strip()
         fecha_vencimiento = None
         if txt.isdigit():
@@ -1024,7 +1024,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
                 cantidad = context.get("venta_cantidad", 1)
                 cantidad_base = cantidad * cantidad_por_unidad
 
-                from database.aronium import get_product_by_id, remove_stock
+                from database.nimbo_db import get_product_by_id, remove_stock
                 producto = get_product_by_id(producto_id)
                 stock = producto["Stock"] if producto else 0
                 if stock < cantidad_base:
@@ -1046,12 +1046,12 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
             context["venta_cliente_id"] = None
             context["step"] = "venta_waiting_telefono"
             return "Telefono del cliente (o 'sin telefono'):", context
-        from database.aronium import buscar_cliente_completo
+        from database.nimbo_db import buscar_cliente_completo
         clientes = buscar_cliente_completo(message.strip())
         if clientes:
             context["venta_cliente_id"] = clientes[0]["Id"]
             context["venta_cliente_nombre"] = clientes[0]["Nombre"]
-            from database.aronium import get_saldo_puntos, puntos_a_quetzales, PUNTOS_POR_CANJE
+            from database.nimbo_db import get_saldo_puntos, puntos_a_quetzales, PUNTOS_POR_CANJE
             saldo = get_saldo_puntos(clientes[0]["Id"])
             if saldo >= PUNTOS_POR_CANJE:
                 context["step"] = "venta_waiting_canjear_puntos"
@@ -1069,7 +1069,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         cliente_nombre = context.get("venta_cliente_nombre", "Consumidor Final")
         aviso = ""
         if resp_txt in ["si", "si.", "sí", "s", "ok", "dale", "yes", "de una"]:
-            from database.aronium import get_saldo_puntos, canjear_puntos, PUNTOS_POR_CANJE
+            from database.nimbo_db import get_saldo_puntos, canjear_puntos, PUNTOS_POR_CANJE
             saldo = get_saldo_puntos(cliente_id)
             puntos_a_usar = saldo - (saldo % PUNTOS_POR_CANJE)
             resultado = canjear_puntos(cliente_id, cliente_nombre, puntos_a_usar)
@@ -1102,7 +1102,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         nombre = context.get("venta_cliente_nombre", "")
         tel = context.get("venta_cliente_tel", "")
         if nombre != "Consumidor Final" and not context.get("venta_cliente_id"):
-            from database.aronium import crear_cliente_completo
+            from database.nimbo_db import crear_cliente_completo
             cliente_id, _ = crear_cliente_completo(nombre, tel, nit=nit)
             context["venta_cliente_id"] = cliente_id
         context["step"] = "venta_waiting_pago"
@@ -1127,7 +1127,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         cliente_nombre = context.get("venta_cliente_nombre", "Consumidor Final")
         cliente_tel = context.get("venta_cliente_tel", "")
 
-        from database.aronium import calcular_descuento, calcular_ajuste_puntos
+        from database.nimbo_db import calcular_descuento, calcular_ajuste_puntos
 
         descuento = calcular_descuento(
             cliente_id=cliente_id,
@@ -1141,7 +1141,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
 
         credito_tienda_usado = 0
         if cliente_id and context.get("venta_usar_credito_tienda"):
-            from database.aronium import get_credito_cliente
+            from database.nimbo_db import get_credito_cliente
             credito_tienda_usado = min(get_credito_cliente(cliente_id), total_final)
             total_final = round(total_final - credito_tienda_usado, 2)
 
@@ -1177,7 +1177,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
             }
             return "Cuanto de enganche paga ahora? (puede ser 0)", context
 
-        from database.aronium import formatear_nota_ajuste_puntos, consumir_credito_puntos_pendiente, ganar_puntos, usar_credito_cliente
+        from database.nimbo_db import formatear_nota_ajuste_puntos, consumir_credito_puntos_pendiente, ganar_puntos, usar_credito_cliente
 
         descripcion = f"{ctx['cantidad']}x {ctx['producto']} a Q{ctx['precio_unit']}"
         if descuento:
@@ -1266,7 +1266,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
 
         comision_pos = round(monto_tarjeta * 0.06, 2)
 
-        from database.aronium import formatear_nota_ajuste_puntos, consumir_credito_puntos_pendiente, ganar_puntos, usar_credito_cliente
+        from database.nimbo_db import formatear_nota_ajuste_puntos, consumir_credito_puntos_pendiente, ganar_puntos, usar_credito_cliente
 
         descripcion = f"{ctx['cantidad']}x {ctx['producto']} a Q{ctx['precio_unit']}"
         if descuento:
@@ -1332,7 +1332,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
 
     if step == "venta_waiting_credito_fecha":
         from datetime import datetime, timedelta
-        from database.aronium import (
+        from database.nimbo_db import (
             DIAS_VENCIMIENTO_CUENTA_DEFAULT, formatear_nota_ajuste_puntos,
             consumir_credito_puntos_pendiente, ganar_puntos, crear_cuenta_cobrar, usar_credito_cliente
         )
@@ -1471,7 +1471,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         return f"A que tecnico se asigna esta orden?\n{lista}\n\nEscribe el numero o 'ninguno' para no asignar todavia.", context
 
     if step == "service_waiting_tecnico":
-        from database.aronium import crear_cliente, crear_orden
+        from database.nimbo_db import crear_cliente, crear_orden
         from services.whatsapp import enviar_asignacion_tecnico_whatsapp
         txt = message.strip().lower()
         opciones = context.get("tecnicos_opciones", [])
@@ -1513,7 +1513,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
     # Flujo de entrega con garantia de reparacion (arrancado por
     # ENTREGA_GARANTIA_INICIO, ver tools/service_tool.py cambiar_estado_tool)
     if step == "servicio_waiting_dias_garantia":
-        from database.aronium import (
+        from database.nimbo_db import (
             get_orden, actualizar_estado_orden, generar_garantia_reparacion,
             DIAS_GARANTIA_REPARACION_DEFAULT
         )
@@ -1556,7 +1556,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
 
     # Flujo de nueva cotizacion
     if step == "cotizacion_waiting_cliente":
-        from database.aronium import buscar_cliente_completo
+        from database.nimbo_db import buscar_cliente_completo
         nombre = message.strip()
         clientes = buscar_cliente_completo(nombre)
         if clientes:
@@ -1571,7 +1571,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         return f"Cliente nuevo. Telefono de {nombre.title()} (o 'sin telefono'):", context
 
     if step == "cotizacion_waiting_telefono":
-        from database.aronium import crear_cliente_completo
+        from database.nimbo_db import crear_cliente_completo
         tel = message.strip()
         if tel.lower() in ["sin telefono", "no", "-"]:
             tel = ""
@@ -1591,7 +1591,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         # "mejor licuadora": el producto que iba a escribir no era el que queria,
         # se busca directo lo que dijo despues de la frase de cambio.
         busqueda = _detectar_cambio_decision(message, step) or message.strip()
-        from database.aronium import get_products
+        from database.nimbo_db import get_products
         productos = get_products(search=busqueda)
         if not productos:
             return f"No encontre '{busqueda}' en inventario. Intenta con otro nombre, o escribe 'listo' para terminar.", context
@@ -1638,7 +1638,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
 
     # Flujo de creacion manual de un combo (crear combo X). Igual que las
     # cotizaciones: agrega productos en loop hasta 'listo', luego sugiere un
-    # precio con descuento (DESCUENTO_COMBO_SUGERIDO, ver database.aronium) que
+    # precio con descuento (DESCUENTO_COMBO_SUGERIDO, ver database.nimbo_db) que
     # el admin puede aceptar o reemplazar por un monto propio.
     if step == "combo_crear_waiting_producto":
         msg = message.strip().lower()
@@ -1646,7 +1646,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
             items = context.get("combo_items", [])
             if not items:
                 return "Agrega al menos un producto antes de terminar.", context
-            from database.aronium import DESCUENTO_COMBO_SUGERIDO
+            from database.nimbo_db import DESCUENTO_COMBO_SUGERIDO
             suma = round(sum(i["precio_unit"] * i["cantidad"] for i in items), 2)
             precio_sugerido = round(suma - suma * DESCUENTO_COMBO_SUGERIDO, 2)
             context["combo_suma"] = suma
@@ -1655,7 +1655,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
             return (f"Precio normal por separado: Q{suma}. Precio sugerido con "
                     f"{int(DESCUENTO_COMBO_SUGERIDO * 100)}% de descuento: Q{precio_sugerido}. "
                     f"Usar este precio? (si, o escribe otro monto)"), context
-        from database.aronium import get_products
+        from database.nimbo_db import get_products
         productos = get_products(search=message.strip())
         if not productos:
             return f"No encontre '{message.strip()}' en inventario. Intenta con otro nombre, o escribe 'listo' para terminar.", context
@@ -1697,7 +1697,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         return f"Agregado: {cantidad}x {p['nombre']}. Otro producto? (nombre o 'listo' para terminar)", context
 
     if step == "combo_crear_waiting_precio":
-        from database.aronium import crear_combo
+        from database.nimbo_db import crear_combo
         respuesta = message.strip().lower()
         precio_sugerido = context.get("combo_precio_sugerido", 0)
         if respuesta in ["si", "si.", "sí", "s", "ok", "dale", "yes", "de una"]:
@@ -1774,7 +1774,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         if not metodo:
             return "Por favor escribe: efectivo, tarjeta o credito tienda", context
 
-        from database.aronium import procesar_reembolso, get_turno_abierto
+        from database.nimbo_db import procesar_reembolso, get_turno_abierto
         venta_id = context.get("reembolso_venta_id")
         tipo = context.get("reembolso_tipo", "TOTAL")
         monto = context.get("reembolso_monto", 0)
@@ -1817,7 +1817,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         return "Por favor escribe el numero del producto:", context
 
     if step == "cambio_waiting_producto_nuevo":
-        from database.aronium import get_products
+        from database.nimbo_db import get_products
         productos = get_products(search=message.strip())
         if not productos:
             return f"No encontre '{message.strip()}' en inventario. Intenta con otro nombre:", context
@@ -1858,14 +1858,14 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
     if step == "caja_abrir_confirmar_sugerido":
         resp = message.strip().lower()
         if resp in ["si", "si.", "sí", "s", "ok", "dale", "yes", "de una"]:
-            from database.aronium import abrir_turno
+            from database.nimbo_db import abrir_turno
             from flask_login import current_user
             fondo = context.get("caja_fondo_sugerido", {})
             context = {}
             turno_id, total = abrir_turno(int(current_user.id), current_user.nombre, fondo)
             detalle = ", ".join([f"{v}xQ{k}" for k, v in fondo.items() if int(v) > 0])
             return f"Turno de caja abierto (#{turno_id}). Fondo inicial: Q{total} ({detalle}).", context
-        from database.aronium import DENOMINACIONES
+        from database.nimbo_db import DENOMINACIONES
         context = {"step": "caja_abrir_denom", "caja_idx": 0, "caja_fondo": {}}
         return f"Cuantos billetes/monedas de Q{DENOMINACIONES[0]} hay?", context
 
@@ -1873,19 +1873,19 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
     if step == "caja_abrir_confirmar_sugerido_total":
         resp = message.strip().lower()
         if resp in ["si", "si.", "sí", "s", "ok", "dale", "yes", "de una"]:
-            from database.aronium import abrir_turno_simple
+            from database.nimbo_db import abrir_turno_simple
             from flask_login import current_user
             total = context.get("caja_fondo_sugerido_total", 0)
             context = {}
             turno_id, total = abrir_turno_simple(int(current_user.id), current_user.nombre, total)
             return f"Turno de caja abierto (#{turno_id}). Fondo inicial: Q{total}.", context
-        from database.aronium import DENOMINACIONES
+        from database.nimbo_db import DENOMINACIONES
         context = {"step": "caja_abrir_denom", "caja_idx": 0, "caja_fondo": {}}
         return f"Cuantos billetes/monedas de Q{DENOMINACIONES[0]} hay?", context
 
     # Flujo de apertura de turno de caja (fondo inicial por denominacion)
     if step == "caja_abrir_denom":
-        from database.aronium import DENOMINACIONES, abrir_turno
+        from database.nimbo_db import DENOMINACIONES, abrir_turno
         try:
             cantidad = int(message.strip())
             if cantidad < 0:
@@ -1911,7 +1911,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
     # obligatorio) 2) cuanto se retira para la caja fuerte. El resto queda como fondo
     # sugerido para el turno de manana (ver cerrar_turno/get_fondo_sugerido).
     if step == "caja_cerrar_total":
-        from database.aronium import get_turno_abierto
+        from database.nimbo_db import get_turno_abierto
         try:
             contado = round(float(message.strip().replace(",", "")), 2)
             if contado < 0:
@@ -1933,7 +1933,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         return f"{msg_dif}\nCuanto vas a retirar para la caja fuerte? (escribe 0 si no vas a retirar nada)", context
 
     if step == "caja_cerrar_retiro":
-        from database.aronium import cerrar_turno, get_turno_abierto
+        from database.nimbo_db import cerrar_turno, get_turno_abierto
         try:
             retiro = round(float(message.strip().replace(",", "")), 2)
             if retiro < 0:
@@ -1967,7 +1967,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
 
     # Flujo de anulacion de turno (admin-only, ver INTENTS_SOLO_ADMIN en action_engine.py)
     if step == "caja_anular_waiting_motivo":
-        from database.aronium import get_turno_abierto, anular_turno
+        from database.nimbo_db import get_turno_abierto, anular_turno
         from flask_login import current_user
         motivo = message.strip()
         if not motivo:
@@ -1996,7 +1996,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
     if step == "waiting_cost":
         try:
             cost = float(message.strip().replace("Q","").replace("q","").strip())
-            from database.aronium import nimbo_connect, add_stock
+            from database.nimbo_db import nimbo_connect, add_stock
             name = context["product_name"].title()
             price = context["price"]
             qty = context.get("quantity", 0)
@@ -2083,7 +2083,7 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         if stock < cantidad:
             return f"Stock insuficiente. {nombre} solo tiene {int(stock)} unidades.", {}
 
-        from database.aronium import remove_stock
+        from database.nimbo_db import remove_stock
         remove_stock(producto_id, cantidad, razon="Venta")
         total = precio * cantidad
         context = {

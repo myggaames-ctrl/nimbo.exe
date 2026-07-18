@@ -3,7 +3,7 @@ Herramienta de Servicio Tecnico
 """
 import re
 from core.tool_registry import register
-from database.aronium import (
+from database.nimbo_db import (
     crear_cliente, buscar_cliente, crear_orden,
     get_ordenes, get_orden, actualizar_estado_orden,
     set_presupuesto_orden, get_historial_orden,
@@ -293,7 +293,7 @@ def aprobacion_cliente_tool(data):
         actualizar_estado_orden(numero, "APROBADO")
         resp = f"Orden {numero} marcada como aprobada por el cliente."
         if orden.get("TecnicoId") and orden.get("TecnicoNombre"):
-            from database.aronium import nimbo_connect
+            from database.nimbo_db import nimbo_connect
             conn = nimbo_connect()
             cur = conn.cursor()
             cur.execute("SELECT Telefono FROM Usuario WHERE Id=?", (orden["TecnicoId"],))

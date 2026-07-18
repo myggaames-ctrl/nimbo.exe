@@ -2,7 +2,7 @@
 Contexto de conversaciones anteriores (entre sesiones/dias)
 Nimbo AI
 """
-from database.aronium import get_historial_chat
+from database.nimbo_db import get_historial_chat
 
 MAX_MENSAJES = 10
 MAX_CHARS = 2000          # ~500 tokens (aprox. 4 caracteres por token)

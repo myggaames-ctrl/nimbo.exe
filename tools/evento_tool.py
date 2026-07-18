@@ -2,7 +2,7 @@
 Herramienta de Eventos y Fidelizacion de Clientes
 """
 from core.tool_registry import register
-from database.aronium import get_analisis_clientes
+from database.nimbo_db import get_analisis_clientes
 from services.ollama_service import llamar_ollama, analizar_ollama
 
 
@@ -38,7 +38,7 @@ register("evento.analisis", analisis_clientes_tool)
 
 def mensaje_agradecimiento_tool(data):
     query = data.get("query", "") if isinstance(data, dict) else str(data)
-    from database.aronium import buscar_cliente_completo, get_historial_cliente
+    from database.nimbo_db import buscar_cliente_completo, get_historial_cliente
     
     clientes = buscar_cliente_completo(query)
     if not clientes:
@@ -122,7 +122,7 @@ def agregar_pago_tool(data):
 register("pago.agregar", agregar_pago_tool)
 
 def listar_pagos_tool(data):
-    from database.aronium import get_pagos_fijos
+    from database.nimbo_db import get_pagos_fijos
     pagos = get_pagos_fijos()
     if not pagos:
         return "No hay pagos fijos registrados. Di 'agregar pago renta' para agregar uno."
@@ -136,7 +136,7 @@ register("pago.listar", listar_pagos_tool)
 
 def monto_pago_tool(data):
     if isinstance(data, str): return "Error: datos invalidos"
-    from database.aronium import set_monto_pago_fijo
+    from database.nimbo_db import set_monto_pago_fijo
     nombre = data.get("query", "")
     monto = data.get("monto", 0)
     coincidencias = set_monto_pago_fijo(nombre, monto)
@@ -151,7 +151,7 @@ register("pago.monto", monto_pago_tool)
 
 def agregar_recordatorio_tool(data):
     query = data.get("query", "") if isinstance(data, dict) else str(data)
-    from database.aronium import agregar_recordatorio
+    from database.nimbo_db import agregar_recordatorio
     agregar_recordatorio(query)
     return f"Recordatorio agregado: {query}"
 
@@ -159,7 +159,7 @@ register("recordatorio.agregar", agregar_recordatorio_tool)
 
 def agregar_cumpleanos_tool(data):
     if isinstance(data, str): return "Error: datos invalidos"
-    from database.aronium import buscar_cliente_completo, set_cumpleanos_cliente
+    from database.nimbo_db import buscar_cliente_completo, set_cumpleanos_cliente
     query = data.get("query", "")
     fecha = data.get("fecha", "")
     clientes = buscar_cliente_completo(query)
@@ -180,7 +180,7 @@ register("cumpleanos.agregar", agregar_cumpleanos_tool)
 
 
 def consultar_cumpleanos_tool(data):
-    from database.aronium import buscar_cliente_completo
+    from database.nimbo_db import buscar_cliente_completo
     query = data.get("query", "") if isinstance(data, dict) else str(data)
     clientes = buscar_cliente_completo(query)
     if not clientes:

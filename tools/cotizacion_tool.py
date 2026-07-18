@@ -3,7 +3,7 @@ Herramienta de Cotizaciones
 """
 import json
 from core.tool_registry import register
-from database.aronium import (
+from database.nimbo_db import (
     get_cotizacion, get_cotizaciones, actualizar_estado_cotizacion,
     marcar_cotizacion_enviada, remove_stock, registrar_venta_cliente, get_product_by_id,
     generar_garantia_venta

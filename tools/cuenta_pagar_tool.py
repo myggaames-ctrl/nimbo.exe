@@ -2,7 +2,7 @@
 Herramienta de Cuentas por Pagar
 """
 from core.tool_registry import register
-from database.aronium import (
+from database.nimbo_db import (
     buscar_proveedor, crear_cuenta_pagar, get_cuenta_pagar_por_id,
     registrar_pago_proveedor, get_cuentas_pagar, get_cuentas_proveedor
 )

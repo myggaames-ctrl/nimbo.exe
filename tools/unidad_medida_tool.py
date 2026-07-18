@@ -2,7 +2,7 @@
 Herramienta de Unidades de Medida (docena, caja, par, paquete, etc.)
 """
 from core.tool_registry import register
-from database.aronium import (
+from database.nimbo_db import (
     get_products, set_unidad_medida, get_unidad_medida,
     get_todas_unidades_medida, remove_stock
 )

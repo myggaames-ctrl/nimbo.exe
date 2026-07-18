@@ -2,7 +2,7 @@
 Herramienta de Ventas
 """
 from core.tool_registry import register
-from database.aronium import get_products, remove_stock, registrar_venta_cliente, buscar_cliente_completo
+from database.nimbo_db import get_products, remove_stock, registrar_venta_cliente, buscar_cliente_completo
 from datetime import datetime
 
 def registrar_venta_tool(data):
@@ -36,7 +36,7 @@ def registrar_venta_tool(data):
 register("venta.registrar", registrar_venta_tool)
 
 def resumen_dia_tool(data):
-    from database.aronium import nimbo_connect
+    from database.nimbo_db import nimbo_connect
     from datetime import datetime
     hoy = datetime.now().strftime("%Y-%m-%d")
     conn = nimbo_connect()
@@ -54,7 +54,7 @@ def resumen_dia_tool(data):
 register("venta.resumen_dia", resumen_dia_tool)
 
 def resumen_mes_tool(data):
-    from database.aronium import nimbo_connect
+    from database.nimbo_db import nimbo_connect
     from datetime import datetime
     mes = datetime.now().month
     anio = datetime.now().year

@@ -23,7 +23,7 @@
 ./core/intent_detector.py
 ./core/workspace.py
 ./core/command_normalizer.py
-./database/aronium.py
+./database/nimbo_db.py
 ./openclaw_bridge.py
 ./app.py
 ./services/sales.py

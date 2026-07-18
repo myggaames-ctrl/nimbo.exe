@@ -56,7 +56,7 @@ register(
     list_products
 )
 import re
-from database.aronium import add_stock, remove_stock, get_products, nimbo_connect
+from database.nimbo_db import add_stock, remove_stock, get_products, nimbo_connect
 
 
 def _quitar_articulo(query):
@@ -173,7 +173,7 @@ def escanear_codigo_tool(codigo):
     Si encuentra el producto arranca BARCODE_INICIO: (pregunta si vender, ver
     step barcode_waiting_accion en core/nimbo.py); si no, arranca
     CODIGO_NO_ENCONTRADO_INICIO: (pregunta si agregarlo como producto nuevo)."""
-    from database.aronium import get_product_by_code_ci, get_foto_producto
+    from database.nimbo_db import get_product_by_code_ci, get_foto_producto
     codigo = (codigo or "").strip()
     producto = get_product_by_code_ci(codigo)
     if not producto:
@@ -201,7 +201,7 @@ def importar_instrucciones_tool(data):
 register("inventory.importar_instrucciones", importar_instrucciones_tool)
 
 def set_min_stock_tool(data):
-    from database.aronium import set_stock_minimo, get_products
+    from database.nimbo_db import set_stock_minimo, get_products
     query = data.get("query", "")
     minimo = data.get("quantity", 5)
     products = get_products(search=query)
@@ -231,7 +231,7 @@ register("inventory.update_cost", update_cost_tool)
 
 
 def alertas_predictivas_tool(data):
-    from database.aronium import get_alertas_predictivas
+    from database.nimbo_db import get_alertas_predictivas
     alertas = get_alertas_predictivas()
     criticos = [a for a in alertas if a["urgencia"] == "CRITICO"]
     advertencias = [a for a in alertas if a["urgencia"] == "ADVERTENCIA"]
@@ -254,7 +254,7 @@ register("inventory.alertas_predictivas", alertas_predictivas_tool)
 
 
 def prediccion_producto_tool(query):
-    from database.aronium import get_prediccion_producto
+    from database.nimbo_db import get_prediccion_producto
     p = get_prediccion_producto(query)
     if not p:
         return f"No encontre productos con '{query}'."
@@ -273,7 +273,7 @@ register("inventory.prediccion_producto", prediccion_producto_tool)
 
 
 def kardex_tool(data):
-    from database.aronium import get_kardex, get_products
+    from database.nimbo_db import get_kardex, get_products
     query = data.get("query", "") if isinstance(data, dict) else str(data)
 
     if query:

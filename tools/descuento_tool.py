@@ -3,11 +3,11 @@ Herramienta de Descuentos
 """
 from datetime import datetime, date
 from core.tool_registry import register
-from database.aronium import (
+from database.nimbo_db import (
     crear_descuento, get_descuentos, get_descuento_por_id, buscar_descuentos,
     desactivar_descuento, get_product_by_id, get_products
 )
-from database.aronium import buscar_cliente_completo
+from database.nimbo_db import buscar_cliente_completo
 
 MESES_NOMBRE = {
     1: "enero", 2: "febrero", 3: "marzo", 4: "abril", 5: "mayo", 6: "junio",

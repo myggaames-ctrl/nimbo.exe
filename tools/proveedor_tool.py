@@ -3,7 +3,7 @@ Herramienta de Proveedores
 """
 import re
 from core.tool_registry import register
-from database.aronium import crear_proveedor, buscar_proveedor, get_todos_proveedores, get_historial_proveedor, get_alertas_precios
+from database.nimbo_db import crear_proveedor, buscar_proveedor, get_todos_proveedores, get_historial_proveedor, get_alertas_precios
 
 def nuevo_proveedor_tool(data):
     if isinstance(data, str): return "Error: datos invalidos"
@@ -107,7 +107,7 @@ def orden_compra_tool(data):
         return f"No encontre proveedor '{proveedor_query}'."
     p = proveedores[0]
 
-    from database.aronium import get_products, crear_orden_compra
+    from database.nimbo_db import get_products, crear_orden_compra
     productos = get_products(search=producto_nombre)
     producto_id = productos[0]["Id"] if productos else 0
     nombre_final = productos[0]["Name"] if productos else producto_nombre.title()
@@ -125,7 +125,7 @@ def orden_compra_tool(data):
 register("proveedor.orden_compra", orden_compra_tool)
 
 def pedidos_sugeridos_tool(data):
-    from database.aronium import get_pedidos_sugeridos
+    from database.nimbo_db import get_pedidos_sugeridos
     sugeridos = get_pedidos_sugeridos()
     if not sugeridos:
         return "Todo el inventario esta en niveles normales. No hay pedidos urgentes."
@@ -165,7 +165,7 @@ register("proveedor.pedidos", pedidos_sugeridos_tool)
 
 def asociar_producto_tool(data):
     if isinstance(data, str): return "Error: datos invalidos"
-    from database.aronium import buscar_proveedor, asociar_producto_proveedor, get_products
+    from database.nimbo_db import buscar_proveedor, asociar_producto_proveedor, get_products
     proveedor_query = data.get("proveedor", "")
     producto_query = data.get("producto", "")
     proveedores = buscar_proveedor(proveedor_query)
@@ -182,7 +182,7 @@ def asociar_producto_tool(data):
 register("proveedor.asociar", asociar_producto_tool)
 
 def generar_orden_tool(data):
-    from database.aronium import buscar_proveedor, get_pedidos_sugeridos, crear_orden_compra
+    from database.nimbo_db import buscar_proveedor, get_pedidos_sugeridos, crear_orden_compra
     query = data.get("query", "") if isinstance(data, dict) else str(data)
     proveedores = buscar_proveedor(query)
     if not proveedores:

@@ -2,7 +2,7 @@
 Herramienta de Programa de Lealtad (Puntos)
 """
 from core.tool_registry import register
-from database.aronium import (
+from database.nimbo_db import (
     buscar_cliente_completo, get_puntos_cliente, get_saldo_puntos, get_nivel_lealtad,
     puntos_a_quetzales, canjear_puntos, get_clientes_con_puntos
 )

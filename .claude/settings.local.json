@@ -186,7 +186,17 @@
       "Bash(ollama ps *)",
       "Bash(getent hosts *)",
       "Bash(netstat -tlnp)",
-      "Bash(git log *)"
+      "Bash(git log *)",
+      "Bash(ps -eo pid,lstart,cmd)",
+      "Skill(dataviz)",
+      "Bash(rm -f /tmp/claude-1000/-home-victor-nimbo-exe/25133093-50db-4de4-b745-577801ba104d/scratchpad/script_0.js)",
+      "Bash(git mv *)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(sed -i '92s/database\\\\/aronium\\\\.py/database\\\\/nimbo_db.py/' gen_data.py)",
+      "Bash(sed -i '292s/database\\\\/aronium\\\\.py/database\\\\/nimbo_db.py/' gen_data.py)",
+      "Bash(sed -i '313s/database\\\\/aronium\\\\.py/database\\\\/nimbo_db.py/' gen_data.py)",
+      "Bash(sed -i '340s/database\\\\/aronium\\\\.py/database\\\\/nimbo_db.py/' gen_data.py)",
+      "Bash(sed -i '345s/database\\\\/aronium\\\\.py/database\\\\/nimbo_db.py/' gen_data.py)"
     ]
   }
 }

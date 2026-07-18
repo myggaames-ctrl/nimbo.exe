@@ -17,7 +17,7 @@ ACCENT = colors.HexColor("#2563eb")
 
 
 def generar_pdf_declaracion_iva(datos):
-    """datos: dict de database.aronium.get_declaracion_iva(). Guarda el PDF en
+    """datos: dict de database.nimbo_db.get_declaracion_iva(). Guarda el PDF en
     la raiz del proyecto (no es publico como las cotizaciones - es informacion
     financiera interna, se sirve solo via /api/download/<filename>, con
     login). Retorna el nombre de archivo (sin ruta)."""

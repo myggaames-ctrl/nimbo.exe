@@ -61,71 +61,71 @@ init_usuarios()
 init_configuracion()
 
 # ── Catalogo propio (Producto/Stock, independiente de Aronium) ─────────────
-from database.aronium import init_productos, migrar_productos_desde_aronium
+from database.nimbo_db import init_productos, migrar_productos_desde_aronium
 init_productos()
 migrar_productos_desde_aronium()
 
-from database.aronium import init_cotizaciones
+from database.nimbo_db import init_cotizaciones
 init_cotizaciones()
 
-from database.aronium import init_caja
+from database.nimbo_db import init_caja
 init_caja()
 
-from database.aronium import init_descuentos
+from database.nimbo_db import init_descuentos
 init_descuentos()
 
-from database.aronium import init_garantias
+from database.nimbo_db import init_garantias
 init_garantias()
 
-from database.aronium import init_combos
+from database.nimbo_db import init_combos
 init_combos()
 
-from database.aronium import init_unidades_medida
+from database.nimbo_db import init_unidades_medida
 init_unidades_medida()
 
-from database.aronium import init_puntos
+from database.nimbo_db import init_puntos
 init_puntos()
 
-from database.aronium import init_codigos_barras
+from database.nimbo_db import init_codigos_barras
 init_codigos_barras()
 
-from database.aronium import init_grupos_cliente
+from database.nimbo_db import init_grupos_cliente
 init_grupos_cliente()
 
-from database.aronium import init_fotos_servicio
+from database.nimbo_db import init_fotos_servicio
 init_fotos_servicio()
 
-from database.aronium import init_servicio_tecnico_ext
+from database.nimbo_db import init_servicio_tecnico_ext
 init_servicio_tecnico_ext()
 
-from database.aronium import init_informes_revision
+from database.nimbo_db import init_informes_revision
 init_informes_revision()
 
-from database.aronium import init_tarifas_mano_obra
+from database.nimbo_db import init_tarifas_mano_obra
 init_tarifas_mano_obra()
 
-from database.aronium import init_cuentas_cobrar
+from database.nimbo_db import init_cuentas_cobrar
 init_cuentas_cobrar()
 
-from database.aronium import init_cuentas_pagar
+from database.nimbo_db import init_cuentas_pagar
 init_cuentas_pagar()
 
-from database.aronium import init_pagos_fijos_ext
+from database.nimbo_db import init_pagos_fijos_ext
 init_pagos_fijos_ext()
 
-from database.aronium import init_metas_semanales
+from database.nimbo_db import init_metas_semanales
 init_metas_semanales()
 
-from database.aronium import init_venta_cobrador_ext
+from database.nimbo_db import init_venta_cobrador_ext
 init_venta_cobrador_ext()
 
-from database.aronium import init_reembolsos
+from database.nimbo_db import init_reembolsos
 init_reembolsos()
 
-from database.aronium import init_venta_metodo_pago_ext
+from database.nimbo_db import init_venta_metodo_pago_ext
 init_venta_metodo_pago_ext()
 
-from database.aronium import init_ajuste_pos
+from database.nimbo_db import init_ajuste_pos
 init_ajuste_pos()
 
 # Instalaciones que ya tenian usuarios antes de que existiera el wizard de
@@ -353,7 +353,7 @@ def setup_paso(paso):
                     raise ValueError()
                 set_config("caja_fondo_inicial", str(monto))
                 # Reutiliza el mismo mecanismo que el cierre de turno usa para
-                # sugerir el fondo del dia siguiente (ver database.aronium.
+                # sugerir el fondo del dia siguiente (ver database.nimbo_db.
                 # get_fondo_sugerido) - asi el primer "abrir caja" del negocio
                 # ya llega prellenado con este monto, en vez de pedirlo nuevo.
                 set_config("caja_fondo_sugerido", str(monto))
@@ -672,7 +672,7 @@ def api_configuracion_negocio_update():
             return jsonify({"error": "El fondo de caja debe ser un numero valido."}), 400
         set_config("caja_fondo_inicial", str(monto))
         # Mismo mecanismo que usa el cierre de turno para sugerir el fondo del
-        # siguiente turno (ver database.aronium.cerrar_turno/get_fondo_sugerido).
+        # siguiente turno (ver database.nimbo_db.cerrar_turno/get_fondo_sugerido).
         set_config("caja_fondo_sugerido", str(monto))
     else:
         set_config("caja_fondo_inicial", "")
@@ -712,7 +712,7 @@ def chat():
         is_html = "<a " in str(respuesta_tool)
         chat_history.append({"role": "user", "content": mensaje, "time": datetime.now().strftime("%H:%M")})
         chat_history.append({"role": "assistant", "content": respuesta_tool, "time": datetime.now().strftime("%H:%M")})
-        from database.aronium import guardar_mensaje_chat
+        from database.nimbo_db import guardar_mensaje_chat
         guardar_mensaje_chat("user", mensaje)
         guardar_mensaje_chat("assistant", str(respuesta_tool))
         return jsonify({"response": respuesta_tool, "source": "tool", "html": is_html})
@@ -1073,7 +1073,7 @@ def openclaw_chat():
     ctx = session.get("nimbo_ctx", {})
     response, ctx = nimbo_send_ctx(message, context=ctx, role=current_user.rol)
     session["nimbo_ctx"] = ctx
-    from database.aronium import guardar_mensaje_chat
+    from database.nimbo_db import guardar_mensaje_chat
     guardar_mensaje_chat("user", message)
     guardar_mensaje_chat("assistant", str(response))
 
@@ -1194,14 +1194,14 @@ def api_tools():
 @app.route("/api/db/products")
 @login_required
 def db_products():
-    from database.aronium import get_products
+    from database.nimbo_db import get_products
     search = request.args.get("search", "")
     return jsonify(get_products(search=search))
 
 @app.route("/api/db/stats")
 @login_required
 def db_stats():
-    from database.aronium import get_sales_today, get_sales_month, get_low_stock, get_top_products
+    from database.nimbo_db import get_sales_today, get_sales_month, get_low_stock, get_top_products
     return jsonify({
         "sales_today": get_sales_today(),
         "sales_month": get_sales_month(),
@@ -1212,14 +1212,14 @@ def db_stats():
 @app.route("/api/db/customers")
 @login_required
 def db_customers():
-    from database.aronium import get_customers
+    from database.nimbo_db import get_customers
     search = request.args.get("search", "")
     return jsonify(get_customers(search=search))
 
 @app.route("/api/db/products/add", methods=["POST"])
 @login_required
 def db_add_product():
-    from database.aronium import nimbo_connect
+    from database.nimbo_db import nimbo_connect
     data = request.json
     try:
         conn = nimbo_connect()
@@ -1235,7 +1235,7 @@ def db_add_product():
 @app.route("/api/db/products/<int:pid>", methods=["PUT"])
 @login_required
 def db_edit_product(pid):
-    from database.aronium import nimbo_connect
+    from database.nimbo_db import nimbo_connect
     data = request.json
     try:
         conn = nimbo_connect()
@@ -1251,7 +1251,7 @@ def db_edit_product(pid):
 @app.route("/api/db/products/<int:pid>", methods=["DELETE"])
 @login_required
 def db_delete_product(pid):
-    from database.aronium import nimbo_connect
+    from database.nimbo_db import nimbo_connect
     try:
         conn = nimbo_connect()
         cur = conn.cursor()
@@ -1308,7 +1308,7 @@ def _leer_archivo_productos(archivo):
     filas_validas es una lista de dicts normalizados (nombre, precio, costo,
     codigo, stock, stock_minimo, categoria - los opcionales quedan en None si
     la celda venia vacia, sin aplicar todavia ningun default, ver
-    database.aronium.crear_producto_importado) y errores es una lista de
+    database.nimbo_db.crear_producto_importado) y errores es una lista de
     {"fila": numero, "motivo": texto} para filas que no se pudieron importar
     (nombre o precio faltante/invalido) - no bloquean el resto del archivo."""
     ext = archivo.filename.rsplit(".", 1)[-1].lower() if "." in archivo.filename else ""
@@ -1391,7 +1391,7 @@ def db_products_plantilla():
 @app.route("/api/db/products/import", methods=["POST"])
 @login_required
 def db_products_import():
-    from database.aronium import crear_producto_importado, buscar_producto_duplicado
+    from database.nimbo_db import crear_producto_importado, buscar_producto_duplicado
     if "archivo" not in request.files:
         return jsonify({"error": "No se envio ningun archivo"}), 400
     archivo = request.files["archivo"]
@@ -1421,7 +1421,7 @@ def db_products_import():
 @app.route("/api/db/products/import/resolver", methods=["POST"])
 @login_required
 def db_products_import_resolver():
-    from database.aronium import crear_producto_importado, actualizar_producto_importado
+    from database.nimbo_db import crear_producto_importado, actualizar_producto_importado
     data = request.json or {}
     resoluciones = data.get("resoluciones", [])
 
@@ -1449,7 +1449,7 @@ def db_products_import_resolver():
 @app.route("/api/db/products/<int:pid>/etiqueta")
 @login_required
 def db_product_etiqueta(pid):
-    from database.aronium import get_product_by_id, asignar_codigo_barras
+    from database.nimbo_db import get_product_by_id, asignar_codigo_barras
     from services.barcode_service import generar_etiqueta_producto_pdf
     producto = get_product_by_id(pid)
     if not producto:
@@ -1463,7 +1463,7 @@ def db_product_etiqueta(pid):
 @app.route("/api/db/stock/add", methods=["POST"])
 @login_required
 def db_add_stock():
-    from database.aronium import add_stock
+    from database.nimbo_db import add_stock
     data = request.json
     ok = add_stock(data["product_id"], data["quantity"])
     return jsonify({"ok": ok})
@@ -1471,7 +1471,7 @@ def db_add_stock():
 @app.route("/api/db/stock/remove", methods=["POST"])
 @login_required
 def db_remove_stock():
-    from database.aronium import remove_stock
+    from database.nimbo_db import remove_stock
     data = request.json
     ok = remove_stock(data["product_id"], data["quantity"])
     if not ok:
@@ -1481,7 +1481,7 @@ def db_remove_stock():
 @app.route("/api/db/stock/<int:pid>", methods=["GET"])
 @login_required
 def db_get_stock(pid):
-    from database.aronium import get_stock
+    from database.nimbo_db import get_stock
     qty = get_stock(pid)
     return jsonify({"stock": qty})
 
@@ -1489,7 +1489,7 @@ def db_get_stock(pid):
 @app.route("/api/db/kardex")
 @login_required
 def db_kardex():
-    from database.aronium import get_kardex
+    from database.nimbo_db import get_kardex
     product_id = request.args.get("product_id")
     limit = int(request.args.get("limit", 50))
     return jsonify(get_kardex(product_id=product_id, limit=limit))
@@ -1497,19 +1497,19 @@ def db_kardex():
 @app.route("/api/db/alertas")
 @login_required
 def db_alertas():
-    from database.aronium import get_alertas_stock
+    from database.nimbo_db import get_alertas_stock
     return jsonify(get_alertas_stock())
 
 @app.route("/api/inventario/alertas-predictivas")
 @login_required
 def db_alertas_predictivas():
-    from database.aronium import get_alertas_predictivas
+    from database.nimbo_db import get_alertas_predictivas
     return jsonify(get_alertas_predictivas())
 
 @app.route("/api/db/stock-minimo", methods=["POST"])
 @login_required
 def db_set_stock_minimo():
-    from database.aronium import set_stock_minimo
+    from database.nimbo_db import set_stock_minimo
     data = request.json
     set_stock_minimo(data["product_id"], data["product_name"], data["minimo"])
     return jsonify({"ok": True})
@@ -1528,7 +1528,7 @@ def download_file(filename):
 @app.route("/api/db/alertas-precios")
 @admin_required
 def db_alertas_precios():
-    from database.aronium import get_alertas_precios
+    from database.nimbo_db import get_alertas_precios
     return jsonify(get_alertas_precios())
 
 
@@ -1539,7 +1539,7 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 @login_required
 def subir_foto_producto():
     from flask import request
-    from database.aronium import nimbo_connect
+    from database.nimbo_db import nimbo_connect
     
     if 'foto' not in request.files:
         return jsonify({"error": "No se envio foto"}), 400
@@ -1572,7 +1572,7 @@ def subir_foto_producto():
 @app.route("/api/productos/fotos/<int:producto_id>")
 @login_required
 def get_fotos_producto(producto_id):
-    from database.aronium import nimbo_connect
+    from database.nimbo_db import nimbo_connect
     conn = nimbo_connect()
     cur = conn.cursor()
     cur.execute("SELECT * FROM ProductoFoto WHERE ProductoId=? ORDER BY FechaSubida DESC", (producto_id,))
@@ -1586,7 +1586,7 @@ UPLOAD_FOLDER_SERVICIO = os.path.join(BASE_DIR, 'static', 'fotos_servicio')
 @app.route("/api/servicio/fotos", methods=["POST"])
 @admin_o_tecnico_required
 def subir_foto_servicio():
-    from database.aronium import get_orden, agregar_foto_orden
+    from database.nimbo_db import get_orden, agregar_foto_orden
 
     if 'foto' not in request.files:
         return jsonify({"error": "No se envio foto"}), 400
@@ -1624,7 +1624,7 @@ def subir_foto_servicio():
 @app.route("/api/servicio/fotos/<numero_orden>")
 @admin_o_tecnico_required
 def get_fotos_servicio(numero_orden):
-    from database.aronium import get_fotos_orden
+    from database.nimbo_db import get_fotos_orden
     numero_orden = numero_orden.strip().upper()
     if not numero_orden.startswith("OS-"):
         numero_orden = "OS-" + numero_orden.zfill(4)
@@ -1634,7 +1634,7 @@ def get_fotos_servicio(numero_orden):
 @app.route("/api/servicio/ordenes")
 @admin_o_tecnico_required
 def get_ordenes_servicio():
-    from database.aronium import get_ordenes
+    from database.nimbo_db import get_ordenes
     estado = request.args.get("estado")
     return jsonify(get_ordenes(estado=estado, limit=100))
 
@@ -1642,7 +1642,7 @@ def get_ordenes_servicio():
 @app.route("/api/servicio/pipeline")
 @admin_o_tecnico_required
 def get_pipeline_servicio_route():
-    from database.aronium import get_pipeline_servicio
+    from database.nimbo_db import get_pipeline_servicio
     return jsonify(get_pipeline_servicio())
 
 
@@ -1651,7 +1651,7 @@ def ver_producto_publico(codigo):
     """Vista publica (sin login) a la que apunta el QR de las etiquetas de producto -
     ver services/barcode_service.py. Muestra solo foto/nombre/precio/descripcion,
     nunca stock ni costo."""
-    from database.aronium import get_product_by_code, get_foto_producto, get_descripcion_producto
+    from database.nimbo_db import get_product_by_code, get_foto_producto, get_descripcion_producto
 
     producto = get_product_by_code(codigo)
     if not producto:
@@ -1683,7 +1683,7 @@ def tiktok_verify_file():
 @app.route("/api/limpieza-anual", methods=["POST"])
 @admin_required
 def limpieza_anual():
-    from database.aronium import archivar_y_limpiar_anio
+    from database.nimbo_db import archivar_y_limpiar_anio
     data = request.json
     anio = data.get("anio", 2026)
     try:
@@ -1696,42 +1696,42 @@ def limpieza_anual():
 @app.route("/api/recordatorios")
 @admin_required
 def get_recordatorios():
-    from database.aronium import get_recordatorios
+    from database.nimbo_db import get_recordatorios
     return jsonify(get_recordatorios())
 
 
 @app.route("/api/cotizaciones/resumen")
 @admin_required
 def get_resumen_cotizaciones():
-    from database.aronium import get_resumen_cotizaciones
+    from database.nimbo_db import get_resumen_cotizaciones
     return jsonify(get_resumen_cotizaciones())
 
 
 @app.route("/api/cuentascobrar/resumen")
 @admin_required
 def get_resumen_cuentas_cobrar_route():
-    from database.aronium import get_resumen_cuentas_cobrar
+    from database.nimbo_db import get_resumen_cuentas_cobrar
     return jsonify(get_resumen_cuentas_cobrar())
 
 
 @app.route("/api/cuentaspagar/resumen")
 @admin_required
 def get_resumen_cuentas_pagar_route():
-    from database.aronium import get_resumen_cuentas_pagar
+    from database.nimbo_db import get_resumen_cuentas_pagar
     return jsonify(get_resumen_cuentas_pagar())
 
 
 @app.route("/api/contabilidad/flujo-caja-proyectado")
 @admin_required
 def get_flujo_caja_proyectado_route():
-    from database.aronium import get_flujo_caja_proyectado
+    from database.nimbo_db import get_flujo_caja_proyectado
     return jsonify(get_flujo_caja_proyectado())
 
 
 @app.route("/api/reportes/meta-semanal", methods=["GET", "POST"])
 @admin_required
 def meta_semanal_route():
-    from database.aronium import get_progreso_meta_semanal, set_meta_semanal
+    from database.nimbo_db import get_progreso_meta_semanal, set_meta_semanal
     if request.method == "POST":
         data = request.json or {}
         try:
@@ -1747,7 +1747,7 @@ def meta_semanal_route():
 # ── CAJA REGISTRADORA ──────────────────────────────────────
 
 def _requiere_turno_abierto():
-    from database.aronium import get_turno_abierto
+    from database.nimbo_db import get_turno_abierto
     turno = get_turno_abierto()
     if not turno:
         return None, (jsonify({"error": "No hay ningun turno de caja abierto."}), 400)
@@ -1757,7 +1757,7 @@ def _requiere_turno_abierto():
 @app.route("/api/caja/estado")
 @login_required
 def caja_estado():
-    from database.aronium import (
+    from database.nimbo_db import (
         get_turno_abierto, get_denominaciones_actuales, sencillo_bajo, DENOMINACIONES,
         get_ultimo_cierre_denominaciones, get_fondo_sugerido, get_caja_fuerte_acumulada
     )
@@ -1789,7 +1789,7 @@ def caja_abrir():
     admin si todavia no se ha cerrado ningun turno - ver get_fondo_sugerido). El
     empleado solo confirma la apertura, no puede enviar un monto distinto: cambiar el
     fondo es exclusivo de Configuracion del negocio (solo admin)."""
-    from database.aronium import get_turno_abierto, abrir_turno_simple, get_fondo_sugerido
+    from database.nimbo_db import get_turno_abierto, abrir_turno_simple, get_fondo_sugerido
     if get_turno_abierto():
         return jsonify({"error": "Ya hay un turno de caja abierto."}), 400
     fondo_total = get_fondo_sugerido()
@@ -1802,7 +1802,7 @@ def caja_abrir():
 @app.route("/api/caja/cerrar", methods=["POST"])
 @login_required
 def caja_cerrar():
-    from database.aronium import cerrar_turno
+    from database.nimbo_db import cerrar_turno
     turno, error = _requiere_turno_abierto()
     if error:
         return error
@@ -1829,7 +1829,7 @@ def caja_cerrar():
 @app.route("/api/caja/carrito")
 @login_required
 def caja_carrito():
-    from database.aronium import get_carrito
+    from database.nimbo_db import get_carrito
     turno, error = _requiere_turno_abierto()
     if error:
         return error
@@ -1841,7 +1841,7 @@ def caja_carrito():
 @app.route("/api/caja/carrito/agregar", methods=["POST"])
 @login_required
 def caja_carrito_agregar():
-    from database.aronium import get_product_by_id, get_product_by_code, get_products, agregar_a_carrito
+    from database.nimbo_db import get_product_by_id, get_product_by_code, get_products, agregar_a_carrito
     turno, error = _requiere_turno_abierto()
     if error:
         return error
@@ -1879,7 +1879,7 @@ def caja_carrito_agregar():
 @app.route("/api/caja/carrito/quitar", methods=["POST"])
 @login_required
 def caja_carrito_quitar():
-    from database.aronium import quitar_de_carrito
+    from database.nimbo_db import quitar_de_carrito
     data = request.json or {}
     item_id = data.get("item_id")
     if not item_id:
@@ -1892,7 +1892,7 @@ def caja_carrito_quitar():
 @app.route("/api/caja/carrito/vaciar", methods=["POST"])
 @login_required
 def caja_carrito_vaciar():
-    from database.aronium import vaciar_carrito
+    from database.nimbo_db import vaciar_carrito
     turno, error = _requiere_turno_abierto()
     if error:
         return error
@@ -1918,7 +1918,7 @@ def caja_verificar_cobrador():
 @app.route("/api/caja/cobrar", methods=["POST"])
 @login_required
 def caja_cobrar():
-    from database.aronium import cobrar_carrito
+    from database.nimbo_db import cobrar_carrito
     from services.ticket import generar_texto_ticket
     turno, error = _requiere_turno_abierto()
     if error:
@@ -1957,7 +1957,7 @@ def caja_cobrar():
 def caja_retirar():
     if not current_user.is_admin:
         return jsonify({"error": "Solo un administrador puede retirar efectivo de caja."}), 403
-    from database.aronium import retirar_caja
+    from database.nimbo_db import retirar_caja
     turno, error = _requiere_turno_abierto()
     if error:
         return error
@@ -1978,7 +1978,7 @@ def caja_retirar():
 def caja_anular():
     if not current_user.is_admin:
         return jsonify({"error": "Solo un administrador puede anular un turno de caja."}), 403
-    from database.aronium import anular_turno
+    from database.nimbo_db import anular_turno
     turno, error = _requiere_turno_abierto()
     if error:
         return error
@@ -1995,7 +1995,7 @@ def caja_anular():
 @app.route("/api/caja/movimientos")
 @login_required
 def caja_movimientos():
-    from database.aronium import get_movimientos_caja
+    from database.nimbo_db import get_movimientos_caja
     turno, error = _requiere_turno_abierto()
     if error:
         return error
@@ -2005,14 +2005,14 @@ def caja_movimientos():
 @app.route("/api/caja/resumen-dia")
 @login_required
 def caja_resumen_dia():
-    from database.aronium import get_resumen_caja_dia
+    from database.nimbo_db import get_resumen_caja_dia
     return jsonify(get_resumen_caja_dia())
 
 
 @app.route("/api/caja/imprimir-ticket", methods=["POST"])
 @login_required
 def caja_imprimir_ticket():
-    from database.aronium import nimbo_connect
+    from database.nimbo_db import nimbo_connect
     from services.ticket import generar_texto_ticket
     data = request.json or {}
     venta_id = data.get("venta_id")
@@ -2040,13 +2040,13 @@ def caja_imprimir_ticket():
 @app.route("/api/chat/historial")
 @admin_required
 def get_historial_guardado():
-    from database.aronium import get_historial_chat
+    from database.nimbo_db import get_historial_chat
     return jsonify(get_historial_chat())
 
 @app.route("/api/chat/limpiar-historial", methods=["POST"])
 @admin_required
 def limpiar_historial_guardado():
-    from database.aronium import limpiar_historial_chat
+    from database.nimbo_db import limpiar_historial_chat
     limpiar_historial_chat()
     return jsonify({"ok": True})
 
@@ -2054,7 +2054,7 @@ def limpiar_historial_guardado():
 @app.route("/api/chat/archivar", methods=["POST"])
 @admin_required
 def archivar_chat():
-    from database.aronium import archivar_chat_trimestral
+    from database.nimbo_db import archivar_chat_trimestral
     archivo = archivar_chat_trimestral()
     if archivo:
         return jsonify({"ok": True, "archivo": archivo.split("/")[-1]})
@@ -2064,7 +2064,7 @@ def archivar_chat():
 @app.route("/api/contabilidad/equilibrio")
 @admin_required
 def get_equilibrio():
-    from database.aronium import get_gastos, get_pagos_fijos, get_margen_productos
+    from database.nimbo_db import get_gastos, get_pagos_fijos, get_margen_productos
     gastos = get_gastos()
     total_gastos = sum(float(g["Monto"]) for g in gastos)
     productos = get_margen_productos()
@@ -2081,7 +2081,7 @@ def get_equilibrio():
         return jsonify({"error": "Margen negativo"})
     unidades = total_gastos / contribucion if total_gastos > 0 else 0
     ventas_necesarias = unidades * precio_prom
-    from database.aronium import nimbo_connect
+    from database.nimbo_db import nimbo_connect
     from datetime import datetime
     conn = nimbo_connect()
     cur = conn.cursor()
@@ -2100,7 +2100,7 @@ def get_equilibrio():
 @app.route("/api/graficas/ventas")
 @admin_required
 def graficas_ventas():
-    from database.aronium import get_comparacion_meses
+    from database.nimbo_db import get_comparacion_meses
     meses = get_comparacion_meses(6)
     return jsonify({
         "labels": [m["nombre"] for m in meses],
@@ -2113,7 +2113,7 @@ def graficas_ventas():
 @app.route("/api/backup", methods=["POST"])
 @admin_required
 def hacer_backup_route():
-    from database.aronium import hacer_backup
+    from database.nimbo_db import hacer_backup
     try:
         fecha = hacer_backup()
         return jsonify({"ok": True, "fecha": fecha})

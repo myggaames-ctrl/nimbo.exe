@@ -3,7 +3,7 @@ Herramienta de Reportes
 """
 import os
 from core.tool_registry import register
-from database.aronium import get_reporte_dia, get_reporte_periodo, get_cuadre_pos_dia, crear_ajuste_pos
+from database.nimbo_db import get_reporte_dia, get_reporte_periodo, get_cuadre_pos_dia, crear_ajuste_pos
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -117,7 +117,7 @@ def excel_reporte_tool(data):
     periodo = data.get("periodo", "mes") if isinstance(data, dict) else "mes"
     import openpyxl
     from datetime import datetime
-    from database.aronium import nimbo_connect
+    from database.nimbo_db import nimbo_connect
 
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -161,7 +161,7 @@ register("reporte.excel", excel_reporte_tool)
 
 def limpieza_anual_tool(data):
     from datetime import datetime
-    from database.aronium import archivar_y_limpiar_anio
+    from database.nimbo_db import archivar_y_limpiar_anio
     anio = datetime.now().year - 1
     try:
         archivo = archivar_y_limpiar_anio(anio)
@@ -173,7 +173,7 @@ register("reporte.limpieza", limpieza_anual_tool)
 
 
 def backup_tool(data):
-    from database.aronium import hacer_backup
+    from database.nimbo_db import hacer_backup
     try:
         fecha = hacer_backup()
         return f"Backup completado exitosamente. Archivo guardado: nimbo_{fecha}.db"
@@ -184,7 +184,7 @@ register("sistema.backup", backup_tool)
 
 
 def cuando_vendo_mas_tool(data):
-    from database.aronium import get_patrones_ventas
+    from database.nimbo_db import get_patrones_ventas
     p = get_patrones_ventas()
     if p["total_ventas_analizadas"] == 0:
         return f"No hay ventas registradas en los ultimos {p['periodo_dias']} dias para analizar."
@@ -241,7 +241,7 @@ def _resumen_patrones_sin_gemini(p, dias_txt, horas_txt, juntos_txt, ciclicos_tx
 
 
 def patrones_ventas_tool(data):
-    from database.aronium import get_patrones_ventas
+    from database.nimbo_db import get_patrones_ventas
     import os
 
     p = get_patrones_ventas()
@@ -289,7 +289,7 @@ register("reporte.patrones_ventas", patrones_ventas_tool)
 
 
 def proxima_compra_tool(query):
-    from database.aronium import buscar_cliente_completo, get_prediccion_compra_cliente
+    from database.nimbo_db import buscar_cliente_completo, get_prediccion_compra_cliente
     clientes = buscar_cliente_completo(query)
     if not clientes:
         return f"No encontre cliente con '{query}'."
@@ -329,7 +329,7 @@ def meta_semanal_definir_tool(data):
     if monto <= 0:
         return "La meta semanal debe ser un monto positivo."
 
-    from database.aronium import set_meta_semanal
+    from database.nimbo_db import set_meta_semanal
     p = set_meta_semanal(monto)
     return (f"Meta semanal definida: Q{p['meta_q']:.2f} (semana del {p['fecha_inicio']} al {p['fecha_fin']}).\n"
             + _texto_progreso_meta(p))
@@ -338,7 +338,7 @@ register("reporte.meta_definir", meta_semanal_definir_tool)
 
 
 def meta_semanal_progreso_tool(data):
-    from database.aronium import get_progreso_meta_semanal
+    from database.nimbo_db import get_progreso_meta_semanal
     p = get_progreso_meta_semanal()
     if not p:
         return "No has definido una meta de ventas para esta semana. Escribe 'meta semanal Q[monto]' para definirla."
@@ -348,7 +348,7 @@ register("reporte.meta_progreso", meta_semanal_progreso_tool)
 
 
 def meta_semanal_falta_tool(data):
-    from database.aronium import get_progreso_meta_semanal
+    from database.nimbo_db import get_progreso_meta_semanal
     p = get_progreso_meta_semanal()
     if not p:
         return "No has definido una meta de ventas para esta semana. Escribe 'meta semanal Q[monto]' para definirla."

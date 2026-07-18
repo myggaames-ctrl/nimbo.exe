@@ -2,7 +2,7 @@
 Herramienta de Reembolsos
 """
 from core.tool_registry import register
-from database.aronium import buscar_cliente_completo, get_credito_cliente, get_reembolso
+from database.nimbo_db import buscar_cliente_completo, get_credito_cliente, get_reembolso
 
 
 def _normalizar_numero(numero):

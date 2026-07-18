@@ -2,7 +2,7 @@
 Herramienta de Codigos de Barras y Etiquetas
 """
 from core.tool_registry import register
-from database.aronium import get_products, asignar_codigo_barras, get_productos_sin_codigo
+from database.nimbo_db import get_products, asignar_codigo_barras, get_productos_sin_codigo
 from services.barcode_service import generar_etiqueta_producto_pdf, generar_etiquetas_lote_pdf
 
 

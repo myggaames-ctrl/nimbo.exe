@@ -65,7 +65,7 @@ Formato limpio y profesional en espanol."""
 register("contenido.catalogo", catalogo_tool)
 
 def ideas_tool(data):
-    from database.aronium import get_products
+    from database.nimbo_db import get_products
     productos = get_products()
     lista_productos = ", ".join([p["Name"].strip() for p in productos[:10]]) if productos else "electrodomesticos en general"
     
@@ -90,7 +90,7 @@ register("contenido.programacion", programacion_tool)
 
 
 def foto_producto_tool(data):
-    from database.aronium import get_products, get_foto_producto, get_descripcion_producto
+    from database.nimbo_db import get_products, get_foto_producto, get_descripcion_producto
     query = data.get("query", "") if isinstance(data, dict) else str(data)
     modo = data.get("modo", "tienda") if isinstance(data, dict) else "tienda"
     productos = get_products(search=query)
@@ -139,7 +139,7 @@ register("contenido.foto", foto_producto_tool)
 
 def set_descripcion_tool(data):
     if isinstance(data, str): return "Error: datos invalidos"
-    from database.aronium import get_products, set_descripcion_producto
+    from database.nimbo_db import get_products, set_descripcion_producto
     query = data.get("query", "")
     descripcion = data.get("descripcion", "")
     productos = get_products(search=query)
@@ -155,7 +155,7 @@ register("contenido.set_descripcion", set_descripcion_tool)
 
 
 def video_producto_tool(data):
-    from database.aronium import get_products, get_foto_producto, get_descripcion_producto
+    from database.nimbo_db import get_products, get_foto_producto, get_descripcion_producto
     query = data.get("query", "") if isinstance(data, dict) else str(data)
     productos = get_products(search=query)
     if not productos:
@@ -171,7 +171,7 @@ register("contenido.video", video_producto_tool)
 
 def publicar_tool(data):
     if isinstance(data, str): return "Error: datos invalidos"
-    from database.aronium import get_products, get_foto_producto, nimbo_connect
+    from database.nimbo_db import get_products, get_foto_producto, nimbo_connect
     from services.social_media import publicar_facebook
     
     query = data.get("query", "")

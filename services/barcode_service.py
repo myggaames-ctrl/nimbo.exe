@@ -46,11 +46,11 @@ def _truncar(texto, largo=26):
 
 def _generar_imagen_barcode(codigo, tmp_dir):
     """codigo puede ser un EAN-13 generado por nosotros (13 digitos, ver
-    database.aronium.generar_ean13) o un Code de Aronium ya existente antes de esta
+    database.nimbo_db.generar_ean13) o un Code de Aronium ya existente antes de esta
     funcionalidad, que no necesariamente es un EAN-13 valido (ej. "01293428", 8 digitos,
     o alfanumerico tipo "LIC001"). Si son 13 digitos numericos se dibuja como EAN-13
     (python-barcode recalcula el digito verificador con el mismo algoritmo estandar que
-    database.aronium._digito_verificador_ean13, asi que coincide); cualquier otro formato
+    database.nimbo_db._digito_verificador_ean13, asi que coincide); cualquier otro formato
     se dibuja como Code128, que acepta cualquier texto/longitud sin lanzar error."""
     if codigo.isdigit() and len(codigo) == 13:
         bc = barcode.get('ean13', codigo[:12], writer=ImageWriter())

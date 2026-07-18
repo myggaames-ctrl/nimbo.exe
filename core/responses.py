@@ -14,7 +14,7 @@ Existencias: {product['Stock']}
 """
 
     if product.get("Id") is not None:
-        from database.aronium import get_unidades_medida_producto
+        from database.nimbo_db import get_unidades_medida_producto
         unidades = get_unidades_medida_producto(product["Id"])
         if unidades:
             stock = product.get("Stock") or 0

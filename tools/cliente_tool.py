@@ -7,7 +7,7 @@ from datetime import datetime
 from core.tool_registry import register
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-from database.aronium import (
+from database.nimbo_db import (
     crear_cliente_completo, buscar_cliente_completo,
     get_todos_clientes, get_historial_cliente, get_clientes_inactivos, get_descuentos,
     set_grupo_cliente, get_grupo_descuento, get_clientes_por_grupo, get_credito_cliente
