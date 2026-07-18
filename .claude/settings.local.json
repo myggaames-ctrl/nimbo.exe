@@ -209,7 +209,8 @@
       "Bash(echo \"exit: $?\")",
       "Bash(chmod +x /home/victor/nimbo.exe/actualizar_mapa.sh)",
       "Bash(bash actualizar_mapa.sh)",
-      "Bash(bash /home/victor/nimbo.exe/actualizar_mapa.sh)"
+      "Bash(bash /home/victor/nimbo.exe/actualizar_mapa.sh)",
+      "Bash(git fetch *)"
     ]
   }
 }
