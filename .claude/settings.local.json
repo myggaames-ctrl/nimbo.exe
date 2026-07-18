@@ -206,7 +206,10 @@
       "Bash(rm -rf /tmp/claude-1000/-home-victor-nimbo-exe/25133093-50db-4de4-b745-577801ba104d/scratchpad/nimbo_test_setup2)",
       "Bash(mkdir -p /tmp/claude-1000/-home-victor-nimbo-exe/25133093-50db-4de4-b745-577801ba104d/scratchpad/nimbo_test_setup2)",
       "Bash(rsync -a --exclude=.git --exclude=__pycache__ --exclude=nimbo.db --exclude=static/fotos/* --exclude=static/fotos_servicio/* --exclude=static/videos/* --exclude=static/cotizaciones/* --exclude=static/etiquetas/* --exclude=backups --exclude=.env ./ /tmp/claude-1000/-home-victor-nimbo-exe/25133093-50db-4de4-b745-577801ba104d/scratchpad/nimbo_test_setup2/)",
-      "Bash(echo \"exit: $?\")"
+      "Bash(echo \"exit: $?\")",
+      "Bash(chmod +x /home/victor/nimbo.exe/actualizar_mapa.sh)",
+      "Bash(bash actualizar_mapa.sh)",
+      "Bash(bash /home/victor/nimbo.exe/actualizar_mapa.sh)"
     ]
   }
 }

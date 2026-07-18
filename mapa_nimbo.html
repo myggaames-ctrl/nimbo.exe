@@ -297,43 +297,11 @@ const DATA = {
    "status": "vacio"
   },
   {
-   "id": "core/nimbo.py",
-   "name": "nimbo.py",
-   "group": "core",
-   "desc": "El cerebro del chat. NimboCore.send() recibe el mensaje del usuario y lo hace pasar por todo el pipeline: contexto reciente, ActionEngine/IntentDetector, traducción con Ollama, clarificación de intención vaga, y por último el fallback directo a Ollama. También contiene TODOS los flujos conversacionales paso a paso (crear producto, vender, cotizar, abrir caja, etc).",
-   "func": "send(mensaje, usuario) -> siempre devuelve una respuesta de texto para el chat.",
-   "status": "activo"
-  },
-  {
    "id": "core/action_engine.py",
    "name": "action_engine.py",
    "group": "core",
    "desc": "Orquestador entre el mensaje ya traducido y la ejecución real. Aplica el control de acceso por rol (admin/empleado/técnico) según la categoría del intent detectado (CATEGORIAS_POR_ROL), y si el rol tiene permiso, llama al IntentDetector y ejecuta la Tool correspondiente desde el TOOL_REGISTRY.",
    "func": "procesar(texto, rol) -> detecta intent, valida permiso, ejecuta la tool y retorna el resultado.",
-   "status": "activo"
-  },
-  {
-   "id": "core/intent_detector.py",
-   "name": "intent_detector.py",
-   "group": "core",
-   "desc": "Contiene la lista ordenada de TODOS los detectores activos. Los prueba uno por uno (el orden importa: los más específicos van primero para evitar choques entre patrones parecidos) y devuelve el primer intent que matchea.",
-   "func": "detect(texto) -> primer {intent, ...datos} que encuentre, o None si ningún detector matchea.",
-   "status": "activo"
-  },
-  {
-   "id": "core/command_normalizer.py",
-   "name": "command_normalizer.py",
-   "group": "core",
-   "desc": "Corrector ortográfico simple: antes de que cualquier detector vea el mensaje, corrige errores tipográficos comunes (diccionario + difflib.get_close_matches contra un vocabulario del negocio) y quita acentos.",
-   "func": "normalizar(texto) -> texto corregido y sin acentos, listo para los detectores.",
-   "status": "activo"
-  },
-  {
-   "id": "core/chat_context.py",
-   "name": "chat_context.py",
-   "group": "core",
-   "desc": "Carga los últimos mensajes de ChatHistorial (puede incluir días anteriores) y los recorta a ~500 tokens, para que Ollama pueda resolver referencias como 'cuántas quedan?' sin repetir el nombre del producto.",
-   "func": "resumen_texto(usuario) -> string de contexto reciente para pasarle a Ollama.",
    "status": "activo"
   },
   {
@@ -345,6 +313,22 @@ const DATA = {
    "status": "activo"
   },
   {
+   "id": "core/chat_context.py",
+   "name": "chat_context.py",
+   "group": "core",
+   "desc": "Carga los últimos mensajes de ChatHistorial (puede incluir días anteriores) y los recorta a ~500 tokens, para que Ollama pueda resolver referencias como 'cuántas quedan?' sin repetir el nombre del producto.",
+   "func": "resumen_texto(usuario) -> string de contexto reciente para pasarle a Ollama.",
+   "status": "activo"
+  },
+  {
+   "id": "core/command_normalizer.py",
+   "name": "command_normalizer.py",
+   "group": "core",
+   "desc": "Corrector ortográfico simple: antes de que cualquier detector vea el mensaje, corrige errores tipográficos comunes (diccionario + difflib.get_close_matches contra un vocabulario del negocio) y quita acentos.",
+   "func": "normalizar(texto) -> texto corregido y sin acentos, listo para los detectores.",
+   "status": "activo"
+  },
+  {
    "id": "core/configuracion.py",
    "name": "configuracion.py",
    "group": "core",
@@ -353,36 +337,12 @@ const DATA = {
    "status": "activo"
   },
   {
-   "id": "core/responses.py",
-   "name": "responses.py",
+   "id": "core/detectors/__init__.py",
+   "name": "detectors/__init__.py",
    "group": "core",
-   "desc": "Formatea texto de respuesta para el chat en casos concretos (por ejemplo el detalle de un presupuesto). Depende de database/nimbo_db.py para traer los datos que va a formatear.",
-   "func": "Convertir datos crudos en mensajes de texto legibles para el usuario.",
-   "status": "activo"
-  },
-  {
-   "id": "core/tool_registry.py",
-   "name": "tool_registry.py",
-   "group": "core",
-   "desc": "El directorio global de herramientas: un diccionario TOOLS{nombre_intent: función}. Cada archivo de tools/ se registra aquí solo, al cargarse, con register('categoria.accion', función).",
-   "func": "register(nombre, funcion) y list_tools() -> el registro completo que usa ActionEngine.",
-   "status": "activo"
-  },
-  {
-   "id": "openclaw_bridge.py",
-   "name": "openclaw_bridge.py",
-   "group": "bridge",
-   "desc": "Puente HTTP hacia OpenClaw, un agente que corre en la PC (con Gemini) en el puerto 18789. Ya NO es el fallback automático del chat (eso lo hace Ollama ahora) - se mantiene solo como opción manual: el botón del dashboard y /api/openclaw/chat en app.py lo siguen usando.",
-   "func": "send_to_openclaw(mensaje) / check_openclaw_status() -> hablar con el agente de PC externo.",
-   "status": "activo"
-  },
-  {
-   "id": "database/nimbo_db.py",
-   "name": "nimbo_db.py",
-   "group": "database",
-   "desc": "El módulo de acceso a datos más grande del proyecto (se llamaba database/aronium.py, de cuando TODO pasaba por Aronium - se renombró a nimbo_db.py y se actualizaron todos los imports del proyecto para que el nombre refleje lo que hace hoy). Hoy mezcla dos fuentes: nimbo.db (Producto, Stock, Kardex, Cotizacion, CajaTurno, Garantias, Combos, Puntos, CuentaCobrar/Pagar... casi todas las tablas propias del negocio) y pos.db/Aronium (solo ya para reportes de ventas físicas de caja y el catálogo nativo de clientes). Es el archivo con más conexiones entrantes de todo el proyecto: casi cada tool le pide datos directamente.",
-   "func": "Decenas de funciones get_*/crear_*/actualizar_* - la capa de persistencia de todo Nimbo.",
-   "status": "activo"
+   "desc": "Archivo vacío. A diferencia de tools/__init__.py, los detectores NO se cargan automáticamente por convención de carpeta: cada uno se importa a mano, uno por uno, en core/intent_detector.py - así se evita que un detector nuevo quede huérfano sin que nada avise (hasta 2026-07-18 hubo 3 así - BudgetDetector/CustomerDetector/WindowsDetector - se eliminaron en la limpieza de código huérfano, ver BUGS_Y_FIXES.md).",
+   "func": "Ninguna, solo marca el paquete.",
+   "status": "vacio"
   },
   {
    "id": "core/detectors/caja_detector.py",
@@ -553,187 +513,59 @@ const DATA = {
    "status": "activo"
   },
   {
-   "id": "core/detectors/__init__.py",
-   "name": "detectors/__init__.py",
+   "id": "core/intent_detector.py",
+   "name": "intent_detector.py",
    "group": "core",
-   "desc": "Archivo vacío. A diferencia de tools/__init__.py, los detectores NO se cargan automáticamente por convención de carpeta: cada uno se importa a mano, uno por uno, en core/intent_detector.py - así se evita que un detector nuevo quede huérfano sin que nada avise (hasta 2026-07-18 hubo 3 así - BudgetDetector/CustomerDetector/WindowsDetector - se eliminaron en la limpieza de código huérfano, ver BUGS_Y_FIXES.md).",
-   "func": "Ninguna, solo marca el paquete.",
-   "status": "vacio"
-  },
-  {
-   "id": "tools/__init__.py",
-   "name": "tools/__init__.py",
-   "group": "tool",
-   "desc": "Carga automática de TODOS los módulos de tools/ usando pkgutil.iter_modules + importlib. A diferencia de core/detectors/, aquí basta con crear el archivo para que se registre solo - por eso las tools huérfanas que existieron hasta 2026-07-18 (budget/customer/windows) se cargaban sin que ningún detector las alcanzara nunca, hasta que se eliminaron en la limpieza de código huérfano (ver BUGS_Y_FIXES.md).",
-   "func": "Importar cada archivo de tools/ una sola vez al arrancar la app.",
+   "desc": "Contiene la lista ordenada de TODOS los detectores activos. Los prueba uno por uno (el orden importa: los más específicos van primero para evitar choques entre patrones parecidos) y devuelve el primer intent que matchea.",
+   "func": "detect(texto) -> primer {intent, ...datos} que encuentre, o None si ningún detector matchea.",
    "status": "activo"
   },
   {
-   "id": "tools/inventory_tool.py",
-   "name": "inventory_tool.py",
-   "group": "tool",
-   "desc": "Inventario: crear/editar/eliminar producto, agregar/quitar stock, importar Excel/CSV, generar código de barras, resolver el escaneo directo en el chat.",
-   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
+   "id": "core/nimbo.py",
+   "name": "nimbo.py",
+   "group": "core",
+   "desc": "El cerebro del chat. NimboCore.send() recibe el mensaje del usuario y lo hace pasar por todo el pipeline: contexto reciente, ActionEngine/IntentDetector, traducción con Ollama, clarificación de intención vaga, y por último el fallback directo a Ollama. También contiene TODOS los flujos conversacionales paso a paso (crear producto, vender, cotizar, abrir caja, etc).",
+   "func": "send(mensaje, usuario) -> siempre devuelve una respuesta de texto para el chat.",
    "status": "activo"
   },
   {
-   "id": "tools/service_tool.py",
-   "name": "service_tool.py",
-   "group": "tool",
-   "desc": "Servicio Técnico: crear orden, cambiar estado (7 pasos), informes de revisión con presupuesto automático, fotos, garantía de reparación.",
-   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
+   "id": "core/responses.py",
+   "name": "responses.py",
+   "group": "core",
+   "desc": "Formatea texto de respuesta para el chat en casos concretos (por ejemplo el detalle de un presupuesto). Depende de database/nimbo_db.py para traer los datos que va a formatear.",
+   "func": "Convertir datos crudos en mensajes de texto legibles para el usuario.",
    "status": "activo"
   },
   {
-   "id": "tools/cliente_tool.py",
-   "name": "cliente_tool.py",
-   "group": "tool",
-   "desc": "Clientes: alta (con selección de grupo), historial completo, resumen, grupos de cliente.",
-   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
+   "id": "core/tool_registry.py",
+   "name": "tool_registry.py",
+   "group": "core",
+   "desc": "El directorio global de herramientas: un diccionario TOOLS{nombre_intent: función}. Cada archivo de tools/ se registra aquí solo, al cargarse, con register('categoria.accion', función).",
+   "func": "register(nombre, funcion) y list_tools() -> el registro completo que usa ActionEngine.",
    "status": "activo"
   },
   {
-   "id": "tools/venta_tool.py",
-   "name": "venta_tool.py",
-   "group": "tool",
-   "desc": "Registrar una venta simple desde el chat (arranca el flujo conversacional de venta en core/nimbo.py).",
-   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
+   "id": "database/nimbo_db.py",
+   "name": "nimbo_db.py",
+   "group": "database",
+   "desc": "El módulo de acceso a datos más grande del proyecto (se llamaba database/aronium.py, de cuando TODO pasaba por Aronium - se renombró a nimbo_db.py y se actualizaron todos los imports del proyecto para que el nombre refleje lo que hace hoy). Hoy mezcla dos fuentes: nimbo.db (Producto, Stock, Kardex, Cotizacion, CajaTurno, Garantias, Combos, Puntos, CuentaCobrar/Pagar... casi todas las tablas propias del negocio) y pos.db/Aronium (solo ya para reportes de ventas físicas de caja y el catálogo nativo de clientes). Es el archivo con más conexiones entrantes de todo el proyecto: casi cada tool le pide datos directamente.",
+   "func": "Decenas de funciones get_*/crear_*/actualizar_* - la capa de persistencia de todo Nimbo.",
    "status": "activo"
   },
   {
-   "id": "tools/proveedor_tool.py",
-   "name": "proveedor_tool.py",
-   "group": "tool",
-   "desc": "Proveedores: contactos, pedidos sugeridos, generar orden de compra.",
-   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
+   "id": "openclaw_bridge.py",
+   "name": "openclaw_bridge.py",
+   "group": "bridge",
+   "desc": "Puente HTTP hacia OpenClaw, un agente que corre en la PC (con Gemini) en el puerto 18789. Ya NO es el fallback automático del chat (eso lo hace Ollama ahora) - se mantiene solo como opción manual: el botón del dashboard y /api/openclaw/chat en app.py lo siguen usando.",
+   "func": "send_to_openclaw(mensaje) / check_openclaw_status() -> hablar con el agente de PC externo.",
    "status": "activo"
   },
   {
-   "id": "tools/contenido_tool.py",
-   "name": "contenido_tool.py",
-   "group": "tool",
-   "desc": "Contenido: posts, guiones, videos con Veo 3, publicación en redes.",
-   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
-   "status": "activo"
-  },
-  {
-   "id": "tools/reporte_tool.py",
-   "name": "reporte_tool.py",
-   "group": "tool",
-   "desc": "Reportes de ventas por período, patrones de venta, predicción de próxima compra de un cliente.",
-   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
-   "status": "activo"
-  },
-  {
-   "id": "tools/evento_tool.py",
-   "name": "evento_tool.py",
-   "group": "tool",
-   "desc": "Recordatorios y pagos fijos (crear, fijar su monto, listar).",
-   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
-   "status": "activo"
-  },
-  {
-   "id": "tools/contabilidad_tool.py",
-   "name": "contabilidad_tool.py",
-   "group": "tool",
-   "desc": "Balance, IVA/ISR, margen, sugerencias de precios, declaración de IVA, flujo de caja proyectado.",
-   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
-   "status": "activo"
-  },
-  {
-   "id": "tools/cotizacion_tool.py",
-   "name": "cotizacion_tool.py",
-   "group": "tool",
-   "desc": "Genera cotizaciones (PDF + registro), consulta y cambia su estado.",
-   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
-   "status": "activo"
-  },
-  {
-   "id": "tools/caja_tool.py",
-   "name": "caja_tool.py",
-   "group": "tool",
-   "desc": "Solo 'abrir caja' por chat (arranca el flujo conversacional de caja) - el resto de Caja se opera desde el panel dedicado del dashboard.",
-   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
-   "status": "activo"
-  },
-  {
-   "id": "tools/descuento_tool.py",
-   "name": "descuento_tool.py",
-   "group": "tool",
-   "desc": "Crear, listar y eliminar descuentos (cliente/temporada/producto/monto).",
-   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
-   "status": "activo"
-  },
-  {
-   "id": "tools/garantia_tool.py",
-   "name": "garantia_tool.py",
-   "group": "tool",
-   "desc": "Configurar días de garantía por producto, ver una garantía, listar por cliente, garantías por vencer.",
-   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
-   "status": "activo"
-  },
-  {
-   "id": "tools/cuenta_cobrar_tool.py",
-   "name": "cuenta_cobrar_tool.py",
-   "group": "tool",
-   "desc": "Crear deuda de cliente, registrar pagos (FIFO), consultar y listar cuentas por cobrar/vencidas.",
-   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
-   "status": "activo"
-  },
-  {
-   "id": "tools/cuenta_pagar_tool.py",
-   "name": "cuenta_pagar_tool.py",
-   "group": "tool",
-   "desc": "Espejo de cuenta_cobrar_tool pero con proveedores: crear deuda, pagar, consultar, listar.",
-   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
-   "status": "activo"
-  },
-  {
-   "id": "tools/combo_tool.py",
-   "name": "combo_tool.py",
-   "group": "tool",
-   "desc": "Crear combos, listarlos, venderlos de una vez, y sugerir combos nuevos con IA sobre el inventario real.",
-   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
-   "status": "activo"
-  },
-  {
-   "id": "tools/unidad_medida_tool.py",
-   "name": "unidad_medida_tool.py",
-   "group": "tool",
-   "desc": "Configurar presentaciones (docena/caja/par) y vender por ellas reusando el flujo normal de venta.",
-   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
-   "status": "activo"
-  },
-  {
-   "id": "tools/puntos_tool.py",
-   "name": "puntos_tool.py",
-   "group": "tool",
-   "desc": "Consultar saldo de puntos, canjear manualmente, listar clientes con saldo.",
-   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
-   "status": "activo"
-  },
-  {
-   "id": "tools/codigo_barras_tool.py",
-   "name": "codigo_barras_tool.py",
-   "group": "tool",
-   "desc": "Generar un código EAN-13 nuevo y las etiquetas en PDF (con QR).",
-   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
-   "status": "activo"
-  },
-  {
-   "id": "tools/tarifa_tool.py",
-   "name": "tarifa_tool.py",
-   "group": "tool",
-   "desc": "Catálogo de tarifas de mano de obra (agregar y listar).",
-   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
-   "status": "activo"
-  },
-  {
-   "id": "tools/reembolso_tool.py",
-   "name": "reembolso_tool.py",
-   "group": "tool",
-   "desc": "Iniciar reembolso/cambio de producto de una venta, consultar crédito de tienda de un cliente, buscar un reembolso por número.",
-   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
+   "id": "services/barcode_service.py",
+   "name": "barcode_service.py",
+   "group": "service",
+   "desc": "Genera el PDF de etiquetas de producto: código de barras (EAN-13 o Code128 según el formato) + un QR que apunta a la página pública del producto.",
+   "func": "Función/clase de servicio que una o varias tools llaman para hablar con el mundo exterior (APIs, PDFs, IA) o con la base de datos.",
    "status": "activo"
   },
   {
@@ -745,34 +577,18 @@ const DATA = {
    "status": "activo"
   },
   {
-   "id": "services/whatsapp.py",
-   "name": "whatsapp.py",
-   "group": "service",
-   "desc": "Toda la mensajería de WhatsApp Business API: notificación de orden, presupuesto, factura, asignación de técnico, aprobación/rechazo de cliente.",
-   "func": "Función/clase de servicio que una o varias tools llaman para hablar con el mundo exterior (APIs, PDFs, IA) o con la base de datos.",
-   "status": "activo"
-  },
-  {
-   "id": "services/social_media.py",
-   "name": "social_media.py",
-   "group": "service",
-   "desc": "Publicación en Facebook/Instagram (API de Meta).",
-   "func": "Función/clase de servicio que una o varias tools llaman para hablar con el mundo exterior (APIs, PDFs, IA) o con la base de datos.",
-   "status": "activo"
-  },
-  {
-   "id": "services/video_gen.py",
-   "name": "video_gen.py",
-   "group": "service",
-   "desc": "Generación de video con Veo 3 (Google) para contenido de redes.",
-   "func": "Función/clase de servicio que una o varias tools llaman para hablar con el mundo exterior (APIs, PDFs, IA) o con la base de datos.",
-   "status": "activo"
-  },
-  {
    "id": "services/mail_service.py",
    "name": "mail_service.py",
    "group": "service",
    "desc": "Envío de correo con Flask-Mail (recuperación de contraseña) + logging detallado de errores SMTP.",
+   "func": "Función/clase de servicio que una o varias tools llaman para hablar con el mundo exterior (APIs, PDFs, IA) o con la base de datos.",
+   "status": "activo"
+  },
+  {
+   "id": "services/ollama_service.py",
+   "name": "ollama_service.py",
+   "group": "service",
+   "desc": "El único punto de entrada a Ollama local (qwen2.5:7b, un solo modelo para todo): llamar_ollama/analizar_ollama/ollama_disponible. Nunca lanza excepción: devuelve None si Ollama no responde, o un MENSAJE_TIMEOUT si tardó demasiado (180s chat / 300s análisis).",
    "func": "Función/clase de servicio que una o varias tools llaman para hablar con el mundo exterior (APIs, PDFs, IA) o con la base de datos.",
    "status": "activo"
   },
@@ -793,6 +609,22 @@ const DATA = {
    "status": "activo"
   },
   {
+   "id": "services/skills_service.py",
+   "name": "skills_service.py",
+   "group": "service",
+   "desc": "Ejecuta un subprocess para chequear el estado de 'skills' externas.",
+   "func": "Función/clase de servicio que una o varias tools llaman para hablar con el mundo exterior (APIs, PDFs, IA) o con la base de datos.",
+   "status": "activo"
+  },
+  {
+   "id": "services/social_media.py",
+   "name": "social_media.py",
+   "group": "service",
+   "desc": "Publicación en Facebook/Instagram (API de Meta).",
+   "func": "Función/clase de servicio que una o varias tools llaman para hablar con el mundo exterior (APIs, PDFs, IA) o con la base de datos.",
+   "status": "activo"
+  },
+  {
    "id": "services/ticket.py",
    "name": "ticket.py",
    "group": "service",
@@ -801,27 +633,211 @@ const DATA = {
    "status": "activo"
   },
   {
-   "id": "services/barcode_service.py",
-   "name": "barcode_service.py",
+   "id": "services/video_gen.py",
+   "name": "video_gen.py",
    "group": "service",
-   "desc": "Genera el PDF de etiquetas de producto: código de barras (EAN-13 o Code128 según el formato) + un QR que apunta a la página pública del producto.",
+   "desc": "Generación de video con Veo 3 (Google) para contenido de redes.",
    "func": "Función/clase de servicio que una o varias tools llaman para hablar con el mundo exterior (APIs, PDFs, IA) o con la base de datos.",
    "status": "activo"
   },
   {
-   "id": "services/ollama_service.py",
-   "name": "ollama_service.py",
+   "id": "services/whatsapp.py",
+   "name": "whatsapp.py",
    "group": "service",
-   "desc": "El único punto de entrada a Ollama local (qwen2.5:7b, un solo modelo para todo): llamar_ollama/analizar_ollama/ollama_disponible. Nunca lanza excepción: devuelve None si Ollama no responde, o un MENSAJE_TIMEOUT si tardó demasiado (180s chat / 300s análisis).",
+   "desc": "Toda la mensajería de WhatsApp Business API: notificación de orden, presupuesto, factura, asignación de técnico, aprobación/rechazo de cliente.",
    "func": "Función/clase de servicio que una o varias tools llaman para hablar con el mundo exterior (APIs, PDFs, IA) o con la base de datos.",
    "status": "activo"
   },
   {
-   "id": "services/skills_service.py",
-   "name": "skills_service.py",
-   "group": "service",
-   "desc": "Ejecuta un subprocess para chequear el estado de 'skills' externas.",
-   "func": "Función/clase de servicio que una o varias tools llaman para hablar con el mundo exterior (APIs, PDFs, IA) o con la base de datos.",
+   "id": "tools/__init__.py",
+   "name": "tools/__init__.py",
+   "group": "tool",
+   "desc": "Carga automática de TODOS los módulos de tools/ usando pkgutil.iter_modules + importlib. A diferencia de core/detectors/, aquí basta con crear el archivo para que se registre solo.",
+   "func": "Importar cada archivo de tools/ una sola vez al arrancar la app.",
+   "status": "activo"
+  },
+  {
+   "id": "tools/caja_tool.py",
+   "name": "caja_tool.py",
+   "group": "tool",
+   "desc": "Solo 'abrir caja' por chat (arranca el flujo conversacional de caja) - el resto de Caja se opera desde el panel dedicado del dashboard.",
+   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
+   "status": "activo"
+  },
+  {
+   "id": "tools/cliente_tool.py",
+   "name": "cliente_tool.py",
+   "group": "tool",
+   "desc": "Clientes: alta (con selección de grupo), historial completo, resumen, grupos de cliente.",
+   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
+   "status": "activo"
+  },
+  {
+   "id": "tools/codigo_barras_tool.py",
+   "name": "codigo_barras_tool.py",
+   "group": "tool",
+   "desc": "Generar un código EAN-13 nuevo y las etiquetas en PDF (con QR).",
+   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
+   "status": "activo"
+  },
+  {
+   "id": "tools/combo_tool.py",
+   "name": "combo_tool.py",
+   "group": "tool",
+   "desc": "Crear combos, listarlos, venderlos de una vez, y sugerir combos nuevos con IA sobre el inventario real.",
+   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
+   "status": "activo"
+  },
+  {
+   "id": "tools/contabilidad_tool.py",
+   "name": "contabilidad_tool.py",
+   "group": "tool",
+   "desc": "Balance, IVA/ISR, margen, sugerencias de precios, declaración de IVA, flujo de caja proyectado.",
+   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
+   "status": "activo"
+  },
+  {
+   "id": "tools/contenido_tool.py",
+   "name": "contenido_tool.py",
+   "group": "tool",
+   "desc": "Contenido: posts, guiones, videos con Veo 3, publicación en redes.",
+   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
+   "status": "activo"
+  },
+  {
+   "id": "tools/cotizacion_tool.py",
+   "name": "cotizacion_tool.py",
+   "group": "tool",
+   "desc": "Genera cotizaciones (PDF + registro), consulta y cambia su estado.",
+   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
+   "status": "activo"
+  },
+  {
+   "id": "tools/cuenta_cobrar_tool.py",
+   "name": "cuenta_cobrar_tool.py",
+   "group": "tool",
+   "desc": "Crear deuda de cliente, registrar pagos (FIFO), consultar y listar cuentas por cobrar/vencidas.",
+   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
+   "status": "activo"
+  },
+  {
+   "id": "tools/cuenta_pagar_tool.py",
+   "name": "cuenta_pagar_tool.py",
+   "group": "tool",
+   "desc": "Espejo de cuenta_cobrar_tool pero con proveedores: crear deuda, pagar, consultar, listar.",
+   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
+   "status": "activo"
+  },
+  {
+   "id": "tools/descuento_tool.py",
+   "name": "descuento_tool.py",
+   "group": "tool",
+   "desc": "Crear, listar y eliminar descuentos (cliente/temporada/producto/monto).",
+   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
+   "status": "activo"
+  },
+  {
+   "id": "tools/evento_tool.py",
+   "name": "evento_tool.py",
+   "group": "tool",
+   "desc": "Recordatorios y pagos fijos (crear, fijar su monto, listar).",
+   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
+   "status": "activo"
+  },
+  {
+   "id": "tools/garantia_tool.py",
+   "name": "garantia_tool.py",
+   "group": "tool",
+   "desc": "Configurar días de garantía por producto, ver una garantía, listar por cliente, garantías por vencer.",
+   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
+   "status": "activo"
+  },
+  {
+   "id": "tools/inventory_tool.py",
+   "name": "inventory_tool.py",
+   "group": "tool",
+   "desc": "Inventario: crear/editar/eliminar producto, agregar/quitar stock, importar Excel/CSV, generar código de barras, resolver el escaneo directo en el chat.",
+   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
+   "status": "activo"
+  },
+  {
+   "id": "tools/proveedor_tool.py",
+   "name": "proveedor_tool.py",
+   "group": "tool",
+   "desc": "Proveedores: contactos, pedidos sugeridos, generar orden de compra.",
+   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
+   "status": "activo"
+  },
+  {
+   "id": "tools/puntos_tool.py",
+   "name": "puntos_tool.py",
+   "group": "tool",
+   "desc": "Consultar saldo de puntos, canjear manualmente, listar clientes con saldo.",
+   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
+   "status": "activo"
+  },
+  {
+   "id": "tools/reembolso_tool.py",
+   "name": "reembolso_tool.py",
+   "group": "tool",
+   "desc": "Iniciar reembolso/cambio de producto de una venta, consultar crédito de tienda de un cliente, buscar un reembolso por número.",
+   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
+   "status": "activo"
+  },
+  {
+   "id": "tools/reporte_tool.py",
+   "name": "reporte_tool.py",
+   "group": "tool",
+   "desc": "Reportes de ventas por período, patrones de venta, predicción de próxima compra de un cliente.",
+   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
+   "status": "activo"
+  },
+  {
+   "id": "tools/service_tool.py",
+   "name": "service_tool.py",
+   "group": "tool",
+   "desc": "Servicio Técnico: crear orden, cambiar estado (7 pasos), informes de revisión con presupuesto automático, fotos, garantía de reparación.",
+   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
+   "status": "activo"
+  },
+  {
+   "id": "tools/tarifa_tool.py",
+   "name": "tarifa_tool.py",
+   "group": "tool",
+   "desc": "Catálogo de tarifas de mano de obra (agregar y listar).",
+   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
+   "status": "activo"
+  },
+  {
+   "id": "tools/unidad_medida_tool.py",
+   "name": "unidad_medida_tool.py",
+   "group": "tool",
+   "desc": "Configurar presentaciones (docena/caja/par) y vender por ellas reusando el flujo normal de venta.",
+   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
+   "status": "activo"
+  },
+  {
+   "id": "tools/venta_tool.py",
+   "name": "venta_tool.py",
+   "group": "tool",
+   "desc": "Registrar una venta simple desde el chat (arranca el flujo conversacional de venta en core/nimbo.py).",
+   "func": "Función registrada en TOOLS{} que ActionEngine ejecuta cuando el intent coincide.",
+   "status": "activo"
+  },
+  {
+   "id": "static/tiktok-verification.html",
+   "name": "tiktok-verification.html",
+   "group": "template",
+   "desc": "Archivo de una sola línea con el texto literal 'tiktok-verification', usado para la verificación de dominio de la API de TikTok.",
+   "func": "Servido tal cual por /tiktok-verification.html en app.py.",
+   "status": "activo"
+  },
+  {
+   "id": "templates/forgot_password.html",
+   "name": "forgot_password.html",
+   "group": "template",
+   "desc": "Formulario para pedir el correo de recuperación de contraseña.",
+   "func": "render_template('forgot_password.html') desde /forgot-password.",
    "status": "activo"
   },
   {
@@ -841,27 +857,11 @@ const DATA = {
    "status": "activo"
   },
   {
-   "id": "templates/setup.html",
-   "name": "setup.html",
+   "id": "templates/pos.html",
+   "name": "pos.html",
    "group": "template",
-   "desc": "El wizard de onboarding de 7 pasos (y su modo demo /setup/demo, que reutiliza el mismo template con demo=True).",
-   "func": "render_template('setup.html') desde /setup/<paso> y /setup/demo/<paso>.",
-   "status": "activo"
-  },
-  {
-   "id": "templates/forgot_password.html",
-   "name": "forgot_password.html",
-   "group": "template",
-   "desc": "Formulario para pedir el correo de recuperación de contraseña.",
-   "func": "render_template('forgot_password.html') desde /forgot-password.",
-   "status": "activo"
-  },
-  {
-   "id": "templates/reset_password.html",
-   "name": "reset_password.html",
-   "group": "template",
-   "desc": "Formulario para escribir la nueva contraseña usando el token recibido por correo.",
-   "func": "render_template('reset_password.html') desde /reset-password?token=.",
+   "desc": "Pantalla de punto de venta standalone (tema oscuro), separada del panel 'Caja' del dashboard principal - un prototipo de checkout simplificado, accesible con sesión iniciada.",
+   "func": "render_template('pos.html') desde /pos (@login_required).",
    "status": "activo"
   },
   {
@@ -873,19 +873,19 @@ const DATA = {
    "status": "activo"
   },
   {
-   "id": "templates/pos.html",
-   "name": "pos.html",
+   "id": "templates/reset_password.html",
+   "name": "reset_password.html",
    "group": "template",
-   "desc": "Pantalla de punto de venta standalone (tema oscuro), separada del panel 'Caja' del dashboard principal - un prototipo de checkout simplificado, accesible con sesión iniciada.",
-   "func": "render_template('pos.html') desde /pos (@login_required).",
+   "desc": "Formulario para escribir la nueva contraseña usando el token recibido por correo.",
+   "func": "render_template('reset_password.html') desde /reset-password?token=.",
    "status": "activo"
   },
   {
-   "id": "static/tiktok-verification.html",
-   "name": "tiktok-verification.html",
+   "id": "templates/setup.html",
+   "name": "setup.html",
    "group": "template",
-   "desc": "Archivo de una sola línea con el texto literal 'tiktok-verification', usado para la verificación de dominio de la API de TikTok (Pendiente #2 del proyecto, en revisión).",
-   "func": "Servido tal cual por /tiktok-verification.html en app.py.",
+   "desc": "El wizard de onboarding de 7 pasos (y su modo demo /setup/demo, que reutiliza el mismo template con demo=True).",
+   "func": "render_template('setup.html') desde /setup/<paso> y /setup/demo/<paso>.",
    "status": "activo"
   }
  ],
@@ -1308,6 +1308,10 @@ const DATA = {
   },
   {
    "source": "app.py",
+   "target": "templates/forgot_password.html"
+  },
+  {
+   "source": "app.py",
    "target": "templates/index.html"
   },
   {
@@ -1316,15 +1320,7 @@ const DATA = {
   },
   {
    "source": "app.py",
-   "target": "templates/setup.html"
-  },
-  {
-   "source": "app.py",
-   "target": "templates/forgot_password.html"
-  },
-  {
-   "source": "app.py",
-   "target": "templates/reset_password.html"
+   "target": "templates/pos.html"
   },
   {
    "source": "app.py",
@@ -1332,7 +1328,11 @@ const DATA = {
   },
   {
    "source": "app.py",
-   "target": "templates/pos.html"
+   "target": "templates/reset_password.html"
+  },
+  {
+   "source": "app.py",
+   "target": "templates/setup.html"
   },
   {
    "source": "app.py",

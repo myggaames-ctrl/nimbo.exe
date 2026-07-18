@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mapa de Arquitectura — Nimbo AI</title>
+<style>
+  :root{
+    --bg: #0b1120;
+    --bg-panel: #111a2e;
+    --bg-panel2: #16213a;
+    --border: #24314f;
+    --text: #e6ebf5;
+    --text-muted: #8ea0c2;
+    --text-dim: #5b6d8f;
+    --accent: #5b8cff;
+    --link: #33456e;
+    --link-hi: #7fa8ff;
+  }
+  *{ box-sizing: border-box; }
+  html,body{
+    margin:0; padding:0; height:100%; width:100%; overflow:hidden;
+    background: radial-gradient(ellipse at 50% 0%, #101c36 0%, var(--bg) 55%);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  #app{ position:relative; height:100vh; width:100vw; }
+
+  /* ---------- header ---------- */
+  #header{
+    position:absolute; top:0; left:0; right:0; z-index:20;
+    display:flex; align-items:flex-start; justify-content:space-between;
+    padding: 16px 20px 10px 20px;
+    pointer-events:none;
+  }
+  #header .titles{ pointer-events:auto; }
+  #header h1{
+    margin:0; font-size:19px; font-weight:700; letter-spacing:.2px;
+    display:flex; align-items:center; gap:10px;
+  }
+  #header h1 .dot{
+    width:10px; height:10px; border-radius:50%;
+    background: linear-gradient(135deg, #5b8cff, #22c55e);
+    box-shadow: 0 0 12px rgba(91,140,255,.8);
+  }
+  #header p{ margin:4px 0 0 0; font-size:12.5px; color:var(--text-muted); max-width:560px; line-height:1.5; }
+
+  #toolbar{
+    pointer-events:auto;
+    display:flex; flex-direction:column; align-items:flex-end; gap:8px;
+  }
+  #search-wrap{ position:relative; }
+  #search{
+    width:230px; background: var(--bg-panel); border:1px solid var(--border);
+    color: var(--text); border-radius:8px; padding:8px 12px 8px 32px; font-size:13px;
+    outline:none; transition: border-color .15s;
+  }
+  #search:focus{ border-color: var(--accent); }
+  #search-wrap::before{
+    content:"🔎"; position:absolute; left:10px; top:50%; transform:translateY(-50%);
+    font-size:12px; opacity:.6; pointer-events:none;
+  }
+  .btn{
+    background: var(--bg-panel); border:1px solid var(--border); color:var(--text-muted);
+    border-radius:8px; padding:7px 12px; font-size:12px; cursor:pointer; transition:.15s;
+    white-space:nowrap;
+  }
+  .btn:hover{ border-color:var(--accent); color:var(--text); }
+  .btn.active{ border-color: var(--accent); color: var(--text); background:#16264a; }
+  #toolbar-row{ display:flex; gap:8px; }
+
+  /* ---------- legend / filter panel ---------- */
+  #legend{
+    position:absolute; left:20px; bottom:20px; z-index:20;
+    background: rgba(17,26,46,.92); backdrop-filter: blur(6px);
+    border:1px solid var(--border); border-radius:12px;
+    padding:12px 14px; width:230px;
+    font-size:12px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.35);
+  }
+  #legend h3{ margin:0 0 8px 0; font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--text-dim); font-weight:700;}
+  .legend-item{
+    display:flex; align-items:center; gap:8px; padding:4px 4px; border-radius:6px;
+    cursor:pointer; user-select:none; transition:.12s;
+  }
+  .legend-item:hover{ background: rgba(255,255,255,.05); }
+  .legend-item.off{ opacity:.35; }
+  .legend-swatch{ width:11px; height:11px; border-radius:50%; flex:0 0 auto; }
+  .legend-label{ flex:1; color:var(--text); }
+  .legend-count{ color:var(--text-dim); font-size:10.5px; }
+  #legend hr{ border:none; border-top:1px solid var(--border); margin:8px 0; }
+  .status-row{ display:flex; align-items:center; gap:8px; padding:3px 4px; color:var(--text-muted); font-size:11px;}
+  .status-swatch{ width:20px; height:0; border-top:2px solid var(--text-muted); flex:0 0 auto;}
+  .status-swatch.dashed{ border-top-style:dashed; }
+  .status-swatch.dotted{ border-top-style:dotted; opacity:.5;}
+
+  /* ---------- info / help toggle bottom right ---------- */
+  #help-toggle{
+    position:absolute; right:20px; bottom:20px; z-index:20;
+  }
+
+  #help-panel{
+    position:absolute; right:20px; bottom:64px; z-index:21;
+    width:340px; max-height:60vh; overflow-y:auto;
+    background: rgba(17,26,46,.97); border:1px solid var(--border); border-radius:12px;
+    padding:16px; font-size:12.5px; line-height:1.6; color:var(--text-muted);
+    box-shadow: 0 10px 30px rgba(0,0,0,.4);
+    display:none;
+  }
+  #help-panel.open{ display:block; }
+  #help-panel h3{ color:var(--text); margin:0 0 8px 0; font-size:13.5px; }
+  #help-panel h4{ color:var(--text); margin:12px 0 4px 0; font-size:12px; }
+  #help-panel code{ background:#0d1526; padding:1px 5px; border-radius:4px; color:#9fd0ff; font-size:11px;}
+  #help-panel ol, #help-panel ul{ margin:4px 0; padding-left:18px; }
+
+  /* ---------- side detail panel ---------- */
+  #detail{
+    position:absolute; top:0; right:0; bottom:0; z-index:25;
+    width:360px; max-width:88vw;
+    background: rgba(15,22,40,.98); border-left:1px solid var(--border);
+    box-shadow: -12px 0 30px rgba(0,0,0,.35);
+    transform: translateX(100%); transition: transform .28s ease;
+    display:flex; flex-direction:column;
+  }
+  #detail.open{ transform: translateX(0); }
+  #detail-header{
+    padding:18px 18px 12px 18px; border-bottom:1px solid var(--border);
+    display:flex; align-items:flex-start; gap:10px;
+  }
+  #detail-swatch{ width:14px; height:14px; border-radius:50%; margin-top:5px; flex:0 0 auto; }
+  #detail-title{ flex:1; min-width:0; }
+  #detail-name{ font-size:16px; font-weight:700; word-break:break-word; }
+  #detail-path{ font-size:11px; color:var(--text-dim); margin-top:2px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break:break-all;}
+  #detail-close{
+    background:none; border:none; color:var(--text-dim); font-size:20px; cursor:pointer; line-height:1;
+    padding:2px 6px;
+  }
+  #detail-close:hover{ color:var(--text); }
+  #detail-body{ padding:16px 18px; overflow-y:auto; flex:1; }
+  #detail-body h4{ margin:14px 0 6px 0; font-size:10.5px; text-transform:uppercase; letter-spacing:.08em; color:var(--text-dim); }
+  #detail-body h4:first-child{ margin-top:0; }
+  #detail-body p{ margin:0; font-size:13px; color:var(--text); line-height:1.6; }
+  .badge{
+    display:inline-block; font-size:10.5px; font-weight:700; padding:3px 9px; border-radius:20px;
+    margin-top:8px; letter-spacing:.02em;
+  }
+  .badge.activo{ background:#123321; color:#4ade80; border:1px solid #1f5c37;}
+  .badge.huerfano{ background:#3a2a10; color:#facc15; border:1px solid #6b4d16;}
+  .badge.vacio{ background:#32202f; color:#f472b6; border:1px solid #5c2e46;}
+  #detail-conns{ margin-top:6px; }
+  .conn-item{
+    display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:7px;
+    cursor:pointer; font-size:12px; color:var(--text-muted); transition:.12s;
+  }
+  .conn-item:hover{ background: rgba(255,255,255,.06); color:var(--text); }
+  .conn-swatch{ width:8px; height:8px; border-radius:50%; flex:0 0 auto; }
+  .conn-dir{ font-size:10px; color:var(--text-dim); width:34px; flex:0 0 auto; }
+
+  /* ---------- graph ---------- */
+  svg{ display:block; width:100%; height:100%; cursor: grab; }
+  svg:active{ cursor: grabbing; }
+  .link{ stroke: var(--link); stroke-width:1; fill:none; }
+  .link.hi{ stroke: var(--link-hi); stroke-width:1.6; }
+  .link.dim{ opacity:.05; }
+  .node circle{ stroke: rgba(0,0,0,.35); stroke-width:1.2; cursor:pointer; }
+  .node.huerfano circle{ stroke-dasharray:3,2; stroke:#facc15; stroke-width:1.4; }
+  .node.vacio circle{ opacity:.45; stroke-dasharray:1,2; }
+  .node.dim{ opacity:.08; }
+  .node.selected circle{ stroke:#fff; stroke-width:2.5; }
+  .node text{
+    fill: var(--text-muted); font-size:9px; pointer-events:none;
+    paint-order: stroke; stroke:#0b1120; stroke-width:3px;
+  }
+  .node.dim text{ opacity:.08; }
+  .node.core-label text, .node.entrada-label text{ fill:var(--text); font-size:11px; font-weight:600; }
+
+  #tooltip{
+    position:absolute; z-index:30; pointer-events:none;
+    background:#0d1526; border:1px solid var(--border); border-radius:8px;
+    padding:7px 10px; font-size:11.5px; color:var(--text); max-width:260px;
+    box-shadow:0 6px 18px rgba(0,0,0,.4); display:none; line-height:1.4;
+  }
+  #tooltip b{ color:#fff; }
+  #tooltip .cat{ color:var(--text-dim); font-size:10px; }
+
+  #zoom-controls{
+    position:absolute; z-index:20; right:20px; top: 110px;
+    display:flex; flex-direction:column; gap:6px;
+  }
+  .zbtn{
+    width:30px; height:30px; border-radius:8px; background:var(--bg-panel);
+    border:1px solid var(--border); color:var(--text-muted); cursor:pointer;
+    font-size:16px; display:flex; align-items:center; justify-content:center;
+  }
+  .zbtn:hover{ color:var(--text); border-color:var(--accent); }
+
+  #empty-state{
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+    color:var(--text-dim); font-size:13px; display:none; z-index:5;
+  }
+
+  ::-webkit-scrollbar{ width:8px; height:8px; }
+  ::-webkit-scrollbar-thumb{ background:#243252; border-radius:4px; }
+  ::-webkit-scrollbar-track{ background:transparent; }
+</style>
+</head>
+<body>
+<div id="app">
+  <svg id="graph">
+    <defs></defs>
+    <g id="zoom-layer">
+      <g id="links-layer"></g>
+      <g id="nodes-layer"></g>
+    </g>
+  </svg>
+
+  <div id="header">
+    <div class="titles">
+      <h1><span class="dot"></span>Mapa de Arquitectura — Nimbo AI</h1>
+      <p>Cómo está construido el sistema de Mi Cocina Electrodomésticos: cada punto es un archivo real
+      del proyecto y cada flecha es un <code>import</code> real en el código. Haz clic en cualquier
+      punto para ver qué hace.</p>
+    </div>
+    <div id="toolbar">
+      <div id="search-wrap"><input id="search" placeholder="Buscar archivo o función…" autocomplete="off"></div>
+      <div id="toolbar-row">
+        <button class="btn" id="btn-reset">↺ Reiniciar vista</button>
+        <button class="btn" id="btn-cluster">◎ Agrupar por tipo</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="zoom-controls">
+    <div class="zbtn" id="zoom-in">+</div>
+    <div class="zbtn" id="zoom-out">−</div>
+  </div>
+
+  <div id="legend"></div>
+
+  <button class="btn" id="help-toggle">💡 Cómo leer este mapa</button>
+  <div id="help-panel"></div>
+
+  <div id="detail">
+    <div id="detail-header">
+      <div id="detail-swatch"></div>
+      <div id="detail-title">
+        <div id="detail-name"></div>
+        <div id="detail-path"></div>
+      </div>
+      <button id="detail-close">✕</button>
+    </div>
+    <div id="detail-body"></div>
+  </div>
+
+  <div id="tooltip"></div>
+  <div id="empty-state">Ningún archivo coincide con la búsqueda / filtros.</div>
+</div>
+
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script>
+const DATA = __GRAPH_DATA__;
+
+const COLORS = DATA.colors;
+const CATLABEL = DATA.categoryLabel;
+const CATORDER = ["entrada","core","detector","tool","service","database","template","bridge"];
+
+// ---------- build lookup + degree ----------
+const nodeById = {};
+DATA.nodes.forEach(n => { n.degree = 0; nodeById[n.id] = n; });
+DATA.edges.forEach(e => {
+  nodeById[e.source].degree++;
+  nodeById[e.target].degree++;
+});
+
+function radiusFor(n){
+  if(n.group === "entrada") return 20;
+  if(n.group === "database") return 17;
+  const base = 6.5;
+  const extra = Math.min(Math.sqrt(n.degree) * 2.6, 11);
+  return base + extra;
+}
+DATA.nodes.forEach(n => n.r = radiusFor(n));
+
+// ---------- cluster centers (radial layout by category) ----------
+const W = window.innerWidth, H = window.innerHeight;
+const cx = W/2, cy = H/2;
+const activeCats = CATORDER.filter(c => DATA.nodes.some(n=>n.group===c) && c!=="entrada");
+const clusterCenters = {};
+clusterCenters["entrada"] = {x: cx, y: cy};
+const ringR = Math.min(W,H) * 0.34;
+activeCats.forEach((c,i)=>{
+  const angle = (i / activeCats.length) * 2*Math.PI - Math.PI/2;
+  clusterCenters[c] = { x: cx + Math.cos(angle)*ringR, y: cy + Math.sin(angle)*ringR };
+});
+
+DATA.nodes.forEach(n=>{
+  const c = clusterCenters[n.group] || {x:cx,y:cy};
+  n.x = c.x + (Math.random()-.5)*60;
+  n.y = c.y + (Math.random()-.5)*60;
+});
+
+// ---------- svg setup ----------
+const svg = d3.select("#graph");
+svg.attr("viewBox", [0,0,W,H]);
+const zoomLayer = svg.select("#zoom-layer");
+const linksLayer = svg.select("#links-layer");
+const nodesLayer = svg.select("#nodes-layer");
+
+const zoom = d3.zoom().scaleExtent([0.15, 6]).on("zoom", (ev)=>{
+  zoomLayer.attr("transform", ev.transform);
+});
+svg.call(zoom);
+
+document.getElementById("zoom-in").onclick = ()=> svg.transition().duration(200).call(zoom.scaleBy, 1.4);
+document.getElementById("zoom-out").onclick = ()=> svg.transition().duration(200).call(zoom.scaleBy, 1/1.4);
+document.getElementById("btn-reset").onclick = ()=>{
+  svg.transition().duration(400).call(zoom.transform, d3.zoomIdentity);
+};
+
+// ---------- forces ----------
+let clustered = true;
+const simulation = d3.forceSimulation(DATA.nodes)
+  .force("link", d3.forceLink(DATA.edges).id(d=>d.id).distance(46).strength(0.15))
+  .force("charge", d3.forceManyBody().strength(-90))
+  .force("collide", d3.forceCollide().radius(d=>d.r + 5).iterations(2))
+  .force("x", d3.forceX(d => (clusterCenters[d.group]||{x:cx}).x).strength(0.10))
+  .force("y", d3.forceY(d => (clusterCenters[d.group]||{y:cy}).y).strength(0.10))
+  .alpha(1).alphaDecay(0.028);
+
+document.getElementById("btn-cluster").onclick = function(){
+  clustered = !clustered;
+  this.classList.toggle("active", clustered);
+  simulation.force("x", d3.forceX(d => clustered ? (clusterCenters[d.group]||{x:cx}).x : cx).strength(clustered?0.10:0.05));
+  simulation.force("y", d3.forceY(d => clustered ? (clusterCenters[d.group]||{y:cy}).y : cy).strength(clustered?0.10:0.05));
+  simulation.alpha(0.8).restart();
+};
+document.getElementById("btn-cluster").classList.add("active");
+
+// ---------- arrow marker per color ----------
+const defs = svg.select("defs");
+CATORDER.forEach(cat=>{
+  defs.append("marker")
+    .attr("id","arrow-"+cat)
+    .attr("viewBox","0 -4 8 8")
+    .attr("refX", 10).attr("refY",0)
+    .attr("markerWidth",6).attr("markerHeight",6)
+    .attr("orient","auto")
+    .append("path")
+      .attr("d","M0,-4L8,0L0,4")
+      .attr("fill", COLORS[cat]);
+});
+
+// ---------- links ----------
+const link = linksLayer.selectAll("line")
+  .data(DATA.edges)
+  .join("line")
+    .attr("class","link")
+    .attr("marker-end", d => `url(#arrow-${nodeById[d.source.id||d.source].group})`);
+
+// ---------- nodes ----------
+const node = nodesLayer.selectAll("g.node")
+  .data(DATA.nodes)
+  .join("g")
+    .attr("class", d => `node ${d.status}`)
+    .call(d3.drag()
+      .on("start", (ev,d)=>{ if(!ev.active) simulation.alphaTarget(0.25).restart(); d.fx=d.x; d.fy=d.y; })
+      .on("drag", (ev,d)=>{ d.fx=ev.x; d.fy=ev.y; })
+      .on("end", (ev,d)=>{ if(!ev.active) simulation.alphaTarget(0); d.fx=null; d.fy=null; })
+    )
+    .on("click", (ev,d)=>{ ev.stopPropagation(); selectNode(d); })
+    .on("mouseover", (ev,d)=> showTooltip(ev,d))
+    .on("mousemove", (ev)=> moveTooltip(ev))
+    .on("mouseout", hideTooltip);
+
+node.append("circle")
+  .attr("r", d=>d.r)
+  .attr("fill", d=>COLORS[d.group]);
+
+node.append("text")
+  .attr("x", d=>d.r+4)
+  .attr("y", 3)
+  .text(d=> d.name.length>26 ? d.name.slice(0,24)+"…" : d.name);
+
+node.classed("core-label", d=> d.group==="core" || d.group==="entrada");
+
+svg.on("click", ()=> { closeDetail(); clearHighlight(); });
+
+simulation.on("tick", ()=>{
+  link
+    .attr("x1", d=>d.source.x).attr("y1", d=>d.source.y)
+    .attr("x2", d=>d.target.x).attr("y2", d=>d.target.y);
+  node.attr("transform", d=>`translate(${d.x},${d.y})`);
+});
+
+// ---------- tooltip ----------
+const tooltip = document.getElementById("tooltip");
+function showTooltip(ev,d){
+  tooltip.style.display = "block";
+  tooltip.innerHTML = `<div class="cat">${CATLABEL[d.group]}${d.status!=="activo" ? " · "+(d.status==="huerfano"?"huérfano":"vacío") : ""}</div><b>${d.name}</b>`;
+  moveTooltip(ev);
+}
+function moveTooltip(ev){
+  tooltip.style.left = (ev.clientX+16)+"px";
+  tooltip.style.top = (ev.clientY+12)+"px";
+}
+function hideTooltip(){ tooltip.style.display="none"; }
+
+// ---------- selection / highlight ----------
+let selected = null;
+
+function neighborsOf(id){
+  const s = new Set([id]);
+  DATA.edges.forEach(e=>{
+    const a = e.source.id||e.source, b = e.target.id||e.target;
+    if(a===id) s.add(b);
+    if(b===id) s.add(a);
+  });
+  return s;
+}
+
+function clearHighlight(){
+  node.classed("dim", false).classed("selected", false);
+  link.classed("dim", false).classed("hi", false);
+}
+
+function highlight(id){
+  const neigh = neighborsOf(id);
+  node.classed("dim", d=> !neigh.has(d.id));
+  node.classed("selected", d=> d.id===id);
+  link.classed("dim", d=>{
+    const a=d.source.id||d.source, b=d.target.id||d.target;
+    return !(a===id || b===id);
+  });
+  link.classed("hi", d=>{
+    const a=d.source.id||d.source, b=d.target.id||d.target;
+    return (a===id || b===id);
+  });
+}
+
+function selectNode(d){
+  selected = d.id;
+  highlight(d.id);
+  openDetail(d);
+}
+
+// ---------- detail panel ----------
+const detailEl = document.getElementById("detail");
+document.getElementById("detail-close").onclick = closeDetail;
+function closeDetail(){ detailEl.classList.remove("open"); }
+
+function openDetail(d){
+  detailEl.classList.add("open");
+  document.getElementById("detail-swatch").style.background = COLORS[d.group];
+  document.getElementById("detail-name").textContent = d.name;
+  document.getElementById("detail-path").textContent = d.id;
+
+  const statusBadge = d.status==="activo"
+    ? `<span class="badge activo">✓ activo en el pipeline</span>`
+    : d.status==="huerfano"
+      ? `<span class="badge huerfano">⚠ código huérfano (no conectado)</span>`
+      : `<span class="badge vacio">◌ archivo vacío / stub</span>`;
+
+  const outgoing = DATA.edges.filter(e=>(e.source.id||e.source)===d.id).map(e=>({id:e.target.id||e.target, dir:"usa"}));
+  const incoming = DATA.edges.filter(e=>(e.target.id||e.target)===d.id).map(e=>({id:e.source.id||e.source, dir:"usado por"}));
+  const conns = [...outgoing, ...incoming];
+
+  let connsHtml = "";
+  if(conns.length){
+    connsHtml = conns.map(c=>{
+      const n = nodeById[c.id];
+      return `<div class="conn-item" data-id="${c.id}">
+        <span class="conn-dir">${c.dir}</span>
+        <span class="conn-swatch" style="background:${COLORS[n.group]}"></span>
+        <span>${n.name}</span>
+      </div>`;
+    }).join("");
+  } else {
+    connsHtml = `<p style="color:var(--text-dim); font-size:12px;">Sin conexiones registradas en el análisis de imports.</p>`;
+  }
+
+  document.getElementById("detail-body").innerHTML = `
+    <h4>Categoría</h4>
+    <p>${CATLABEL[d.group]}</p>
+    ${statusBadge}
+    <h4>Qué hace</h4>
+    <p>${d.desc}</p>
+    <h4>Función principal</h4>
+    <p>${d.func}</p>
+    <h4>Conexiones (${conns.length})</h4>
+    <div id="detail-conns">${connsHtml}</div>
+  `;
+
+  document.querySelectorAll(".conn-item").forEach(el=>{
+    el.onclick = ()=>{
+      const target = nodeById[el.dataset.id];
+      selectNode(target);
+      centerOn(target);
+    };
+  });
+}
+
+function centerOn(d){
+  const t = d3.zoomTransform(svg.node());
+  const scale = Math.max(t.k, 1.2);
+  const tx = W/2 - d.x*scale, ty = H/2 - d.y*scale;
+  svg.transition().duration(500).call(zoom.transform, d3.zoomIdentity.translate(tx,ty).scale(scale));
+}
+
+// ---------- legend / category filters ----------
+const activeFilter = new Set(CATORDER);
+const legendEl = document.getElementById("legend");
+let legendHtml = `<h3>Tipos de archivo</h3>`;
+CATORDER.forEach(cat=>{
+  const count = DATA.nodes.filter(n=>n.group===cat).length;
+  if(!count) return;
+  legendHtml += `<div class="legend-item" data-cat="${cat}">
+    <span class="legend-swatch" style="background:${COLORS[cat]}"></span>
+    <span class="legend-label">${CATLABEL[cat]}</span>
+    <span class="legend-count">${count}</span>
+  </div>`;
+});
+legendHtml += `<hr>
+  <h3>Estado del código</h3>
+  <div class="status-row"><span class="status-swatch"></span> Activo, conectado al chat</div>
+  <div class="status-row"><span class="status-swatch dashed"></span> Huérfano (existe, nadie lo llama)</div>
+  <div class="status-row"><span class="status-swatch dotted"></span> Vacío / sin implementar</div>`;
+legendEl.innerHTML = legendHtml;
+
+legendEl.querySelectorAll(".legend-item").forEach(el=>{
+  el.onclick = ()=>{
+    const cat = el.dataset.cat;
+    if(activeFilter.has(cat)) activeFilter.delete(cat); else activeFilter.add(cat);
+    el.classList.toggle("off", !activeFilter.has(cat));
+    applyFilters();
+  };
+});
+
+// ---------- search ----------
+const searchEl = document.getElementById("search");
+searchEl.addEventListener("input", applyFilters);
+
+function applyFilters(){
+  const q = searchEl.value.trim().toLowerCase();
+  let anyVisible = false;
+  node.style("display", d=>{
+    const catOk = activeFilter.has(d.group);
+    const searchOk = !q || d.name.toLowerCase().includes(q) || d.id.toLowerCase().includes(q) || d.desc.toLowerCase().includes(q);
+    const show = catOk && searchOk;
+    if(show) anyVisible = true;
+    return show ? null : "none";
+  });
+  link.style("display", d=>{
+    const s = nodeById[d.source.id||d.source], t = nodeById[d.target.id||d.target];
+    const catOk = activeFilter.has(s.group) && activeFilter.has(t.group);
+    const searchOk = !q || (
+      s.name.toLowerCase().includes(q) || t.name.toLowerCase().includes(q)
+    );
+    return (catOk && (!q || searchOk)) ? null : "none";
+  });
+  document.getElementById("empty-state").style.display = anyVisible ? "none" : "block";
+
+  if(q){
+    node.classed("dim", d=> !(d.name.toLowerCase().includes(q) || d.id.toLowerCase().includes(q) || d.desc.toLowerCase().includes(q)));
+  } else if(!selected){
+    node.classed("dim", false);
+  }
+}
+
+// ---------- help panel ----------
+const helpToggle = document.getElementById("help-toggle");
+const helpPanel = document.getElementById("help-panel");
+helpToggle.onclick = ()=>{
+  helpPanel.classList.toggle("open");
+  helpToggle.classList.toggle("active");
+};
+helpPanel.innerHTML = `
+  <h3>¿Cómo se lee este mapa?</h3>
+  <p>Cada <b>círculo</b> es un archivo real del proyecto. Cada <b>flecha</b> significa
+  "este archivo importa código de aquel otro" — se extrajo automáticamente leyendo los
+  <code>import</code> de cada archivo .py, no está dibujado a mano.</p>
+  <p>El <b>tamaño</b> del círculo depende de cuántas conexiones tiene: un archivo muy
+  conectado (como <code>aronium.py</code>, la base de datos) es más grande porque casi
+  todo el sistema depende de él.</p>
+
+  <h4>El recorrido de un mensaje de chat</h4>
+  <ol>
+    <li>El usuario escribe en el chat → <code>app.py</code></li>
+    <li><code>core/nimbo.py</code> recibe el mensaje y arranca el pipeline</li>
+    <li><code>core/action_engine.py</code> revisa el rol del usuario (admin/empleado/técnico)</li>
+    <li><code>core/intent_detector.py</code> prueba cada <b>detector</b> (verde) hasta que
+    uno reconoce el mensaje</li>
+    <li>El detector le dice a Nimbo qué <b>herramienta</b> (naranja) ejecutar</li>
+    <li>La herramienta llama a un <b>servicio</b> (morado) y/o a la <b>base de datos</b> (azul)</li>
+    <li>La respuesta regresa al chat</li>
+  </ol>
+  <p>Si nada matchea, Nimbo le pregunta a Ollama (IA local) qué quiso decir el usuario,
+  y si tampoco entiende, Ollama responde directamente en lenguaje natural.</p>
+
+  <h4>Círculos con borde punteado amarillo</h4>
+  <p>Son código <b>huérfano</b>: existe, está bien escrito, incluso se registra
+  automáticamente al arrancar el servidor — pero ningún detector activo lo conecta con el
+  chat, así que un usuario real nunca lo puede disparar. Es un hallazgo real del análisis
+  de código, útil para saber qué se puede limpiar o terminar de conectar.</p>
+
+  <h4>Círculos apagados / semitransparentes</h4>
+  <p>Son archivos completamente <b>vacíos</b> (0 líneas) — probablemente el inicio de una
+  funcionalidad que todavía no se escribió.</p>
+
+  <h4>Controles</h4>
+  <ul>
+    <li><b>Arrastra</b> un círculo para moverlo</li>
+    <li><b>Rueda del mouse</b> o los botones +/− para hacer zoom</li>
+    <li><b>Clic</b> en un círculo para ver su descripción y sus conexiones</li>
+    <li>La leyenda (abajo a la izquierda) también filtra: haz clic en un tipo para
+    ocultarlo/mostrarlo</li>
+  </ul>
+`;
+</script>
+</body>
+</html>
