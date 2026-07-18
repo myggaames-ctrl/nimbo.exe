@@ -213,7 +213,14 @@
       "Bash(git fetch *)",
       "Bash(git add *)",
       "Bash(git commit *)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(sqlite3 nimbo_master.db ' *)",
+      "Bash(sqlite3 -header -column nimbo_master.db \"SELECT * FROM Empresa;\")",
+      "Bash(sqlite3 nimbo_master.db \".tables\")",
+      "Bash(sqlite3 nimbo_master.db \".schema Empresa\")",
+      "Bash(sqlite3 nimbo_master.db \"DELETE FROM Empresa WHERE Slug = 'empresa-temporal-de-prueba';\")",
+      "Bash(rsync -a --exclude=.git --exclude=__pycache__ --exclude=static/videos/* --exclude=static/fotos/* --exclude=static/fotos_servicio/* --exclude=.env ./ /tmp/claude-1000/-home-victor-nimbo-exe/25133093-50db-4de4-b745-577801ba104d/scratchpad/nimbo_test_multitenant/)",
+      "Bash(sqlite3 *)"
     ]
   }
 }

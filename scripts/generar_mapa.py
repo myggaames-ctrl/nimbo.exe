@@ -148,6 +148,17 @@ curar("core/detectors/__init__.py", "detectors/__init__.py", "core",
       "se eliminaron en la limpieza de código huérfano, ver BUGS_Y_FIXES.md).",
       "Ninguna, solo marca el paquete.")
 
+curar("core/empresa.py", "empresa.py", "core",
+      "Multi-tenant (2026-07-18): el directorio de empresas. Maneja nimbo_master.db (tabla "
+      "Empresa: Nombre/Slug/DbPath), separado de los nimbo.db de cada empresa - cada una vive "
+      "en data/empresas/<slug>/nimbo.db, aislada del resto. Genera el slug automáticamente a "
+      "partir del nombre (sin tildes, espacios a guiones) y, al crear una empresa, llama a las "
+      "22 funciones init_* de database/nimbo_db.py más las de core/auth.py y "
+      "core/configuracion.py contra el nimbo.db nuevo, para dejarlo con todas las tablas listas "
+      "pero vacías.",
+      "crear_empresa(nombre) -> crea la carpeta, la fila en el maestro, y todas las tablas; "
+      "get_db_path(slug) -> ruta absoluta al nimbo.db de esa empresa.")
+
 # ---------- bridge ----------
 curar("openclaw_bridge.py", "openclaw_bridge.py", "bridge",
       "Puente HTTP hacia OpenClaw, un agente que corre en la PC (con Gemini) en el puerto "
@@ -343,6 +354,19 @@ TEMPLATES_DESC = {
         "dashboard principal - un prototipo de checkout simplificado, accesible con sesión "
         "iniciada.",
         "render_template('pos.html') desde /pos (@login_required)."),
+    "select_empresa.html": (
+        "Multi-tenant (2026-07-18): pantalla para elegir con qué empresa trabajar - lista las "
+        "empresas activas (listar_empresas()) con un botón 'Entrar' por fila, más un botón para "
+        "ir a registrar una empresa nueva. Es la primera pantalla que ve cualquiera que visite "
+        "Nimbo sin una empresa ya elegida en su sesión.",
+        "render_template('select_empresa.html') desde /select-empresa (GET/POST)."),
+    "register_empresa.html": (
+        "Multi-tenant (2026-07-18): wizard de 2 pasos para registrar una empresa nueva (nombre "
+        "con vista previa del slug generado en vivo por JavaScript, luego los datos del primer "
+        "admin) - termina en un fetch() POST a /api/empresa/crear. Deliberadamente más simple "
+        "que el wizard viejo de 7 pasos (setup.html): no pide IVA/horario/fondo de caja, solo lo "
+        "mínimo para poder loguearse.",
+        "render_template('register_empresa.html') desde /register-empresa."),
 }
 curar("static/tiktok-verification.html", "tiktok-verification.html", "template",
       "Archivo de una sola línea con el texto literal 'tiktok-verification', usado para la "

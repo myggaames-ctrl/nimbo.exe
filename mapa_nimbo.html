@@ -513,6 +513,14 @@ const DATA = {
    "status": "activo"
   },
   {
+   "id": "core/empresa.py",
+   "name": "empresa.py",
+   "group": "core",
+   "desc": "Multi-tenant (2026-07-18): el directorio de empresas. Maneja nimbo_master.db (tabla Empresa: Nombre/Slug/DbPath), separado de los nimbo.db de cada empresa - cada una vive en data/empresas/<slug>/nimbo.db, aislada del resto. Genera el slug automáticamente a partir del nombre (sin tildes, espacios a guiones) y, al crear una empresa, llama a las 22 funciones init_* de database/nimbo_db.py más las de core/auth.py y core/configuracion.py contra el nimbo.db nuevo, para dejarlo con todas las tablas listas pero vacías.",
+   "func": "crear_empresa(nombre) -> crea la carpeta, la fila en el maestro, y todas las tablas; get_db_path(slug) -> ruta absoluta al nimbo.db de esa empresa.",
+   "status": "activo"
+  },
+  {
    "id": "core/intent_detector.py",
    "name": "intent_detector.py",
    "group": "core",
@@ -873,11 +881,27 @@ const DATA = {
    "status": "activo"
   },
   {
+   "id": "templates/register_empresa.html",
+   "name": "register_empresa.html",
+   "group": "template",
+   "desc": "Multi-tenant (2026-07-18): wizard de 2 pasos para registrar una empresa nueva (nombre con vista previa del slug generado en vivo por JavaScript, luego los datos del primer admin) - termina en un fetch() POST a /api/empresa/crear. Deliberadamente más simple que el wizard viejo de 7 pasos (setup.html): no pide IVA/horario/fondo de caja, solo lo mínimo para poder loguearse.",
+   "func": "render_template('register_empresa.html') desde /register-empresa.",
+   "status": "activo"
+  },
+  {
    "id": "templates/reset_password.html",
    "name": "reset_password.html",
    "group": "template",
    "desc": "Formulario para escribir la nueva contraseña usando el token recibido por correo.",
    "func": "render_template('reset_password.html') desde /reset-password?token=.",
+   "status": "activo"
+  },
+  {
+   "id": "templates/select_empresa.html",
+   "name": "select_empresa.html",
+   "group": "template",
+   "desc": "Multi-tenant (2026-07-18): pantalla para elegir con qué empresa trabajar - lista las empresas activas (listar_empresas()) con un botón 'Entrar' por fila, más un botón para ir a registrar una empresa nueva. Es la primera pantalla que ve cualquiera que visite Nimbo sin una empresa ya elegida en su sesión.",
+   "func": "render_template('select_empresa.html') desde /select-empresa (GET/POST).",
    "status": "activo"
   },
   {
@@ -905,6 +929,10 @@ const DATA = {
   {
    "source": "app.py",
    "target": "core/configuracion.py"
+  },
+  {
+   "source": "app.py",
+   "target": "core/empresa.py"
   },
   {
    "source": "app.py",
@@ -956,6 +984,18 @@ const DATA = {
   },
   {
    "source": "core/chat_context.py",
+   "target": "database/nimbo_db.py"
+  },
+  {
+   "source": "core/empresa.py",
+   "target": "core/auth.py"
+  },
+  {
+   "source": "core/empresa.py",
+   "target": "core/configuracion.py"
+  },
+  {
+   "source": "core/empresa.py",
    "target": "database/nimbo_db.py"
   },
   {
@@ -1328,7 +1368,15 @@ const DATA = {
   },
   {
    "source": "app.py",
+   "target": "templates/register_empresa.html"
+  },
+  {
+   "source": "app.py",
    "target": "templates/reset_password.html"
+  },
+  {
+   "source": "app.py",
+   "target": "templates/select_empresa.html"
   },
   {
    "source": "app.py",

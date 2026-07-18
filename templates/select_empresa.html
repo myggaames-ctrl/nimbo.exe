@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nimbo — Elegir empresa</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+  :root {
+    --bg:        #0a0a0f;
+    --surface:   #111118;
+    --surface2:  #1a1a24;
+    --border:    #22222e;
+    --accent:    #f97316;
+    --accent2:   #fb923c;
+    --text:      #e8e8f0;
+    --muted:     #6b6b80;
+    --red:       #ef4444;
+    --radius:    12px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Inter', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+
+  .card {
+    width: 100%;
+    max-width: 420px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 32px 28px;
+  }
+
+  .logo-mark {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 2px;
+  }
+
+  .logo-name {
+    font-size: 20px;
+    font-weight: 700;
+    margin-bottom: 24px;
+  }
+
+  .error-box {
+    background: rgba(239,68,68,0.12);
+    border: 1px solid var(--red);
+    color: var(--red);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 13px;
+    margin-bottom: 16px;
+  }
+
+  .empresa-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; }
+
+  .empresa-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+  }
+
+  .empresa-nombre { font-size: 14px; font-weight: 600; }
+  .empresa-slug { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+
+  .btn-entrar {
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .btn-entrar:hover { background: var(--accent2); }
+
+  .empty-msg {
+    color: var(--muted);
+    font-size: 13.5px;
+    text-align: center;
+    padding: 20px 0;
+  }
+
+  .divider {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 4px 0 16px;
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .divider::before, .divider::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  .btn-ghost-link {
+    display: block;
+    width: 100%;
+    text-align: center;
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px;
+    font-size: 13px;
+    font-weight: 500;
+    text-decoration: none;
+    box-sizing: border-box;
+  }
+  .btn-ghost-link:hover { color: var(--accent2); border-color: var(--accent2); }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <div class="logo-mark">Nimbo</div>
+  <div class="logo-name">¿A qué empresa quieres entrar?</div>
+
+  {% if error %}
+  <div class="error-box">{{ error }}</div>
+  {% endif %}
+
+  {% if empresas %}
+  <form method="POST" action="{{ url_for('select_empresa') }}">
+    <div class="empresa-list">
+      {% for empresa in empresas %}
+      <div class="empresa-item">
+        <div>
+          <div class="empresa-nombre">{{ empresa.Nombre }}</div>
+          <div class="empresa-slug">{{ empresa.Slug }}</div>
+        </div>
+        <button class="btn-entrar" type="submit" name="slug" value="{{ empresa.Slug }}">Entrar</button>
+      </div>
+      {% endfor %}
+    </div>
+  </form>
+  {% else %}
+  <div class="empty-msg">Todavía no hay ninguna empresa registrada.</div>
+  {% endif %}
+
+  <div class="divider">o</div>
+  <a class="btn-ghost-link" href="{{ url_for('register_empresa') }}">➕ Registrar nueva empresa</a>
+</div>
+
+</body>
+</html>

@@ -35,8 +35,23 @@ PERMISOS_DEFAULT_POR_ROL = {
 }
 
 
-def _connect():
-    conn = sqlite3.connect(NIMBO_DB)
+def _connect(db_path=None):
+    """Si no se pasa db_path, usa la base de la empresa activa en la sesion actual
+    (flask.g.empresa_db, seteado por app.py en before_request segun la empresa
+    elegida en /select-empresa) - asi cada empresa queda aislada en su propio
+    nimbo.db sin que cada caller tenga que pasar la ruta a mano. Si no hay
+    contexto de Flask (scripts sueltos, tests sin request) o todavia no se eligio
+    empresa, cae a NIMBO_DB (el nimbo.db de la raiz, compatibilidad con el modo
+    single-tenant de antes de esta migracion)."""
+    if db_path is None:
+        try:
+            from flask import g
+            db_path = getattr(g, "empresa_db", None)
+        except RuntimeError:
+            db_path = None
+    if not db_path:
+        db_path = NIMBO_DB
+    conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -83,10 +98,10 @@ class Usuario(UserMixin):
         return self.id
 
 
-def init_usuarios():
+def init_usuarios(db_path=None):
     """Crea las tablas de usuarios/tokens si no existen. No crea ningun usuario:
     una instalacion nueva (tabla Usuario vacia) debe pasar por /setup."""
-    conn = _connect()
+    conn = _connect(db_path)
     cur = conn.cursor()
     cur.execute("""
         CREATE TABLE IF NOT EXISTS Usuario (
@@ -134,8 +149,8 @@ def init_usuarios():
     conn.close()
 
 
-def existe_algun_usuario():
-    conn = _connect()
+def existe_algun_usuario(db_path=None):
+    conn = _connect(db_path)
     cur = conn.cursor()
     cur.execute("SELECT COUNT(*) FROM Usuario")
     count = cur.fetchone()[0]
@@ -143,7 +158,7 @@ def existe_algun_usuario():
     return count > 0
 
 
-def existe_admin():
+def existe_admin(db_path=None):
     """A diferencia de existe_algun_usuario(), solo cuenta usuarios con Rol='admin'.
     Lo usa el paso 2 del wizard de /setup para decidir si la cuenta admin ya se
     creo en un intento anterior de ese mismo paso - existe_algun_usuario() conto
@@ -151,7 +166,7 @@ def existe_admin():
     un intento de onboarding anterior que se reinicio sin completarse), lo que
     hacia que el paso 2 se saltara crear_usuario() en silencio aunque todavia no
     hubiera ningun admin."""
-    conn = _connect()
+    conn = _connect(db_path)
     cur = conn.cursor()
     cur.execute("SELECT COUNT(*) FROM Usuario WHERE Rol='admin'")
     count = cur.fetchone()[0]
@@ -159,8 +174,8 @@ def existe_admin():
     return count > 0
 
 
-def get_usuario_by_id(user_id):
-    conn = _connect()
+def get_usuario_by_id(user_id, db_path=None):
+    conn = _connect(db_path)
     cur = conn.cursor()
     cur.execute("SELECT * FROM Usuario WHERE Id = ?", (user_id,))
     row = cur.fetchone()
@@ -168,8 +183,8 @@ def get_usuario_by_id(user_id):
     return Usuario(row) if row else None
 
 
-def verify_login(username, password):
-    conn = _connect()
+def verify_login(username, password, db_path=None):
+    conn = _connect(db_path)
     cur = conn.cursor()
     cur.execute("SELECT * FROM Usuario WHERE Username = ?", (username.strip(),))
     row = cur.fetchone()
@@ -181,8 +196,8 @@ def verify_login(username, password):
     return Usuario(row)
 
 
-def listar_usuarios():
-    conn = _connect()
+def listar_usuarios(db_path=None):
+    conn = _connect(db_path)
     cur = conn.cursor()
     cur.execute("SELECT Id, Username, Nombre, Rol, Activo, Telefono, Permisos, CreatedAt FROM Usuario ORDER BY Id")
     rows = [dict(r) for r in cur.fetchall()]
@@ -203,7 +218,7 @@ def listar_tecnicos():
     return rows
 
 
-def crear_usuario(username, password, nombre, rol, telefono="", permisos=None):
+def crear_usuario(username, password, nombre, rol, telefono="", permisos=None, db_path=None):
     if rol not in ROLES:
         raise ValueError("Rol invalido")
     if not username or not password:
@@ -211,7 +226,7 @@ def crear_usuario(username, password, nombre, rol, telefono="", permisos=None):
     if permisos is None:
         permisos = PERMISOS_DEFAULT_POR_ROL.get(rol, [])
     permisos = normalizar_permisos(permisos)
-    conn = _connect()
+    conn = _connect(db_path)
     cur = conn.cursor()
     cur.execute(
         "INSERT INTO Usuario (Username, PasswordHash, Nombre, Rol, Activo, Telefono, Permisos) VALUES (?,?,?,?,1,?,?)",
@@ -221,9 +236,9 @@ def crear_usuario(username, password, nombre, rol, telefono="", permisos=None):
     conn.close()
 
 
-def set_permisos_usuario(user_id, permisos):
+def set_permisos_usuario(user_id, permisos, db_path=None):
     permisos = normalizar_permisos(permisos)
-    conn = _connect()
+    conn = _connect(db_path)
     cur = conn.cursor()
     cur.execute("SELECT Id FROM Usuario WHERE Id = ?", (user_id,))
     if not cur.fetchone():
@@ -235,18 +250,18 @@ def set_permisos_usuario(user_id, permisos):
     return permisos
 
 
-def set_usuario_activo(user_id, activo):
-    conn = _connect()
+def set_usuario_activo(user_id, activo, db_path=None):
+    conn = _connect(db_path)
     cur = conn.cursor()
     cur.execute("UPDATE Usuario SET Activo=? WHERE Id=?", (1 if activo else 0, user_id))
     conn.commit()
     conn.close()
 
 
-def cambiar_password_usuario(user_id, nueva_password):
+def cambiar_password_usuario(user_id, nueva_password, db_path=None):
     if not nueva_password or len(nueva_password) < 6:
         raise ValueError("La contraseña debe tener al menos 6 caracteres")
-    conn = _connect()
+    conn = _connect(db_path)
     cur = conn.cursor()
     cur.execute("SELECT Id FROM Usuario WHERE Id = ?", (user_id,))
     if not cur.fetchone():
@@ -258,9 +273,9 @@ def cambiar_password_usuario(user_id, nueva_password):
     conn.close()
 
 
-def get_admin_activo():
+def get_admin_activo(db_path=None):
     """Primer usuario con rol admin y activo (el sistema asume un solo admin de recuperacion)."""
-    conn = _connect()
+    conn = _connect(db_path)
     cur = conn.cursor()
     cur.execute("SELECT * FROM Usuario WHERE Rol = 'admin' AND Activo = 1 ORDER BY Id LIMIT 1")
     row = cur.fetchone()
@@ -268,10 +283,10 @@ def get_admin_activo():
     return Usuario(row) if row else None
 
 
-def crear_token_reset(user_id):
+def crear_token_reset(user_id, db_path=None):
     token = secrets.token_urlsafe(32)
     expires_at = (datetime.now() + timedelta(minutes=RESET_TOKEN_TTL_MINUTOS)).strftime("%Y-%m-%d %H:%M:%S")
-    conn = _connect()
+    conn = _connect(db_path)
     cur = conn.cursor()
     cur.execute(
         "INSERT INTO PasswordResetToken (Token, UserId, ExpiresAt, Usado) VALUES (?,?,?,0)",
@@ -282,9 +297,9 @@ def crear_token_reset(user_id):
     return token
 
 
-def validar_token_reset(token):
+def validar_token_reset(token, db_path=None):
     """Retorna el Usuario asociado si el token existe, no fue usado y no expiro. Si no, None."""
-    conn = _connect()
+    conn = _connect(db_path)
     cur = conn.cursor()
     cur.execute("SELECT * FROM PasswordResetToken WHERE Token = ?", (token,))
     row = cur.fetchone()
@@ -300,9 +315,9 @@ def validar_token_reset(token):
     return Usuario(user_row) if user_row else None
 
 
-def usar_token_reset(token, nueva_password):
+def usar_token_reset(token, nueva_password, db_path=None):
     """Marca el token como usado y actualiza la contrasena del usuario asociado."""
-    conn = _connect()
+    conn = _connect(db_path)
     cur = conn.cursor()
     cur.execute("SELECT * FROM PasswordResetToken WHERE Token = ?", (token,))
     row = cur.fetchone()

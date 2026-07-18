@@ -382,8 +382,23 @@ def actualizar_producto_importado(producto_id, fila):
 import sqlite3 as _sqlite3
 NIMBO_DB = os.path.join(BASE_DIR, 'nimbo.db')
 
-def nimbo_connect():
-    conn = _sqlite3.connect(NIMBO_DB)
+def nimbo_connect(db_path=None):
+    """Si no se pasa db_path, usa la base de la empresa activa en la sesion actual
+    (flask.g.empresa_db, seteado por app.py en before_request) - mismo criterio que
+    core.auth._connect(db_path). Si no hay contexto de Flask o todavia no se eligio
+    empresa, cae a NIMBO_DB (el nimbo.db de la raiz, compatibilidad con scripts
+    sueltos y con el modo single-tenant de antes de esta migracion). DB_PATH (la
+    base de Aronium, para connect()) no se toca - sigue siendo global, fuera del
+    alcance de esta migracion multi-tenant."""
+    if db_path is None:
+        try:
+            from flask import g
+            db_path = getattr(g, "empresa_db", None)
+        except RuntimeError:
+            db_path = None
+    if not db_path:
+        db_path = NIMBO_DB
+    conn = _sqlite3.connect(db_path)
     conn.row_factory = _sqlite3.Row
     return conn
 
@@ -407,8 +422,8 @@ def nimbo_connect():
 # las columnas fisicas de Producto/Stock esten en espanol (Nombre, Codigo,
 # Precio, Costo, Cantidad) - el resto del codebase sigue leyendo esas mismas
 # claves sin cambios.
-def init_productos():
-    conn = nimbo_connect()
+def init_productos(db_path=None):
+    conn = nimbo_connect(db_path)
     cur = conn.cursor()
     cur.execute("""
         CREATE TABLE IF NOT EXISTS Producto (
@@ -638,11 +653,11 @@ def get_prediccion_producto(query, dias_historial=DIAS_HISTORIAL_CONSUMO):
 
 # ── SERVICIO TECNICO ──────────────────────────────────
 
-def init_servicio_tecnico_ext():
+def init_servicio_tecnico_ext(db_path=None):
     """Migracion: OrdenServicio ya existia antes del flujo de tecnicos. TecnicoId/
     TecnicoNombre reemplazan a la columna vieja 'Tecnico' (texto libre, nunca se
     conecto a ningun flujo de chat) - se agregan aparte, sin tocar esa columna."""
-    conn = nimbo_connect()
+    conn = nimbo_connect(db_path)
     cur = conn.cursor()
     for columna, definicion in [("TecnicoId", "INTEGER"), ("TecnicoNombre", "TEXT")]:
         try:
@@ -745,8 +760,8 @@ def set_presupuesto_orden(numero, presupuesto, mano_obra):
 
 # ── INFORMES DE REVISION (SERVICIO TECNICO) ────────────
 
-def init_informes_revision():
-    conn = nimbo_connect()
+def init_informes_revision(db_path=None):
+    conn = nimbo_connect(db_path)
     cur = conn.cursor()
     cur.execute("""
         CREATE TABLE IF NOT EXISTS InformeRevision (
@@ -806,8 +821,8 @@ def get_informes_orden(numero_orden):
 
 # ── TARIFAS DE MANO DE OBRA ────────────────────────────
 
-def init_tarifas_mano_obra():
-    conn = nimbo_connect()
+def init_tarifas_mano_obra(db_path=None):
+    conn = nimbo_connect(db_path)
     cur = conn.cursor()
     cur.execute("""
         CREATE TABLE IF NOT EXISTS TarifaManoObra (
@@ -872,8 +887,8 @@ def get_historial_orden(numero):
 
 # ── FOTOS DE ORDEN DE SERVICIO ─────────────────────────
 
-def init_fotos_servicio():
-    conn = nimbo_connect()
+def init_fotos_servicio(db_path=None):
+    conn = nimbo_connect(db_path)
     cur = conn.cursor()
     cur.execute("""
         CREATE TABLE IF NOT EXISTS FotoOrdenServicio (
@@ -1055,8 +1070,8 @@ GRUPOS_CLIENTE_DEFAULT = [
 GRUPOS_CLIENTE = {g for g, _, _ in GRUPOS_CLIENTE_DEFAULT}
 
 
-def init_grupos_cliente():
-    conn = nimbo_connect()
+def init_grupos_cliente(db_path=None):
+    conn = nimbo_connect(db_path)
     cur = conn.cursor()
     cur.execute("""
         CREATE TABLE IF NOT EXISTS GrupoDescuento (
@@ -1289,8 +1304,8 @@ def get_pedidos_sugeridos():
 
 # ── COTIZACIONES ──────────────────────────────────────
 
-def init_cotizaciones():
-    conn = nimbo_connect()
+def init_cotizaciones(db_path=None):
+    conn = nimbo_connect(db_path)
     cur = conn.cursor()
     cur.execute("""
         CREATE TABLE IF NOT EXISTS Cotizacion (
@@ -1432,8 +1447,8 @@ def get_resumen_cotizaciones():
 
 # ── DESCUENTOS ────────────────────────────────────────
 
-def init_descuentos():
-    conn = nimbo_connect()
+def init_descuentos(db_path=None):
+    conn = nimbo_connect(db_path)
     cur = conn.cursor()
     cur.execute("""
         CREATE TABLE IF NOT EXISTS Descuento (
@@ -1599,8 +1614,8 @@ def calcular_descuento(cliente_id=None, productos=None, total=0, fecha=None):
 DIAS_GARANTIA_PROPIA_DEFAULT = 30
 
 
-def init_garantias():
-    conn = nimbo_connect()
+def init_garantias(db_path=None):
+    conn = nimbo_connect(db_path)
     cur = conn.cursor()
     cur.execute("""
         CREATE TABLE IF NOT EXISTS GarantiaProducto (
@@ -1861,8 +1876,8 @@ def get_garantias_por_vencer(dias=30):
 DESCUENTO_COMBO_SUGERIDO = 0.08
 
 
-def init_combos():
-    conn = nimbo_connect()
+def init_combos(db_path=None):
+    conn = nimbo_connect(db_path)
     cur = conn.cursor()
     cur.execute("""
         CREATE TABLE IF NOT EXISTS ProductoCombo (
@@ -1997,8 +2012,8 @@ def vender_combo(combo_id, cliente_id=None, cliente_nombre="Consumidor Final", c
 
 # ── UNIDADES DE MEDIDA ────────────────────────────────
 
-def init_unidades_medida():
-    conn = nimbo_connect()
+def init_unidades_medida(db_path=None):
+    conn = nimbo_connect(db_path)
     cur = conn.cursor()
     cur.execute("""
         CREATE TABLE IF NOT EXISTS UnidadMedida (
@@ -2084,8 +2099,8 @@ NIVELES_LEALTAD = [
 ]
 
 
-def init_puntos():
-    conn = nimbo_connect()
+def init_puntos(db_path=None):
+    conn = nimbo_connect(db_path)
     cur = conn.cursor()
     cur.execute("""
         CREATE TABLE IF NOT EXISTS PuntosCliente (
@@ -2325,8 +2340,8 @@ def _calcular_cambio_denominaciones(monto, disponible):
     return resultado
 
 
-def init_caja():
-    conn = nimbo_connect()
+def init_caja(db_path=None):
+    conn = nimbo_connect(db_path)
     cur = conn.cursor()
     cur.execute("""
         CREATE TABLE IF NOT EXISTS CajaTurno (
@@ -2790,8 +2805,8 @@ def get_movimientos_caja(turno_id, limit=100):
 
 # ── REEMBOLSOS ────────────────────────────────────────
 
-def init_reembolsos():
-    conn = nimbo_connect()
+def init_reembolsos(db_path=None):
+    conn = nimbo_connect(db_path)
     cur = conn.cursor()
     cur.execute("""
         CREATE TABLE IF NOT EXISTS Reembolso (
@@ -3893,11 +3908,11 @@ def get_recordatorios():
 
 # ── PAGOS FIJOS ───────────────────────────────────────
 
-def init_pagos_fijos_ext():
+def init_pagos_fijos_ext(db_path=None):
     """Migracion: PagoFijo ya existia sin monto (solo guardaba nombre/dia/frecuencia
     como recordatorio) - se necesita el monto en quetzales para el flujo de caja
     proyectado (ver contabilidad.flujo_proyectado)."""
-    conn = nimbo_connect()
+    conn = nimbo_connect(db_path)
     cur = conn.cursor()
     try:
         cur.execute("ALTER TABLE PagoFijo ADD COLUMN Monto NUMERIC DEFAULT 0")
@@ -3906,11 +3921,11 @@ def init_pagos_fijos_ext():
     conn.commit()
     conn.close()
 
-def init_venta_cobrador_ext():
+def init_venta_cobrador_ext(db_path=None):
     """Migracion: Venta ya existia sin CobradorNombre - se necesita para saber quien
     cobro cada venta de Caja (popup de identificacion, ver /api/caja/verificar-cobrador
     en app.py) y para el desglose por cobrador de get_reporte_dia()."""
-    conn = nimbo_connect()
+    conn = nimbo_connect(db_path)
     cur = conn.cursor()
     try:
         cur.execute("ALTER TABLE Venta ADD COLUMN CobradorNombre TEXT")
@@ -3920,7 +3935,7 @@ def init_venta_cobrador_ext():
     conn.close()
 
 
-def init_venta_metodo_pago_ext():
+def init_venta_metodo_pago_ext(db_path=None):
     """Migracion: Venta ya existia sin metodo de pago (antes solo se mostraba en el
     texto de respuesta del chat, nunca se guardaba - ver CLAUDE.md seccion
     Clientes, "el metodo de pago solo se detecta cuando fue un pago mixto").
@@ -3929,7 +3944,7 @@ def init_venta_metodo_pago_ext():
     porcion de tarjeta si 'mixto', 0 en cualquier otro caso) - se guarda explicito
     en cada INSERT (registrar_venta_cliente, cobrar_carrito, _registrar_venta_chat)
     en vez de parsear texto libre, para que el cuadre no dependa de un best-effort."""
-    conn = nimbo_connect()
+    conn = nimbo_connect(db_path)
     cur = conn.cursor()
     try:
         cur.execute("ALTER TABLE Venta ADD COLUMN MetodoPago TEXT")
@@ -3943,11 +3958,11 @@ def init_venta_metodo_pago_ext():
     conn.close()
 
 
-def init_ajuste_pos():
+def init_ajuste_pos(db_path=None):
     """Ajustes manuales cuando el cuadre de POS no coincide con lo que Nimbo
     registro (ver get_cuadre_pos_dia/crear_ajuste_pos) - un ajuste por dia como
     maximo tiene sentido en la practica, pero no se fuerza a nivel de esquema."""
-    conn = nimbo_connect()
+    conn = nimbo_connect(db_path)
     cur = conn.cursor()
     cur.execute("""
         CREATE TABLE IF NOT EXISTS AjustePOS (
@@ -4542,8 +4557,8 @@ def hacer_backup():
 PREFIJO_EAN_INTERNO = "20"
 
 
-def init_codigos_barras():
-    conn = nimbo_connect()
+def init_codigos_barras(db_path=None):
+    conn = nimbo_connect(db_path)
     cur = conn.cursor()
     cur.execute("""
         CREATE TABLE IF NOT EXISTS CodigoBarrasGenerado (
@@ -4633,8 +4648,8 @@ DIAS_VENCIMIENTO_CUENTA_DEFAULT = 30  # no especificado en el pedido original; m
 ESTADOS_CUENTA_COBRAR = ("PENDIENTE", "PAGADO_PARCIAL", "PAGADO", "VENCIDO")
 
 
-def init_cuentas_cobrar():
-    conn = nimbo_connect()
+def init_cuentas_cobrar(db_path=None):
+    conn = nimbo_connect(db_path)
     cur = conn.cursor()
     cur.execute("""
         CREATE TABLE IF NOT EXISTS CuentaCobrar (
@@ -4853,8 +4868,8 @@ DIAS_VENCIMIENTO_PAGAR_DEFAULT = 30  # mismo criterio que DIAS_VENCIMIENTO_CUENT
 # (cuentas por cobrar) - no especificado en el pedido, plazo razonable por defecto.
 
 
-def init_cuentas_pagar():
-    conn = nimbo_connect()
+def init_cuentas_pagar(db_path=None):
+    conn = nimbo_connect(db_path)
     cur = conn.cursor()
     cur.execute("""
         CREATE TABLE IF NOT EXISTS CuentaPagar (
@@ -5072,8 +5087,8 @@ PORCENTAJE_ALERTA_MIERCOLES = 0.40
 FACTOR_NUEVA_META_SUGERIDA = 1.15
 
 
-def init_metas_semanales():
-    conn = nimbo_connect()
+def init_metas_semanales(db_path=None):
+    conn = nimbo_connect(db_path)
     cur = conn.cursor()
     cur.execute("""
         CREATE TABLE IF NOT EXISTS MetaSemanal (

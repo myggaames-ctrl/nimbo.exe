@@ -635,3 +635,112 @@ buena parte de la API.
 **Ejemplo de la vida real:** es como pedirle algo a un mesero usando siempre la misma
 estructura de frase: "[verbo] el/un [platillo]" - "tráeme la sopa", "cambia la sopa",
 "quita la sopa" - una gramática consistente para pedir cualquier cosa del menú.
+
+---
+
+### single-tenant
+**Qué es:** un diseño de software donde una sola instalación del sistema atiende a UN
+solo cliente/negocio - todos los datos, usuarios y configuración viven juntos, sin
+ninguna separación entre "de quién es qué".
+
+**Para qué sirve en Nimbo:** así nació Nimbo originalmente: un solo `nimbo.db` en la
+raíz del proyecto, pensado solo para Mi Cocina Electrodomésticos - no había forma de que
+una segunda tienda usara el mismo Nimbo sin mezclar su inventario, sus ventas y sus
+usuarios con los de Mi Cocina.
+
+**Ejemplo de la vida real:** es como una casa unifamiliar - una sola familia, un solo
+buzón, no hay que distinguir de quién es cada cosa porque todo es de los mismos dueños.
+
+---
+
+### multi-tenant
+**Qué es:** un diseño de software donde una sola instalación atiende a VARIOS
+clientes/negocios distintos ("inquilinos", tenants en inglés) al mismo tiempo, cada uno
+con sus propios datos completamente separados de los demás, aunque compartan el mismo
+código corriendo.
+
+**Para qué sirve en Nimbo:** desde la migración del 2026-07-18, Nimbo dejó de ser
+single-tenant - ahora cada empresa (Mi Cocina, Surti La Unión, y cualquier otra que se
+registre) tiene su propio `nimbo.db` completamente aparte, en
+`data/empresas/<slug>/nimbo.db`, aunque las dos corran sobre el mismo `app.py`. `core/
+empresa.py`, `nimbo_master.db` y `flask.g.empresa_db` (ver esos términos abajo) son las
+piezas que hacen posible esa separación.
+
+**Ejemplo de la vida real:** es como un edificio de apartamentos - un solo edificio (el
+código de Nimbo), pero cada apartamento (cada empresa) tiene su propia llave, sus
+propias cosas adentro, y un vecino jamás puede entrar sin querer al apartamento de otro.
+
+---
+
+### slug
+**Qué es:** una versión de un nombre simplificada para usarse como identificador
+técnico: todo en minúsculas, sin espacios ni tildes ni símbolos, generalmente con
+guiones en vez de espacios - pensada para aparecer en una URL o una ruta de archivo sin
+causar problemas.
+
+**Para qué sirve en Nimbo:** `core/empresa.py._generar_slug()` convierte el nombre de
+una empresa (ej. "Surti La Unión") en su slug ("surti-la-union"), que se usa como
+nombre de la carpeta de esa empresa (`data/empresas/surti-la-union/`) y como el
+identificador que viaja en `session['empresa_slug']` para saber, en cada request, con
+cuál empresa está trabajando el usuario.
+
+**Ejemplo de la vida real:** es como el "@usuario" que elegís en una red social en vez de
+tu nombre completo con acentos y espacios - "María José Pérez" podría ser
+`@maria-jose-perez`, algo más simple y sin caracteres raros para que el sistema lo use
+como identificador.
+
+---
+
+### nimbo_master.db
+**Qué es:** (no es un término genérico de programación, sino el nombre real de un
+archivo de este proyecto) la base de datos "maestra" que Nimbo usa para saber qué
+empresas existen y dónde está el `nimbo.db` de cada una.
+
+**Para qué sirve en Nimbo:** vive en la raíz del proyecto, separada de los `nimbo.db` de
+cada empresa. Tiene una sola tabla, `Empresa` (Nombre, Slug, DbPath, Activo,
+CreatedAt) - nunca guarda datos de negocio (productos, ventas, clientes) de ninguna
+empresa, solo el directorio que le dice a `app.py` a qué archivo conectarse según la
+empresa que el usuario elija en `/select-empresa`.
+
+**Ejemplo de la vida real:** es como el directorio de un edificio de oficinas en la
+recepción: no tiene los documentos de cada empresa adentro, solo dice "la empresa X está
+en la oficina 301, la empresa Y en la 402" - para saber a qué puerta tocar.
+
+---
+
+### flask.g
+**Qué es:** un objeto especial de Flask que guarda datos válidos solo durante UN
+request - se limpia solo y automáticamente en cuanto ese request termina, así que no hay
+riesgo de que datos de una petición se mezclen con la siguiente.
+
+**Para qué sirve en Nimbo:** `set_empresa_context()` (en `app.py`, corre en cada
+request) lee `session['empresa_slug']` (que sí persiste entre requests, ver **sesión**
+más arriba en este glosario) y calcula `g.empresa_slug`/`g.empresa_db` de nuevo cada
+vez. Todas las funciones de acceso a datos (`core/auth.py._connect()`,
+`database/nimbo_db.py.nimbo_connect()`, `core/configuracion.py._connect()`) leen
+`g.empresa_db` para saber a qué `nimbo.db` conectarse en ESE request específico, sin que
+cada una de las cientos de funciones del proyecto tenga que recibir la empresa como
+parámetro explícito.
+
+**Ejemplo de la vida real:** es como una etiqueta con el número de mesa que un mesero
+lleva prendida solo mientras atiende esa mesa - la usa mientras dura el servicio, y la
+suelta antes de atender la siguiente, sin confundir los pedidos de una mesa con los de
+otra.
+
+---
+
+### empresa_slug
+**Qué es:** (no es un término genérico, es el nombre real de una clave usada en este
+proyecto) el dato que identifica, dentro de la sesión de un usuario, con cuál empresa
+está trabajando en ese momento.
+
+**Para qué sirve en Nimbo:** `session['empresa_slug']` se guarda cuando el usuario elige
+una empresa en `/select-empresa` (o al registrar una nueva vía `/api/empresa/crear`), y
+se vuelve a confirmar al hacer login exitoso. `set_empresa_context()` lo lee en cada
+request para resolver `g.empresa_db` (ver **flask.g** arriba) - sin `empresa_slug` en la
+sesión, `GET /` redirige directo a `/select-empresa` en vez de mostrar el dashboard.
+
+**Ejemplo de la vida real:** es como la pulserita de color que te ponen en un hotel
+todo-incluido para saber a cuál de varios resorts del mismo dueño perteneces - el
+personal la mira para saber en qué restaurante/piscina tenés acceso, sin tener que
+preguntarte cada vez de dónde venís.

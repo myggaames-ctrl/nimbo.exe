@@ -639,3 +639,289 @@ mismo commit de auditoría (`21b8075`, "Auditoria completa: fixes command normal
 cancelacion universal, conflictos detectores") que agrupó varias correcciones
 relacionadas en una sola sesión de trabajo, por eso comparten fecha y se listan por
 separado según el problema técnico real que resolvió cada una.
+
+---
+
+## [2026-07-18] Multi-tenant — Paso 0: Safety net
+
+**Problema:** antes de empezar una migración grande (single-tenant → multi-tenant) que
+toca autenticación, conexión a base de datos y configuración - los tres pilares más
+sensibles de la app - hacía falta un punto de restauración confiable por si algo salía
+mal a mitad de camino.
+
+**Causa:** no es un bug, es una acción preventiva pedida como primer paso del plan de
+migración.
+
+**Solución:** `git add -A && git commit -m "backup pre multi-tenant" && git push`. De
+paso se encontró que un archivo temporal generado por el propio sistema de permisos
+(`.claude/settings.local.json.tmp.*`) se había colado en el commit por el `git add -A`
+(el archivo ya no existía en disco para cuando se revisó, pero había quedado
+"agregado y luego borrado" en el mismo commit). Se agregó ese patrón a `.gitignore` y
+se sacó del tracking en un commit de limpieza aparte, para que no vuelva a colarse en
+futuros `git add -A`.
+
+**Archivos modificados:** `.gitignore` (patrón nuevo), 2 commits sin cambios de código
+de negocio.
+
+---
+
+## [2026-07-18] Multi-tenant — Paso 1: Migrar Mi Cocina sin tocar datos
+
+**Problema:** Mi Cocina (la única empresa existente hasta ahora) tenía su `nimbo.db` en
+la raíz del proyecto, compartido uno-a-uno con el código - un esquema single-tenant que
+no deja lugar para una segunda empresa con sus propios datos aislados.
+
+**Causa:** no es un bug, es el primer paso de la migración a multi-tenant.
+
+**Solución:** se creó `data/empresas/mi-cocina/` y se copió (sin mover ni borrar) el
+`nimbo.db` real ahí - verificado con un `md5sum` del `.dump` completo de ambos archivos
+que son byte a byte idénticos. Se creó `nimbo_master.db` con la tabla `Empresa` (Id,
+Nombre, Slug, DbPath, Activo, CreatedAt) y se insertó la fila de Mi Cocina apuntando a
+`data/empresas/mi-cocina/nimbo.db`. El `nimbo.db` original de la raíz NO se borró
+(queda intacto hasta confirmar en el Paso 8 que Mi Cocina funciona bien desde la nueva
+ruta, tal como pide la restricción del plan).
+
+**Archivos modificados:** `data/empresas/mi-cocina/nimbo.db` (nuevo, copia),
+`nimbo_master.db` (nuevo).
+
+---
+
+## [2026-07-18] Multi-tenant — Paso 2: Crear core/empresa.py
+
+**Problema:** no existía ningún lugar centralizado que supiera "qué empresas hay y dónde
+está la base de datos de cada una" - sin eso, ninguna otra pieza del sistema (login,
+`before_request`, rutas) podía saber a qué `nimbo.db` conectarse en cada request.
+
+**Causa:** el proyecto nació single-tenant - un solo `nimbo.db`, ninguna noción de
+"empresa" en el código.
+
+**Solución:** se creó `core/empresa.py` con `init_master()` (crea la tabla `Empresa` en
+`nimbo_master.db`), `get_empresa_by_slug(slug)`, `listar_empresas()` (solo las activas),
+`get_db_path(slug)` (devuelve el path ABSOLUTO, resuelto contra `BASE_DIR`) y
+`crear_empresa(nombre, slug=None)`. El slug se genera automáticamente a partir del
+nombre (minúsculas, sin tildes vía `unicodedata.normalize`, espacios a guiones, sin
+caracteres especiales - probado con casos como `"Café El Progreso S.A."` →
+`"cafe-el-progreso-sa"` y `"Ñandú Import/Export"` → `"nandu-importexport"`); si el slug
+ya existe, se le agrega un número (`-2`, `-3`...) para mantenerlo único. `crear_empresa`
+crea la carpeta `data/empresas/<slug>/`, inserta la fila en el maestro, y llama a las 22
+funciones `init_*` de `database/nimbo_db.py` más `init_usuarios`/`init_configuracion` de
+`core/auth.py`/`core/configuracion.py`, todas contra el `nimbo.db` nuevo de la empresa
+(ahora que esas funciones aceptan `db_path`, ver Pasos 4 y 5). Se probó de forma aislada
+creando una empresa de prueba desechable: se confirmaron las 30 tablas creadas
+correctamente antes de seguir, y se borró esa empresa de prueba antes de continuar con
+el resto del plan.
+
+**Archivos modificados:** `core/empresa.py` (nuevo).
+
+---
+
+## [2026-07-18] Multi-tenant — Paso 3: core/auth.py multi-tenant
+
+**Problema:** todo el sistema de login (`Usuario`, tokens de recuperación) apuntaba
+siempre al mismo `nimbo.db` fijo (`NIMBO_DB`, una constante global) - no había forma de
+que dos empresas tuvieran usuarios/contraseñas separados.
+
+**Causa:** `_connect()` (la única función de conexión del módulo) no aceptaba ningún
+parámetro, así que no había manera de decirle "conéctate a la base de ESTA empresa".
+
+**Solución:** `_connect(db_path=None)` ahora, si no se le pasa nada, intenta leer
+`flask.g.empresa_db` (seteado por `app.py` en cada request según la empresa elegida en
+`/select-empresa`); si no hay contexto de Flask activo (scripts sueltos, tests sin
+request - como los que se usaron para probar el onboarding en una sesión anterior) o
+`g.empresa_db` no está seteado todavía, cae a `NIMBO_DB` (compatibilidad con el modo
+single-tenant de antes de esta migración). Se agregó `db_path=None` a las 14 funciones
+públicas que el plan pedía explícitamente: `init_usuarios`, `verify_login`,
+`crear_usuario`, `listar_usuarios`, `get_usuario_by_id`, `set_usuario_activo`,
+`cambiar_password_usuario`, `set_permisos_usuario`, `existe_algun_usuario`,
+`existe_admin`, `get_admin_activo`, `crear_token_reset`, `validar_token_reset`,
+`usar_token_reset` - cada una simplemente reenvía su `db_path` a `_connect(db_path)`.
+`listar_tecnicos()` (no estaba en la lista pedida) se dejó sin tocar a propósito: como
+sigue llamando a `_connect()` sin argumentos, automáticamente hereda el comportamiento
+multi-tenant de todas formas, porque la resolución de la empresa vive adentro de
+`_connect()`, no en cada función que la llama.
+
+**Archivos modificados:** `core/auth.py`.
+
+---
+
+## [2026-07-18] Multi-tenant — Paso 4: database/nimbo_db.py multi-tenant
+
+**Problema:** las ~200 funciones de acceso a datos del proyecto (productos, ventas,
+caja, garantías, cuentas por cobrar/pagar, etc.) dependían todas de `nimbo_connect()`,
+que conectaba siempre al mismo `NIMBO_DB` global - mismo problema que `core/auth.py`,
+pero a mucha mayor escala.
+
+**Causa:** mismo motivo que el Paso 3 - `nimbo_connect()` no aceptaba ningún parámetro.
+
+**Solución:** se aplicó exactamente el mismo patrón que en `core/auth.py`:
+`nimbo_connect(db_path=None)` ahora resuelve `flask.g.empresa_db` cuando no se le pasa
+nada, con la misma caída a `NIMBO_DB` si no hay contexto de Flask. Como **todas** las
+funciones de este archivo (búsqueda de productos, ventas, kardex, cotizaciones,
+garantías...) ya pasaban por este único punto de conexión, hacer a `nimbo_connect()`
+consciente de la empresa activa las vuelve multi-tenant a **todas** de un solo golpe,
+sin tener que tocar una por una - por eso el plan solo pedía explícitamente modificar
+las funciones `init_*`. Se modificaron las firmas de las 22 funciones `init_*`
+(`init_productos`, `init_cotizaciones`, `init_caja`, `init_descuentos`, `init_garantias`,
+`init_combos`, `init_unidades_medida`, `init_puntos`, `init_codigos_barras`,
+`init_grupos_cliente`, `init_fotos_servicio`, `init_servicio_tecnico_ext`,
+`init_informes_revision`, `init_tarifas_mano_obra`, `init_cuentas_cobrar`,
+`init_cuentas_pagar`, `init_pagos_fijos_ext`, `init_metas_semanales`,
+`init_venta_cobrador_ext`, `init_reembolsos`, `init_venta_metodo_pago_ext`,
+`init_ajuste_pos`) con un script que verificó, antes de tocar nada, que cada una llamaba
+a `nimbo_connect()` exactamente una vez (para no aplicar el cambio a ciegas) y después
+confirmó que las 22 quedaron con la firma y la llamada correctas. `DB_PATH` (la ruta a
+Aronium, usada por `connect()`) se dejó completamente intacta, tal como pedía la
+restricción del plan.
+
+**Archivos modificados:** `database/nimbo_db.py`.
+
+---
+
+## [2026-07-18] Multi-tenant — Paso 5: core/configuracion.py multi-tenant
+
+**Problema:** los datos de configuración del negocio (nombre, moneda, IVA, horario,
+`onboarding_completado`, etc.) también vivían en el mismo `NIMBO_DB` global - dos
+empresas hubieran compartido la misma configuración, incluyendo el flag de onboarding
+completado.
+
+**Causa:** mismo patrón que los Pasos 3 y 4 - `_connect()` sin parámetro.
+
+**Solución:** mismo cambio exacto: `_connect(db_path=None)` con la misma resolución vía
+`flask.g.empresa_db` y la misma caída a `NIMBO_DB`. `init_configuracion`, `get_config` y
+`set_config` ahora aceptan `db_path=None` y lo reenvían a `_connect()`.
+
+**Archivos modificados:** `core/configuracion.py`.
+
+---
+
+## [2026-07-18] Multi-tenant — Paso 6: app.py (contexto de empresa + rutas nuevas)
+
+**Problema:** aunque las capas de datos (Pasos 3-5) ya sabían resolver la empresa activa
+vía `flask.g.empresa_db`, nada todavía llenaba ese valor en cada request, ni existía
+forma de que un usuario eligiera con qué empresa quería trabajar.
+
+**Causa:** `app.py` seguía inicializando un solo `nimbo.db` al arrancar (24 llamadas a
+`init_*` seguidas) y no tenía ningún concepto de "empresa" en sus rutas.
+
+**Solución:**
+- Se agregó `set_empresa_context()` (`before_request`), que lee `session['empresa_slug']`
+  y llena `g.empresa_slug`/`g.empresa_db` en cada request. Se registró ANTES que
+  `require_setup()` en el archivo (Flask corre los `before_request` en el orden en que
+  se definen), porque `require_setup()` necesita que `g.empresa_db` ya esté resuelto
+  para chequear el `onboarding_completado` de la empresa correcta.
+- Se reemplazaron las 24 llamadas a `init_*()` del arranque por una sola:
+  `init_master()` - las tablas de cada empresa ahora se crean recién cuando esa empresa
+  se registra (`core.empresa.crear_empresa()`), no todas juntas al arrancar el servidor.
+- Se agregaron las rutas `GET/POST /select-empresa`, `GET /register-empresa` y
+  `POST /api/empresa/crear`, tal como pedía el plan.
+- La ruta raíz (`GET /`) ahora chequea primero si hay una empresa elegida en sesión
+  (si no, redirige a `/select-empresa`) y recién después si hay sesión de usuario
+  iniciada (usando `login_manager.unauthorized()` para replicar exactamente el mismo
+  comportamiento que tenía el decorador `@login_required` que se quitó de esta ruta,
+  sin duplicar su lógica a mano).
+- El login ahora también redirige a `/select-empresa` si todavía no hay empresa elegida,
+  y al loguear con éxito vuelve a guardar `empresa_slug`/`empresa_db` en `session` (además
+  de ya estar ahí desde `/select-empresa`), tal como pedía el plan.
+
+**Dos ajustes que el plan no detallaba pero hicieron falta para que las piezas
+encajaran, encontrados al implementar este paso:**
+1. **El caché global `_setup_completado` era incorrecto para multi-tenant.** La versión
+   original de `require_setup()` guardaba en una variable Python global (no en
+   `session`, no en `g` - un booleano compartido por TODO el proceso) si el onboarding ya
+   se había completado, para no volver a consultar la base en cada request. Eso era
+   válido en single-tenant (una sola instalación, una sola vez completo, para siempre
+   completo) pero es **incorrecto** en multi-tenant: en cuanto la PRIMERA empresa
+   completara su onboarding, ese booleano quedaría en `True` para siempre y
+   `require_setup()` dejaría de chequear el onboarding de CUALQUIER otra empresa nueva,
+   sin importar si esa sí lo tenía pendiente. Se quitó el caché por completo: ahora se
+   consulta `_onboarding_completado()` en cada request (una consulta SQL más por
+   request, pero es la única forma correcta de no confundir el estado de una empresa con
+   el de otra).
+2. **Las empresas registradas por `/api/empresa/crear` marcan `onboarding_completado="1"`
+   de una vez**, en vez de quedar pendientes del wizard viejo de 7 pasos (`/setup`) que
+   sí usó Mi Cocina originalmente. Sin este ajuste, una empresa recién creada con el
+   registro rápido de 2 pasos hubiera quedado atrapada: `require_setup()` la mandaría al
+   wizard viejo (que pide tipo de negocio, IVA, horario, fondo de caja...) antes de
+   dejarla loguearse, contradiciendo el espíritu del registro rápido de 2 pasos que pedía
+   el Paso 7. El wizard viejo de 7 pasos NO se eliminó - sigue existiendo y sigue
+   funcionando (ahora también de forma multi-tenant, gracias a los Pasos 3 y 5), solo que
+   ya no es el camino por el que pasan las empresas nuevas.
+
+**Archivos modificados:** `app.py`.
+
+---
+
+## [2026-07-18] Multi-tenant — Paso 7: Templates de empresa
+
+**Problema:** no existía ninguna pantalla para elegir entre empresas ni para registrar
+una nueva.
+
+**Causa:** no es un bug, es la parte de interfaz del Paso 6.
+
+**Solución:** se creó `templates/select_empresa.html` (lista las empresas de
+`listar_empresas()`, botón "Entrar" por fila que hace POST a `/select-empresa`, y un
+botón "Registrar nueva empresa"), reusando la misma paleta de colores y estilo de
+tarjeta oscura centrada que ya usa `templates/login.html`. Para el registro de empresa
+nueva se evaluaron dos caminos: (a) adaptar directamente `templates/setup.html` (el
+wizard viejo de 7 pasos, ~785 líneas, con lógica de ruteo por paso en el servidor) para
+que sus primeros 2 pasos sirvieran también para esto, o (b) construir una pantalla nueva
+y pequeña, con el mismo lenguaje visual, dedicada solo a este registro rápido. Se eligió
+(b) - `templates/register_empresa.html`, un wizard de 2 pasos (nombre de empresa con
+vista previa del slug generado en vivo por JavaScript + datos del admin) que termina en
+un solo `fetch()` POST a `/api/empresa/crear` - porque adaptar el wizard viejo hubiera
+significado tocar una plantilla grande y compleja, ya en uso y probada, para una
+funcionalidad que en realidad es bastante más simple (solo 2 datos, sin la
+configuración financiera/horario/fondo de caja de los otros 5 pasos) - más riesgo que
+beneficio para lo que pedía este paso en concreto. El wizard viejo de 7 pasos
+(`templates/setup.html`) no se tocó y sigue disponible tal cual para quien lo necesite.
+
+**Archivos modificados:** `templates/select_empresa.html` (nuevo),
+`templates/register_empresa.html` (nuevo).
+
+---
+
+## [2026-07-18] Multi-tenant — Paso 8: Prueba end-to-end
+
+**Problema:** ninguno de los 7 pasos anteriores se había probado corriendo la app de
+verdad - solo compilaban.
+
+**Causa:** no es un bug, es la verificación final del plan.
+
+**Solución:** se probó en dos rondas. Primero, en una copia aislada del proyecto
+completo (con su propio `nimbo_master.db` y la copia real de Mi Cocina, para no arriesgar
+la base de datos real), usando `app.test_client()` de Flask para simular: `GET /` sin
+empresa elegida → redirige a `/select-empresa`; Mi Cocina aparece listada; elegir Mi
+Cocina y loguear con su admin real (contraseña reseteada solo en la copia, para poder
+probar) → dashboard con 200; login con contraseña incorrecta → rechazado; registrar
+"Surti La Unión" vía `/api/empresa/crear` → se crea su `nimbo.db` con 30 tablas; login
+del admin de Surti La Unión → funciona; **aislamiento de datos**: Surti La Unión arranca
+con 0 productos propios, Mi Cocina sigue con sus 11 productos reales sin cambios, y
+ningún usuario se mezcla entre las dos bases. Las 24 verificaciones pasaron. Segundo, se
+repitió la parte central de esa prueba **contra el proyecto real** (no una copia) para
+dejar "Surti La Unión" registrada de verdad como pedía el plan, sin tocar la cuenta real
+de Mi Cocina (no se intentó loguear con sus credenciales reales, solo se confirmó que
+`GET /` sin sesión de verdad redirige a login en vez de mostrar el dashboard). Resultado:
+Mi Cocina sigue con sus 11 productos intactos; Surti La Unión quedó creada y funcional,
+aislada correctamente.
+
+**Empresa de prueba real que quedó creada** (para que el usuario decida si la conserva,
+la renombra o la borra):
+- Nombre: Surti La Unión / slug: `surti-la-union`
+- Admin: usuario `admin_surti`, contraseña definida al crearla (no se deja en texto plano
+  aquí a propósito, para no dejarla en el historial de git - cámbiala desde el panel
+  "Usuarios" si no la recordás).
+
+**Hallazgo NO relacionado con esta migración, encontrado durante la prueba:**
+`templates/index.html` tiene 3 menciones de "Mi Cocina" escritas directo en el HTML (el
+`<title>` de la página, el saludo inicial del chat, y un texto de ejemplo dentro de un
+campo de configuración) que NO usan la variable `negocio_nombre` - a diferencia del
+nombre del sidebar (`{{ negocio_nombre or 'Mi Cocina' }}`), que sí es dinámico y ya
+muestra correctamente el nombre de cada empresa. Esto ya existía antes de esta migración
+(el proyecto nació pensado solo para Mi Cocina) y no se corrigió porque `templates/
+index.html` no estaba entre los archivos que este plan pedía modificar, y tocar
+contenido de esa plantilla no calificaba como parte de la migración de datos/rutas -
+queda como pendiente de limpieza cosmética para el futuro.
+
+**Archivos modificados:** ninguno (solo verificación); `nimbo_master.db` y
+`data/empresas/surti-la-union/` quedaron con datos reales nuevos como resultado de la
+prueba.

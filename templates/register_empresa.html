@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nimbo — Registrar empresa</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+  :root {
+    --bg:        #0a0a0f;
+    --surface:   #111118;
+    --surface2:  #1a1a24;
+    --border:    #22222e;
+    --accent:    #f97316;
+    --accent2:   #fb923c;
+    --text:      #e8e8f0;
+    --muted:     #6b6b80;
+    --red:       #ef4444;
+    --radius:    12px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Inter', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+
+  .card {
+    width: 100%;
+    max-width: 400px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 32px 28px;
+  }
+
+  .logo-mark {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 2px;
+  }
+
+  .logo-name { font-size: 20px; font-weight: 700; margin-bottom: 6px; }
+
+  .paso-indicador {
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 22px;
+  }
+
+  .input-group { margin-bottom: 16px; }
+
+  .input-label {
+    display: block;
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+
+  .input {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    padding: 10px 12px;
+    font-size: 14px;
+    font-family: inherit;
+    outline: none;
+  }
+  .input:focus { border-color: var(--accent); }
+
+  .slug-preview {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 6px;
+  }
+  .slug-preview code {
+    color: var(--accent2);
+    background: var(--surface2);
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+
+  .btn-primary {
+    width: 100%;
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 11px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 4px;
+  }
+  .btn-primary:hover { background: var(--accent2); }
+  .btn-primary:disabled { opacity: .5; cursor: default; }
+
+  .btn-ghost {
+    width: 100%;
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    margin-top: 10px;
+  }
+  .btn-ghost:hover { color: var(--accent2); border-color: var(--accent2); }
+
+  .error-box {
+    background: rgba(239,68,68,0.12);
+    border: 1px solid var(--red);
+    color: var(--red);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 13px;
+    margin-bottom: 16px;
+  }
+
+  .paso { display: none; }
+  .paso.activo { display: block; }
+
+  .back-link {
+    display: block;
+    text-align: center;
+    margin-top: 16px;
+    font-size: 12.5px;
+    color: var(--muted);
+    text-decoration: none;
+  }
+  .back-link:hover { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <div class="logo-mark">Nimbo</div>
+  <div class="logo-name">Registrar empresa nueva</div>
+  <div class="paso-indicador" id="paso-indicador">Paso 1 de 2 — Datos de la empresa</div>
+
+  <div id="error-box" class="error-box" style="display:none"></div>
+
+  <!-- Paso 1: nombre de la empresa -->
+  <div class="paso activo" id="paso-1">
+    <div class="input-group">
+      <label class="input-label">Nombre de la empresa</label>
+      <input class="input" type="text" id="campo-nombre" autofocus placeholder="Ej. Surti La Unión">
+      <div class="slug-preview">Identificador único: <code id="slug-preview">-</code></div>
+    </div>
+    <button class="btn-primary" id="btn-siguiente" disabled onclick="irAPaso2()">Siguiente</button>
+  </div>
+
+  <!-- Paso 2: cuenta admin -->
+  <div class="paso" id="paso-2">
+    <div class="input-group">
+      <label class="input-label">Nombre completo del administrador</label>
+      <input class="input" type="text" id="admin-nombre" placeholder="Ej. Ana Pérez">
+    </div>
+    <div class="input-group">
+      <label class="input-label">Usuario</label>
+      <input class="input" type="text" id="admin-username" autocomplete="username">
+    </div>
+    <div class="input-group">
+      <label class="input-label">Contraseña (mínimo 6 caracteres)</label>
+      <input class="input" type="password" id="admin-password" autocomplete="new-password">
+    </div>
+    <button class="btn-primary" id="btn-crear" onclick="crearEmpresa()">Crear empresa</button>
+    <button class="btn-ghost" onclick="irAPaso1()">Atrás</button>
+  </div>
+
+  <a class="back-link" href="{{ url_for('select_empresa') }}">← Volver a elegir empresa</a>
+</div>
+
+<script>
+function generarSlug(nombre) {
+  return nombre
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase().trim()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/[\s_-]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'empresa';
+}
+
+const campoNombre = document.getElementById('campo-nombre');
+const slugPreview = document.getElementById('slug-preview');
+const btnSiguiente = document.getElementById('btn-siguiente');
+
+campoNombre.addEventListener('input', () => {
+  const slug = generarSlug(campoNombre.value);
+  slugPreview.textContent = campoNombre.value.trim() ? slug : '-';
+  btnSiguiente.disabled = !campoNombre.value.trim();
+});
+
+function mostrarError(msg) {
+  const box = document.getElementById('error-box');
+  box.textContent = msg;
+  box.style.display = 'block';
+}
+function ocultarError() {
+  document.getElementById('error-box').style.display = 'none';
+}
+
+function irAPaso2() {
+  ocultarError();
+  document.getElementById('paso-1').classList.remove('activo');
+  document.getElementById('paso-2').classList.add('activo');
+  document.getElementById('paso-indicador').textContent = 'Paso 2 de 2 — Cuenta de administrador';
+  document.getElementById('admin-nombre').focus();
+}
+
+function irAPaso1() {
+  ocultarError();
+  document.getElementById('paso-2').classList.remove('activo');
+  document.getElementById('paso-1').classList.add('activo');
+  document.getElementById('paso-indicador').textContent = 'Paso 1 de 2 — Datos de la empresa';
+}
+
+async function crearEmpresa() {
+  ocultarError();
+  const nombre = campoNombre.value.trim();
+  const admin_nombre = document.getElementById('admin-nombre').value.trim();
+  const admin_username = document.getElementById('admin-username').value.trim();
+  const admin_password = document.getElementById('admin-password').value;
+
+  if (!admin_nombre || !admin_username || !admin_password) {
+    mostrarError('Completa nombre, usuario y contraseña del administrador.');
+    return;
+  }
+  if (admin_password.length < 6) {
+    mostrarError('La contraseña debe tener al menos 6 caracteres.');
+    return;
+  }
+
+  const btn = document.getElementById('btn-crear');
+  btn.disabled = true;
+  btn.textContent = 'Creando...';
+
+  try {
+    const resp = await fetch("{{ url_for('api_empresa_crear') }}", {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nombre, admin_username, admin_password, admin_nombre })
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      mostrarError(data.error || 'No se pudo crear la empresa.');
+      btn.disabled = false;
+      btn.textContent = 'Crear empresa';
+      return;
+    }
+    window.location.href = "{{ url_for('login') }}";
+  } catch (e) {
+    mostrarError('Error de conexión. Intenta de nuevo.');
+    btn.disabled = false;
+    btn.textContent = 'Crear empresa';
+  }
+}
+</script>
+
+</body>
+</html>

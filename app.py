@@ -14,7 +14,7 @@ import logging
 from functools import wraps
 from datetime import datetime
 from dotenv import load_dotenv
-from flask import Flask, render_template, request, jsonify, session, redirect, url_for
+from flask import Flask, render_template, request, jsonify, session, redirect, url_for, g
 from flask_cors import CORS
 from flask_login import (
     LoginManager, login_user, logout_user, login_required, current_user
@@ -28,12 +28,15 @@ from core.tool_registry import list_tools
 from services.skills_service import SkillsService
 from services.mail_service import mail, enviar_reset_password
 from core.auth import (
-    init_usuarios, get_usuario_by_id, verify_login, existe_algun_usuario, existe_admin,
+    get_usuario_by_id, verify_login, existe_admin,
     listar_usuarios, crear_usuario, set_usuario_activo, cambiar_password_usuario,
     set_permisos_usuario, MODULOS_DISPONIBLES,
     get_admin_activo, crear_token_reset, validar_token_reset, usar_token_reset
 )
-from core.configuracion import init_configuracion, get_config, set_config
+from core.configuracion import get_config, set_config
+from core.empresa import (
+    init_master, get_empresa_by_slug, listar_empresas, get_db_path, crear_empresa
+)
 import tools
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -56,83 +59,16 @@ app.config["MAIL_DEFAULT_SENDER"] = os.environ.get("MAIL_USERNAME", "")
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "")
 mail.init_app(app)
 
-# ── Login / Roles ──────────────────────────────────────────
-init_usuarios()
-init_configuracion()
-
-# ── Catalogo propio (Producto/Stock, independiente de Aronium) ─────────────
-from database.nimbo_db import init_productos, migrar_productos_desde_aronium
-init_productos()
-migrar_productos_desde_aronium()
-
-from database.nimbo_db import init_cotizaciones
-init_cotizaciones()
-
-from database.nimbo_db import init_caja
-init_caja()
-
-from database.nimbo_db import init_descuentos
-init_descuentos()
-
-from database.nimbo_db import init_garantias
-init_garantias()
-
-from database.nimbo_db import init_combos
-init_combos()
-
-from database.nimbo_db import init_unidades_medida
-init_unidades_medida()
-
-from database.nimbo_db import init_puntos
-init_puntos()
-
-from database.nimbo_db import init_codigos_barras
-init_codigos_barras()
-
-from database.nimbo_db import init_grupos_cliente
-init_grupos_cliente()
-
-from database.nimbo_db import init_fotos_servicio
-init_fotos_servicio()
-
-from database.nimbo_db import init_servicio_tecnico_ext
-init_servicio_tecnico_ext()
-
-from database.nimbo_db import init_informes_revision
-init_informes_revision()
-
-from database.nimbo_db import init_tarifas_mano_obra
-init_tarifas_mano_obra()
-
-from database.nimbo_db import init_cuentas_cobrar
-init_cuentas_cobrar()
-
-from database.nimbo_db import init_cuentas_pagar
-init_cuentas_pagar()
-
-from database.nimbo_db import init_pagos_fijos_ext
-init_pagos_fijos_ext()
-
-from database.nimbo_db import init_metas_semanales
-init_metas_semanales()
-
-from database.nimbo_db import init_venta_cobrador_ext
-init_venta_cobrador_ext()
-
-from database.nimbo_db import init_reembolsos
-init_reembolsos()
-
-from database.nimbo_db import init_venta_metodo_pago_ext
-init_venta_metodo_pago_ext()
-
-from database.nimbo_db import init_ajuste_pos
-init_ajuste_pos()
-
-# Instalaciones que ya tenian usuarios antes de que existiera el wizard de
-# onboarding (o que lo completaron con el /setup viejo de un solo paso) se
-# marcan como completas automaticamente, para no forzar el wizard nuevo.
-if existe_algun_usuario() and get_config("onboarding_completado") != "1":
-    set_config("onboarding_completado", "1")
+# ── Multi-tenant: master DB (directorio de empresas) ───────
+# Antes de esta migracion, aqui se llamaba a init_usuarios()/init_configuracion()
+# y a los 22 init_* de database/nimbo_db.py, uno por uno, contra el unico
+# nimbo.db global del proyecto. Ahora cada empresa tiene su propio nimbo.db
+# (data/empresas/<slug>/nimbo.db) y esas tablas se crean recien cuando la
+# empresa se registra (ver core/empresa.py crear_empresa() ->
+# _inicializar_tablas_empresa(), que llama a esas mismas 22 funciones con el
+# db_path de la empresa nueva) - al arrancar el servidor ya no hay un "nimbo.db"
+# unico que inicializar de entrada, solo el maestro que sabe donde esta cada uno.
+init_master()
 
 login_manager = LoginManager()
 login_manager.init_app(app)
@@ -146,7 +82,6 @@ def load_user(user_id):
 
 # ── Onboarding (primera instalación) ───────────────────────
 ONBOARDING_PASOS = (1, 2, 3, 4, 5, 6, 7)
-_setup_completado = False
 
 
 def _onboarding_completado():
@@ -161,16 +96,45 @@ def _onboarding_paso_actual():
     return paso if paso in ONBOARDING_PASOS else 1
 
 
+# ── Multi-tenant: contexto de empresa por request ──────────
+# Se registra ANTES que require_setup (Flask corre los before_request en el
+# orden en que se definen) para que _onboarding_completado()/get_config() de
+# abajo ya lean de la empresa correcta (g.empresa_db) cuando require_setup los
+# llama.
+@app.before_request
+def set_empresa_context():
+    slug = session.get("empresa_slug")
+    if slug:
+        g.empresa_slug = slug
+        g.empresa_db = get_db_path(slug)
+    else:
+        g.empresa_slug = None
+        g.empresa_db = None
+
+
+ENDPOINTS_SIN_EMPRESA = (
+    "select_empresa", "register_empresa", "api_empresa_crear", "static",
+)
+
+
 @app.before_request
 def require_setup():
-    global _setup_completado
-    if request.endpoint in ("setup", "setup_paso", "setup_demo", "setup_demo_paso", "static"):
+    if request.endpoint in ("setup", "setup_paso", "setup_demo", "setup_demo_paso"):
         return None
-    if not _setup_completado:
-        if _onboarding_completado():
-            _setup_completado = True
-        else:
-            return redirect(url_for("setup"))
+    if request.endpoint in ENDPOINTS_SIN_EMPRESA:
+        return None
+    if not g.empresa_slug:
+        # Sin empresa elegida todavia - lo resuelve la ruta raiz (redirige a
+        # /select-empresa) o el endpoint que corresponda, no este hook.
+        return None
+    # OJO: a diferencia de la version single-tenant, aqui ya NO se cachea el
+    # resultado en una variable global (antes _setup_completado) - en
+    # multi-tenant cada empresa tiene su propio onboarding_completado, asi que
+    # el chequeo tiene que repetirse por request (una consulta SQL mas por
+    # request, pero es la unica forma correcta de no confundir el "ya
+    # completo" de una empresa con el de otra).
+    if not _onboarding_completado():
+        return redirect(url_for("setup"))
 
 
 def admin_required(f):
@@ -217,8 +181,15 @@ nimbo_context = {}
 # ══════════════════════════════════════════════════════════
 
 @app.route("/")
-@login_required
 def index():
+    # Se revisa la empresa ANTES que la sesion de usuario (a diferencia del
+    # @login_required de antes de esta migracion): sin empresa elegida no
+    # tiene sentido preguntar login, porque verify_login() no sabria contra
+    # cual nimbo.db validar las credenciales.
+    if not session.get("empresa_slug"):
+        return redirect(url_for("select_empresa"))
+    if not current_user.is_authenticated:
+        return login_manager.unauthorized()
     return render_template("index.html", rol=current_user.rol, nombre=current_user.nombre,
                             negocio_nombre=get_config("negocio_nombre", "Mi Cocina"))
 
@@ -460,6 +431,9 @@ def setup_demo_paso(paso):
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
+    if not session.get("empresa_slug"):
+        return redirect(url_for("select_empresa"))
+
     if current_user.is_authenticated:
         return redirect(url_for("index"))
 
@@ -470,11 +444,79 @@ def login():
         user = verify_login(username, password)
         if user:
             login_user(user)
+            # Se re-guarda la empresa en session al loguear (ademas de ya
+            # estar ahi desde /select-empresa) para dejar tambien empresa_db
+            # cacheado en session, tal como pide el plan de migracion.
+            empresa = get_empresa_by_slug(session["empresa_slug"])
+            if empresa:
+                session["empresa_slug"] = empresa["Slug"]
+                session["empresa_db"] = empresa["DbPath"]
             next_page = request.args.get("next")
             return redirect(next_page or url_for("index"))
         error = "Usuario o contraseña incorrectos"
 
     return render_template("login.html", error=error)
+
+
+@app.route("/select-empresa", methods=["GET", "POST"])
+def select_empresa():
+    if request.method == "POST":
+        slug = request.form.get("slug", "").strip()
+        empresa = get_empresa_by_slug(slug)
+        if not empresa:
+            return render_template("select_empresa.html", empresas=listar_empresas(),
+                                    error="Empresa no encontrada.")
+        session["empresa_slug"] = empresa["Slug"]
+        session["empresa_db"] = empresa["DbPath"]
+        return redirect(url_for("login"))
+    return render_template("select_empresa.html", empresas=listar_empresas(), error=None)
+
+
+@app.route("/register-empresa")
+def register_empresa():
+    return render_template("register_empresa.html")
+
+
+@app.route("/api/empresa/crear", methods=["POST"])
+def api_empresa_crear():
+    data = request.json or {}
+    nombre = (data.get("nombre") or "").strip()
+    admin_username = (data.get("admin_username") or "").strip()
+    admin_password = data.get("admin_password") or ""
+    admin_nombre = (data.get("admin_nombre") or "").strip()
+
+    if not nombre:
+        return jsonify({"error": "El nombre de la empresa es obligatorio"}), 400
+    if not admin_username or not admin_password or not admin_nombre:
+        return jsonify({"error": "Faltan datos del administrador"}), 400
+    if len(admin_password) < 6:
+        return jsonify({"error": "La contraseña debe tener al menos 6 caracteres"}), 400
+
+    try:
+        empresa = crear_empresa(nombre)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    db_path_absoluto = os.path.join(BASE_DIR, empresa["db_path"])
+    try:
+        crear_usuario(admin_username, admin_password, admin_nombre, "admin",
+                       db_path=db_path_absoluto)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    # A diferencia de Mi Cocina (que paso por los 7 pasos del wizard viejo,
+    # incluyendo datos financieros/horario/fondo de caja), una empresa creada
+    # por este registro rapido de 2 pasos no pasa por esos pasos - se marca
+    # onboarding_completado directo para que no quede atrapada pidiendo el
+    # wizard completo la primera vez que alguien intente loguearse. El nombre
+    # del negocio si se guarda, para que el sidebar del dashboard lo muestre.
+    set_config("negocio_nombre", nombre, db_path=db_path_absoluto)
+    set_config("onboarding_completado", "1", db_path=db_path_absoluto)
+
+    session["empresa_slug"] = empresa["slug"]
+    session["empresa_db"] = empresa["db_path"]
+
+    return jsonify({"ok": True, "slug": empresa["slug"]})
 
 
 @app.route("/logout")
