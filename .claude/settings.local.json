@@ -210,7 +210,10 @@
       "Bash(chmod +x /home/victor/nimbo.exe/actualizar_mapa.sh)",
       "Bash(bash actualizar_mapa.sh)",
       "Bash(bash /home/victor/nimbo.exe/actualizar_mapa.sh)",
-      "Bash(git fetch *)"
+      "Bash(git fetch *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)"
     ]
   }
 }

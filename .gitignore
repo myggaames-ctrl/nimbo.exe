@@ -5,3 +5,4 @@ __pycache__/
 static/videos/
 static/fotos/
 static/fotos_servicio/
+.claude/settings.local.json.tmp.*
