@@ -197,7 +197,16 @@
       "Bash(sed -i '313s/database\\\\/aronium\\\\.py/database\\\\/nimbo_db.py/' gen_data.py)",
       "Bash(sed -i '340s/database\\\\/aronium\\\\.py/database\\\\/nimbo_db.py/' gen_data.py)",
       "Bash(sed -i '345s/database\\\\/aronium\\\\.py/database\\\\/nimbo_db.py/' gen_data.py)",
-      "Bash(git show *)"
+      "Bash(git show *)",
+      "Bash(gsettings get *)",
+      "Read(//usr/lib/**)",
+      "Bash(git rm *)",
+      "Bash(echo \"py_compile exit: $?\")",
+      "Bash(rsync -a --exclude=.git --exclude=__pycache__ --exclude=nimbo.db --exclude=static/fotos/* --exclude=static/fotos_servicio/* --exclude=static/videos/* --exclude=static/cotizaciones/* --exclude=static/etiquetas/* --exclude=backups --exclude=.env ./ /tmp/claude-1000/-home-victor-nimbo-exe/25133093-50db-4de4-b745-577801ba104d/scratchpad/nimbo_test_setup/)",
+      "Bash(rm -rf /tmp/claude-1000/-home-victor-nimbo-exe/25133093-50db-4de4-b745-577801ba104d/scratchpad/nimbo_test_setup2)",
+      "Bash(mkdir -p /tmp/claude-1000/-home-victor-nimbo-exe/25133093-50db-4de4-b745-577801ba104d/scratchpad/nimbo_test_setup2)",
+      "Bash(rsync -a --exclude=.git --exclude=__pycache__ --exclude=nimbo.db --exclude=static/fotos/* --exclude=static/fotos_servicio/* --exclude=static/videos/* --exclude=static/cotizaciones/* --exclude=static/etiquetas/* --exclude=backups --exclude=.env ./ /tmp/claude-1000/-home-victor-nimbo-exe/25133093-50db-4de4-b745-577801ba104d/scratchpad/nimbo_test_setup2/)",
+      "Bash(echo \"exit: $?\")"
     ]
   }
 }

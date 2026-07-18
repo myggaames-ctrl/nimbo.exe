@@ -1126,15 +1126,20 @@ identificacion de cobro).
     diferencia de cuentacobrar, es admin-only: pagar o endeudarse con un proveedor es una
     decision financiera del negocio, no una operacion de mostrador. Mismo criterio que la
     categoria "proveedor", tambien admin-only.
-  - Integracion con ordenes de compra: la unica via funcional para crear una OrdenCompra
-    desde el chat es "genera orden para X" / "crear orden para X" / "pedir a X" (proveedor.
-    generar_orden en tools/proveedor_tool.py, arma la orden con database.nimbo_db.
-    get_pedidos_sugeridos()) - el otro intent relacionado, proveedor.orden_compra ("pedir a X
-    N producto a QN"), retorna un marcador PROVEEDOR_ORDEN_INICIO: que nunca fue implementado
-    en core/nimbo.py (gap preexistente, no se toco en este feature). database.nimbo_db.
-    crear_orden_compra() ahora retorna (numero, orden_id) en vez de solo numero, para poder
-    vincular la CuentaPagar a la orden. generar_orden_tool ya no responde directo: retorna el
-    marcador ORDEN_COMPRA_PAGO_INICIO:orden_id|numero|proveedor_id|proveedor_nombre|whatsapp|
+  - Integracion con ordenes de compra: dos vias para crear una OrdenCompra desde el chat -
+    "genera orden para X" / "crear orden para X" / "pedir a X" (proveedor.generar_orden en
+    tools/proveedor_tool.py, arma la orden con database.nimbo_db.get_pedidos_sugeridos()) y
+    la forma estructurada "pedir a X N producto a QN" (proveedor.orden_compra). Cuando esta
+    seccion se escribio originalmente, proveedor.orden_compra todavia devolvia un marcador
+    (PROVEEDOR_ORDEN_INICIO:) que core/nimbo.py no sabia interpretar - gap que quedo anotado
+    aqui como pendiente. Ese gap se cerro despues, en la misma auditoria que corrigio los
+    conflictos entre detectores (ver bug de deteccion de "pedir a X N producto a QN" en
+    BUGS_Y_FIXES.md): orden_compra_tool se reescribio para re-parsear el texto completo
+    (proveedor, cantidad, producto y precio opcional) y devolver el mismo marcador que ya
+    usaba generar_orden_tool, asi que ambas vias terminan en el mismo flujo. database.
+    nimbo_db.crear_orden_compra() retorna (numero, orden_id) en vez de solo numero, para
+    poder vincular la CuentaPagar a la orden. Ambas tools devuelven el marcador
+    ORDEN_COMPRA_PAGO_INICIO:orden_id|numero|proveedor_id|proveedor_nombre|whatsapp|
     total|resp, que arranca el step ordencompra_waiting_pago en core/nimbo.py preguntando "Se
     pago de una vez o queda pendiente?". "pagado" cierra el flujo sin crear nada; "pendiente"
     pasa a ordencompra_waiting_fecha (mismo parseo de fecha/dias que venta_waiting_credito_
@@ -1187,6 +1192,31 @@ identificacion de cobro).
     proyectado (verde si positivo, rojo si negativo) + totales de ingresos/egresos, con boton
     "Ver detalle completo" que abre un modal (modal-flujo-caja en templates/index.html) con el
     desglose linea por linea (mismo patron de fetch-on-click que verFotosServicio()).
+- Limpieza de codigo huerfano: se identificaron (al construir mapa_nimbo.html, ver ese
+  archivo) 19 archivos que existian y se cargaban al arrancar el servidor pero a los que
+  ningun mensaje real del chat podia llegar, porque sus detectores nunca se importaron en
+  core/intent_detector.py (a diferencia de tools/, la carpeta core/detectors/ NO se carga
+  automatico por convencion - cada detector se importa a mano ahi, y estos 3 nunca se
+  agregaron). Se verifico con un analisis de imports basado en ast de Python (no solo
+  grep) que ninguno de los 19 tenia un importador fuera del propio grupo antes de
+  borrarlos con git rm (conserva el historial). Eliminados: tools/budget_tool.py +
+  core/detectors/budget_detector.py + services/budget_service.py (presupuestos, nunca
+  conectados), tools/customer_tool.py + core/detectors/customer_detector.py +
+  services/customer_service.py (duplicado en ingles de cliente_tool.py/
+  cliente_detector.py), tools/windows_tool.py + core/detectors/windows_detector.py
+  (abria apps de Windows via subprocess, sin relacion con el negocio), core/event_bus.py
+  y core/workspace.py (solo los usaba tools/budget_tool.py, ya huerfano),
+  core/reasoning_engine.py y core/confirmations.py (placeholders sin ningun caller real
+  en el pipeline), y 7 archivos completamente vacios (0 lineas): tools/sales_tool.py,
+  services/sales.py, tools/invoice_tool.py, services/invoices.py, services/customers.py,
+  core/audit.py, core/permissions.py. Verificacion post-borrado: py_compile sin errores,
+  import real de app.py/core.nimbo/core.action_engine/tools sin excepciones, nimbo.db
+  intacta. Detalle completo (por que cada uno no se usaba, resultado de las pruebas) en
+  BUGS_Y_FIXES.md; la decision de borrar en vez de terminar de conectar o dejar como
+  estaba queda en DECISIONS.md. De paso, revisando el codigo real de proveedor_tool.py
+  para esta limpieza se encontro que el Pendiente (ver seccion Pendientes) sobre
+  proveedor.orden_compra estaba desactualizado - ya se habia corregido en el pasado sin
+  actualizar esta nota, ver la seccion "Cuentas por pagar" mas arriba.
 
 ## Tablas nimbo.db
 Producto, Stock, Cliente, OrdenServicio, HistorialOrden, Kardex, StockMinimo, ProductoFoto,
@@ -1220,15 +1250,11 @@ MAIL_SERVER, MAIL_PORT, MAIL_USERNAME, MAIL_PASSWORD, ADMIN_EMAIL
 8. Cuentas por cobrar en Caja/Cotizaciones: "credito" como metodo de pago solo se
    implemento en el flujo de venta simple del chat (ver seccion Cuentas por cobrar), no
    en /api/caja/cobrar ni en cotizacion.aceptar
-9. proveedor.orden_compra ("pedir a X N producto a QN") retorna un marcador
-   PROVEEDOR_ORDEN_INICIO: que nunca se implemento en core/nimbo.py (gap preexistente,
-   detectado al integrar Cuentas por pagar - ver esa seccion). La unica via funcional
-   para crear una OrdenCompra por chat sigue siendo "genera orden para X"
-10. Stock.StockMinimo (columna nueva de la tabla Stock propia, ver "Catalogo propio
-    (Producto/Stock)") no esta consolidada con la tabla StockMinimo ya existente
-    (ProductId/ProductName/Minimo) - son dos lugares con el mismo dato, StockMinimo
-    sigue siendo el que de verdad usan las alertas/pedidos sugeridos.
-11. Categoria y Unidad de la tabla Producto existen en el esquema pero ningun flujo las
+9. Stock.StockMinimo (columna nueva de la tabla Stock propia, ver "Catalogo propio
+   (Producto/Stock)") no esta consolidada con la tabla StockMinimo ya existente
+   (ProductId/ProductName/Minimo) - son dos lugares con el mismo dato, StockMinimo
+   sigue siendo el que de verdad usan las alertas/pedidos sugeridos.
+10. Categoria y Unidad de la tabla Producto existen en el esquema pero ningun flujo las
     llena o las lee todavia (ver misma seccion).
 
 FLUJO EN TIENDA (pendiente):

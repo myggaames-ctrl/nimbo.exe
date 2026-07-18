@@ -502,6 +502,133 @@ mensaje de timeout claro")
 
 ---
 
+## Limpieza de código huérfano (2026-07-18)
+
+Se identificaron 19 archivos huérfanos durante la construcción de `mapa_nimbo.html`
+(ver ese archivo y `DECISIONS.md`): código que existe, se carga o se registra al
+arrancar el servidor, pero al que ningún mensaje real del chat puede llegar porque su
+detector nunca se importó en `core/intent_detector.py` (o, en el caso de los servicios
+de soporte, porque solo los usaban las tools ya huérfanas). Antes de borrar nada se
+verificó, con un análisis de imports basado en `ast` de Python (no solo `grep`), que
+NINGUNO de los 19 archivos tiene un importador fuera de ese mismo grupo.
+
+**Archivos eliminados y por qué no se usaban:**
+
+- `tools/budget_tool.py` / `core/detectors/budget_detector.py` - un detector de
+  "presupuestos" (`BudgetDetector`) que nunca se importó en `core/intent_detector.py`
+  (se desconectó del pipeline en el commit `21b8075`, "Auditoria completa" - ver bug
+  #14 más arriba en este documento). Sin ese detector, `budget.create` nunca se
+  dispara desde el chat.
+- `tools/customer_tool.py` / `core/detectors/customer_detector.py` - versión en
+  inglés de `cliente_tool.py`/`cliente_detector.py`, duplicaba funcionalidad ya
+  existente en español. Tampoco estaba importado en `core/intent_detector.py`.
+- `tools/windows_tool.py` / `core/detectors/windows_detector.py` - abría programas de
+  Windows (bloc de notas, etc.) vía `subprocess`. Sin relación con el negocio de
+  Nimbo y, de nuevo, sin detector conectado.
+- `services/budget_service.py` - CRUD de presupuestos sobre `nimbo.db`, usado
+  únicamente por `tools/budget_tool.py` (ya huérfano).
+- `services/customer_service.py` - CRUD de clientes en una tabla/ruta paralela,
+  usado únicamente por `tools/customer_tool.py` y `tools/budget_tool.py` (ambos
+  huérfanos).
+- `core/event_bus.py` - un event bus pub/sub simple, sin ningún suscriptor real; su
+  único uso era `tools/budget_tool.py`.
+- `core/workspace.py` - un diccionario en memoria (set/get); su único uso también
+  era `tools/budget_tool.py`.
+- `core/reasoning_engine.py` - el propio docstring del archivo decía "por ahora este
+  motor solo delega la ejecución" - un placeholder para un razonamiento futuro que
+  nunca se conectó a `core/action_engine.py` ni a `core/nimbo.py`.
+- `core/confirmations.py` - un `ConfirmationManager` para crear confirmaciones
+  pendientes con uuid, sin ningún caller en el pipeline real del chat.
+- `tools/sales_tool.py`, `services/sales.py` - archivos completamente vacíos (0
+  líneas), el inicio nunca terminado de una tercera versión (en inglés) del módulo
+  de ventas.
+- `tools/invoice_tool.py`, `services/invoices.py` - archivos completamente vacíos,
+  el inicio nunca terminado de un módulo de facturación en inglés.
+- `services/customers.py` - archivo completamente vacío.
+- `core/audit.py`, `core/permissions.py` - archivos completamente vacíos,
+  reservados aparentemente para un futuro sistema de auditoría/permisos que nunca
+  se escribió (el control de permisos real vive en `core/action_engine.py`,
+  `CATEGORIAS_POR_ROL`).
+
+**Cómo se verificó antes de borrar:** se corrió un análisis con el módulo `ast` de
+Python sobre los 87 archivos `.py` del proyecto, resolviendo cada `import`/`from ...
+import` a su archivo real, y se confirmó que ninguno de los 19 archivos tenía un
+importador FUERA del propio grupo a eliminar (sí había imports ENTRE ellos - por
+ejemplo `tools/budget_tool.py` importaba `core/event_bus.py` y `core/workspace.py` -
+pero como los dos lados de esa relación estaban en la lista de borrado, no queda
+ninguna referencia rota). Se usó `git rm` (no borrado directo del disco) para
+conservar el historial de esos archivos en git por si hace falta consultarlos más
+adelante.
+
+**Verificación después de borrar:** `python3 -m py_compile` sobre todos los `.py`
+del proyecto sin errores; se importaron `app.py`, `core.nimbo`, `core.action_engine`
+y el paquete `tools` completo en un proceso de Python real - todo cargó sin
+excepciones. El registro de tools activas bajó de 155 a 146 funciones (las que
+registraba `tools/budget_tool.py`), y el número de detectores activos en
+`ActionEngine` se mantuvo en 21 (los 3 detectores huérfanos ya no contaban desde
+antes, porque nunca estuvieron en esa lista). La base de datos real (`nimbo.db`) se
+revisó después y sigue intacta (mismos usuarios y productos que antes de la
+limpieza).
+
+---
+
+## Prueba del wizard de registro de nueva empresa (2026-07-18)
+
+**Cómo se probó:** se copió el proyecto completo a una carpeta aislada (fuera de
+`/home/victor/nimbo.exe`, en un directorio temporal), excluyendo `.git`,
+`__pycache__`, `.env` y el `nimbo.db` real - para que la copia arrancara como una
+instalación totalmente nueva, sin usuarios ni configuración. Se usó
+`app.test_client()` de Flask (sin necesidad de un navegador real) para simular a
+alguien llenando el wizard de `/setup`, paso por paso, con datos de una empresa de
+prueba ("Ferretería La Prueba").
+
+**Qué se verificó** (cada paso a través de `app.test_client()`, confirmando después
+directo en la `nimbo.db` de la copia con `sqlite3`):
+- Que una instalación nueva (sin `nimbo.db`) redirige automáticamente a `/setup/1`.
+- Los 7 pasos completos: datos del negocio, cuenta admin, configuración financiera
+  (IVA/POS/ISR), horario, fondo de caja, primer empleado, y resumen final.
+- Que `Configuracion` queda con todos los valores esperados, incluyendo los
+  derivados (ej. `iva_porcentaje=12` a partir de `cobra_iva=si`) y el efecto
+  secundario de que el fondo de caja del paso 5 también se guarda como
+  `caja_fondo_sugerido`.
+- Que se crea exactamente 1 usuario con rol `admin`, con sus datos correctos
+  (username, nombre, activo).
+- Que se crea el primer empleado con su teléfono.
+- Que `onboarding_completado` queda en `"1"` al terminar el paso 7.
+- Que el admin recién creado puede iniciar sesión de verdad (`/login`) y llegar al
+  dashboard (`GET /` responde 200, sin redirigir a `/setup` ni a `/login`).
+- Que un login con la contraseña equivocada se rechaza con el mensaje de error
+  esperado, sin dejar entrar.
+
+**Casos borde probados aparte** (en una segunda copia aislada, para no mezclar con
+la prueba principal):
+- Paso 1 sin los campos obligatorios (nombre/tipo/país): no avanza, muestra el error.
+- Intentar saltar directo a `/setup/3` sin haber completado el paso 1: rebota al
+  paso actual en vez de dejar avanzar.
+- Paso 2 con una contraseña de menos de 6 caracteres: no avanza, muestra el error, y
+  NO deja ningún usuario a medio crear en la base de datos.
+- Reenviar el paso 2 después de que el admin ya se creó (ej. si alguien le da
+  "atrás" en el navegador y reenvía el formulario): avanza sin error y sin crear un
+  segundo admin.
+- Los botones "saltar" de los pasos 5 (fondo de caja) y 6 (primer empleado): avanzan
+  correctamente sin guardar ni crear nada de ese paso.
+- Con el onboarding ya completo, visitar `/setup/1` de nuevo redirige a `/login` en
+  vez de dejar reabrir el wizard.
+
+**Resultado:** las 24 verificaciones (10 del flujo principal + 6 de datos guardados
++ 8 de casos borde) pasaron. **No se encontró ningún bug en el wizard de registro** -
+el flujo de onboarding, tanto en su camino feliz como en los casos borde probados,
+guarda correctamente el usuario admin y toda la configuración del negocio, y protege
+correctamente contra reenvíos duplicados, contraseñas cortas, campos faltantes y
+saltos de paso.
+
+**Archivos involucrados en la prueba (sin cambios, solo verificados):** `app.py`
+(rutas `/setup`, `/setup/<paso>`, `/login`), `core/auth.py` (`crear_usuario`,
+`existe_admin`, `verify_login`), `core/configuracion.py`
+(`set_config`/`get_config`).
+
+---
+
 ## Nota sobre esta reconstrucción
 
 Esta lista se armó revisando los commits de git uno por uno (`git log`, `git show`) y

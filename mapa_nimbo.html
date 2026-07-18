@@ -369,54 +369,6 @@ const DATA = {
    "status": "activo"
   },
   {
-   "id": "core/event_bus.py",
-   "name": "event_bus.py",
-   "group": "core",
-   "desc": "Un event bus pub/sub muy simple (subscribe/listeners). Solo lo usa tools/budget_tool.py, que está huérfano (ver abajo) - hoy no tiene ningún efecto real en el chat.",
-   "func": "subscribe(evento, callback) -> permitir que un módulo reaccione a un evento de otro.",
-   "status": "huerfano"
-  },
-  {
-   "id": "core/workspace.py",
-   "name": "workspace.py",
-   "group": "core",
-   "desc": "Un diccionario clave/valor en memoria (set/get), pensado como 'pizarra' compartida. Solo lo usa tools/budget_tool.py, que está huérfano - no participa del pipeline real del chat.",
-   "func": "Workspace.set(clave, valor) / get(clave) en memoria (se pierde al reiniciar el servidor).",
-   "status": "huerfano"
-  },
-  {
-   "id": "core/reasoning_engine.py",
-   "name": "reasoning_engine.py",
-   "group": "core",
-   "desc": "Placeholder explícito (lo dice su propio docstring): 'por ahora este motor solo delega la ejecución'. Pensado para, en el futuro, encargarse del razonamiento y la toma de decisiones.",
-   "func": "Hoy: reenviar todo a ActionEngine sin agregar lógica propia.",
-   "status": "huerfano"
-  },
-  {
-   "id": "core/confirmations.py",
-   "name": "confirmations.py",
-   "group": "core",
-   "desc": "ConfirmationManager: crea y guarda 'confirmaciones pendientes' con un uuid. No se ve conectado a ningún flujo del pipeline actual del chat (ni nimbo.py ni action_engine.py lo importan).",
-   "func": "create(accion, datos) -> guarda una acción pendiente de confirmar por uuid.",
-   "status": "huerfano"
-  },
-  {
-   "id": "core/audit.py",
-   "name": "audit.py",
-   "group": "core",
-   "desc": "Archivo completamente vacío (0 líneas). Probablemente reservado para un futuro sistema de auditoría (quién hizo qué y cuándo), todavía sin empezar.",
-   "func": "Ninguna todavía.",
-   "status": "vacio"
-  },
-  {
-   "id": "core/permissions.py",
-   "name": "permissions.py",
-   "group": "core",
-   "desc": "Archivo completamente vacío (0 líneas). El control de permisos real hoy vive en core/action_engine.py (CATEGORIAS_POR_ROL); este archivo parece un lugar reservado para separar esa lógica en el futuro.",
-   "func": "Ninguna todavía.",
-   "status": "vacio"
-  },
-  {
    "id": "openclaw_bridge.py",
    "name": "openclaw_bridge.py",
    "group": "bridge",
@@ -604,39 +556,15 @@ const DATA = {
    "id": "core/detectors/__init__.py",
    "name": "detectors/__init__.py",
    "group": "core",
-   "desc": "Archivo vacío. A diferencia de tools/__init__.py, los detectores NO se cargan automáticamente por convención de carpeta: cada uno se importa a mano, uno por uno, en core/intent_detector.py - por eso un detector nuevo que no se agregue ahí (ver budget/customer/windows abajo) queda huérfano sin que nada avise.",
+   "desc": "Archivo vacío. A diferencia de tools/__init__.py, los detectores NO se cargan automáticamente por convención de carpeta: cada uno se importa a mano, uno por uno, en core/intent_detector.py - así se evita que un detector nuevo quede huérfano sin que nada avise (hasta 2026-07-18 hubo 3 así - BudgetDetector/CustomerDetector/WindowsDetector - se eliminaron en la limpieza de código huérfano, ver BUGS_Y_FIXES.md).",
    "func": "Ninguna, solo marca el paquete.",
    "status": "vacio"
-  },
-  {
-   "id": "core/detectors/budget_detector.py",
-   "name": "budget_detector.py",
-   "group": "detector",
-   "desc": "BudgetDetector. Reconoce 'crear presupuesto para X'. NUNCA fue importado en core/intent_detector.py, así que el chat jamás llega a probarlo: es código construido pero inalcanzable desde cualquier mensaje real de un usuario.",
-   "func": "detect(texto) -> intent 'budget.create', pero nadie lo llama en producción.",
-   "status": "huerfano"
-  },
-  {
-   "id": "core/detectors/customer_detector.py",
-   "name": "customer_detector.py",
-   "group": "detector",
-   "desc": "CustomerDetector. Versión en inglés de ClienteDetector ('crear cliente X'). Tampoco está importado en core/intent_detector.py - duplica funcionalidad de cliente_detector.py sin estar conectada.",
-   "func": "detect(texto) -> intents 'customer.*', pero nadie lo llama en producción.",
-   "status": "huerfano"
-  },
-  {
-   "id": "core/detectors/windows_detector.py",
-   "name": "windows_detector.py",
-   "group": "detector",
-   "desc": "WindowsDetector. Reconoce 'abre X' para abrir programas de Windows (bloc de notas, etc). Tampoco está importado en core/intent_detector.py.",
-   "func": "detect(texto) -> intent para abrir una app de Windows, pero nadie lo llama en producción.",
-   "status": "huerfano"
   },
   {
    "id": "tools/__init__.py",
    "name": "tools/__init__.py",
    "group": "tool",
-   "desc": "Carga automática de TODOS los módulos de tools/ usando pkgutil.iter_modules + importlib. A diferencia de core/detectors/, aquí SÍ basta con crear el archivo para que se registre solo - por eso las tools huérfanas (budget/customer/windows) SÍ quedan registradas en TOOLS{} aunque ningún detector las alcance nunca.",
+   "desc": "Carga automática de TODOS los módulos de tools/ usando pkgutil.iter_modules + importlib. A diferencia de core/detectors/, aquí basta con crear el archivo para que se registre solo - por eso las tools huérfanas que existieron hasta 2026-07-18 (budget/customer/windows) se cargaban sin que ningún detector las alcanzara nunca, hasta que se eliminaron en la limpieza de código huérfano (ver BUGS_Y_FIXES.md).",
    "func": "Importar cada archivo de tools/ una sola vez al arrancar la app.",
    "status": "activo"
   },
@@ -809,46 +737,6 @@ const DATA = {
    "status": "activo"
   },
   {
-   "id": "tools/budget_tool.py",
-   "name": "budget_tool.py",
-   "group": "tool",
-   "desc": "Presupuestos (budget.create/...). Se registra en TOOLS{} igual que cualquier otra tool (gracias a tools/__init__.py), pero como BudgetDetector nunca se importó en intent_detector.py, ningún mensaje de chat llega a disparar su intent - es la única forma de probarla hoy es llamándola directo en código, no por el chat.",
-   "func": "Crear/gestionar presupuestos, usa event_bus.py y workspace.py (también huérfanos).",
-   "status": "huerfano"
-  },
-  {
-   "id": "tools/customer_tool.py",
-   "name": "customer_tool.py",
-   "group": "tool",
-   "desc": "Versión en inglés de cliente_tool.py, respaldada por services/customer_service.py en vez de database/nimbo_db.py. Registrada en TOOLS{} pero inalcanzable: CustomerDetector no está en el pipeline.",
-   "func": "CRUD de clientes en una tabla/servicio paralelo, sin conexión real al chat.",
-   "status": "huerfano"
-  },
-  {
-   "id": "tools/windows_tool.py",
-   "name": "windows_tool.py",
-   "group": "tool",
-   "desc": "Abre programas de Windows (notepad.exe, etc) vía subprocess. Registrada en TOOLS{} pero inalcanzable: WindowsDetector no está en el pipeline.",
-   "func": "open_app(nombre) -> subprocess.Popen de una app de Windows, nunca disparada desde el chat.",
-   "status": "huerfano"
-  },
-  {
-   "id": "tools/sales_tool.py",
-   "name": "sales_tool.py",
-   "group": "tool",
-   "desc": "Archivo completamente vacío (0 líneas). Junto a services/sales.py parece el inicio de una tercera versión (en inglés) del módulo de ventas, sin empezar todavía.",
-   "func": "Ninguna todavía.",
-   "status": "vacio"
-  },
-  {
-   "id": "tools/invoice_tool.py",
-   "name": "invoice_tool.py",
-   "group": "tool",
-   "desc": "Archivo completamente vacío (0 líneas). Junto a services/invoices.py parece el inicio de un módulo de facturación en inglés, sin empezar todavía.",
-   "func": "Ninguna todavía.",
-   "status": "vacio"
-  },
-  {
    "id": "services/inventory.py",
    "name": "inventory.py",
    "group": "service",
@@ -935,46 +823,6 @@ const DATA = {
    "desc": "Ejecuta un subprocess para chequear el estado de 'skills' externas.",
    "func": "Función/clase de servicio que una o varias tools llaman para hablar con el mundo exterior (APIs, PDFs, IA) o con la base de datos.",
    "status": "activo"
-  },
-  {
-   "id": "services/budget_service.py",
-   "name": "budget_service.py",
-   "group": "service",
-   "desc": "BudgetService: CRUD de presupuestos directo sobre nimbo.db (sqlite3 propio, sin pasar por database/nimbo_db.py). Solo lo usa tools/budget_tool.py, que está huérfano.",
-   "func": "Persistencia de presupuestos - funcional en sí misma, pero sin ningún camino real desde el chat.",
-   "status": "huerfano"
-  },
-  {
-   "id": "services/customer_service.py",
-   "name": "customer_service.py",
-   "group": "service",
-   "desc": "CustomerService: CRUD de clientes directo sobre nimbo.db, paralelo a las funciones de cliente de database/nimbo_db.py. Lo usan tools/customer_tool.py y tools/budget_tool.py, ambos huérfanos.",
-   "func": "Persistencia de clientes en una tabla/ruta paralela, sin conexión real al chat.",
-   "status": "huerfano"
-  },
-  {
-   "id": "services/customers.py",
-   "name": "customers.py",
-   "group": "service",
-   "desc": "Archivo completamente vacío (0 líneas).",
-   "func": "Ninguna todavía.",
-   "status": "vacio"
-  },
-  {
-   "id": "services/invoices.py",
-   "name": "invoices.py",
-   "group": "service",
-   "desc": "Archivo completamente vacío (0 líneas).",
-   "func": "Ninguna todavía.",
-   "status": "vacio"
-  },
-  {
-   "id": "services/sales.py",
-   "name": "sales.py",
-   "group": "service",
-   "desc": "Archivo completamente vacío (0 líneas).",
-   "func": "Ninguna todavía.",
-   "status": "vacio"
   },
   {
    "id": "templates/index.html",
@@ -1255,34 +1103,6 @@ const DATA = {
    "target": "database/nimbo_db.py"
   },
   {
-   "source": "tools/budget_tool.py",
-   "target": "core/__init__.py"
-  },
-  {
-   "source": "tools/budget_tool.py",
-   "target": "core/event_bus.py"
-  },
-  {
-   "source": "tools/budget_tool.py",
-   "target": "core/tool_registry.py"
-  },
-  {
-   "source": "tools/budget_tool.py",
-   "target": "core/workspace.py"
-  },
-  {
-   "source": "tools/budget_tool.py",
-   "target": "services/budget_service.py"
-  },
-  {
-   "source": "tools/budget_tool.py",
-   "target": "services/customer_service.py"
-  },
-  {
-   "source": "tools/budget_tool.py",
-   "target": "services/inventory.py"
-  },
-  {
    "source": "tools/caja_tool.py",
    "target": "core/tool_registry.py"
   },
@@ -1373,18 +1193,6 @@ const DATA = {
   {
    "source": "tools/cuenta_pagar_tool.py",
    "target": "database/nimbo_db.py"
-  },
-  {
-   "source": "tools/customer_tool.py",
-   "target": "core/__init__.py"
-  },
-  {
-   "source": "tools/customer_tool.py",
-   "target": "core/tool_registry.py"
-  },
-  {
-   "source": "tools/customer_tool.py",
-   "target": "services/customer_service.py"
   },
   {
    "source": "tools/descuento_tool.py",
@@ -1497,10 +1305,6 @@ const DATA = {
   {
    "source": "tools/venta_tool.py",
    "target": "database/nimbo_db.py"
-  },
-  {
-   "source": "tools/windows_tool.py",
-   "target": "core/tool_registry.py"
   },
   {
    "source": "app.py",

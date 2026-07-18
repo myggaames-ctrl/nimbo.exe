@@ -706,6 +706,109 @@ Línea por línea:
 
 ---
 
+## 9. Por qué se eliminó el código huérfano en vez de conectarlo o dejarlo como estaba
+
+### Qué problema resolvía
+Al construir `mapa_nimbo.html` (un mapa visual de qué archivo importa a cuál) se
+descubrieron 19 archivos que existían, se cargaban al arrancar el servidor e incluso se
+registraban correctamente (`tools/budget_tool.py` y otros quedaban en `TOOLS{}`, listos
+para ejecutarse) - pero a los que ningún mensaje real de un usuario podía llegar nunca,
+porque sus detectores nunca se importaron en `core/intent_detector.py` (a diferencia de
+`tools/`, la carpeta `core/detectors/` no se carga automático por convención de carpeta -
+cada detector se agrega a mano en una lista, y estos 3 nunca se agregaron ahí). Sumado a
+eso, había 7 archivos completamente vacíos (0 líneas), inicios nunca terminados de
+módulos en inglés que duplicaban funcionalidad ya existente en español. Había que decidir
+qué hacer con todo ese código: quedaba código de verdad en el repositorio que nadie podía
+usar, y que además podía confundir a futuro a cualquiera (incluida una IA asistente) que
+lo leyera pensando que SÍ estaba en uso.
+
+### Qué opciones había
+1. **Dejarlo tal cual estaba**, documentando en `CLAUDE.md`/`BUGS_Y_FIXES.md` que estaba
+   huérfano, para no arriesgar borrar algo que en el futuro se quisiera retomar.
+2. **Terminar de conectarlo**: agregar los 3 detectores faltantes a
+   `core/intent_detector.py` y escribir el código que faltaba en los 7 archivos vacíos,
+   para que las funcionalidades (presupuestos, clientes en inglés, abrir apps de
+   Windows, ventas/facturas en inglés) quedaran completas y utilizables.
+3. **Eliminarlo por completo**, después de verificar rigurosamente que ningún otro
+   archivo dependía de él.
+
+### Por qué se eligió esta solución
+Se eligió la opción 3 (eliminar) por varias razones concretas:
+
+- **Duplicaba funcionalidad ya construida y en uso.** `customer_tool.py`/
+  `customer_detector.py` volvían a hacer, en inglés, exactamente lo que ya hacían
+  `cliente_tool.py`/`cliente_detector.py` en español - terminarlos de conectar hubiera
+  significado mantener DOS caminos para lo mismo, con el riesgo de que un día
+  respondieran distinto ante el mismo tipo de mensaje.
+- **No encajaba con el resto del proyecto.** `windows_tool.py` (abrir el Bloc de notas de
+  Windows) no tiene relación con ninguna operación real de la tienda - conectarlo no
+  resolvía ningún problema de negocio, solo agregaba superficie de código para mantener.
+- **El costo de "dejarlo como estaba" crece con el tiempo.** Cada archivo huérfano que se
+  deja "por si acaso" es una trampa para el próximo cambio: alguien (persona o IA) puede
+  leerlo, asumir que está en uso, y perder tiempo modificándolo o razonando sobre un
+  comportamiento que en realidad nunca se ejecuta.
+- **Se verificó a fondo antes de borrar, así que el riesgo real era bajo.** No fue un
+  borrado a ciegas: se corrió un análisis con el módulo `ast` de Python (lee el código
+  real, no solo busca texto como `grep`) que confirmó que ninguno de los 19 archivos
+  tenía un importador fuera del propio grupo a eliminar - incluyendo las dependencias
+  ENTRE ellos mismos (`tools/budget_tool.py` importaba `core/event_bus.py` y
+  `core/workspace.py`, pero como los tres estaban en la lista de borrado, no queda
+  ninguna referencia rota). Se usó `git rm` (no borrado directo del disco), así que el
+  código sigue disponible en el historial de git si alguna vez hace falta recuperarlo.
+
+### Qué archivo(s) implementan la solución
+Los 19 archivos eliminados están listados completos, con el motivo específico de cada
+uno, en `BUGS_Y_FIXES.md` (sección "Limpieza de código huérfano"). El script de análisis
+de imports (basado en `ast`) es el mismo que genera los datos de `mapa_nimbo.html`.
+
+### Ejemplo de código simplificado, explicado línea por línea
+
+```python
+import ast, os
+
+def encuentra_importadores_externos(archivo_a_borrar, todos_los_archivos, grupo_a_borrar):
+    importadores = []
+    for otro_archivo in todos_los_archivos:
+        if otro_archivo in grupo_a_borrar:
+            continue  # un import DENTRO del propio grupo no cuenta como "externo"
+        codigo = open(otro_archivo, encoding="utf-8").read()
+        arbol = ast.parse(codigo)
+        for nodo in ast.walk(arbol):
+            if isinstance(nodo, ast.ImportFrom) and nodo.module == archivo_a_borrar:
+                importadores.append(otro_archivo)
+    return importadores
+```
+
+Línea por línea:
+- `import ast, os`: `ast` (Abstract Syntax Tree, "árbol de sintaxis abstracta") es el
+  módulo que trae Python para LEER su propio código como una estructura de datos, en vez
+  de tratarlo como texto plano - por eso es más confiable que buscar la palabra "import"
+  con `grep`, que podría confundirse con un comentario o un string que menciona esa
+  palabra sin ser un import real.
+- `def encuentra_importadores_externos(...)`: recibe el archivo que se quiere borrar, la
+  lista de todos los archivos del proyecto, y el grupo completo que se piensa borrar
+  junto (para poder ignorar los imports internos entre ellos).
+- `importadores = []`: aquí se va a acumular la lista de archivos que sí lo necesitan.
+- `for otro_archivo in todos_los_archivos:`: revisa cada archivo del proyecto, uno por
+  uno.
+- `if otro_archivo in grupo_a_borrar: continue`: si ese archivo TAMBIÉN se va a borrar,
+  no cuenta como un importador "externo" - se salta al siguiente sin revisarlo.
+- `codigo = open(otro_archivo, ...).read()`: lee el contenido del archivo como texto.
+- `arbol = ast.parse(codigo)`: convierte ese texto en un árbol de sintaxis - una
+  estructura que Python puede recorrer nodo por nodo, entendiendo qué es una función, qué
+  es un import, qué es un comentario, etc.
+- `for nodo in ast.walk(arbol):`: recorre TODOS los nodos del árbol (cada línea, cada
+  expresión) uno por uno.
+- `if isinstance(nodo, ast.ImportFrom) and nodo.module == archivo_a_borrar:`: pregunta
+  "¿este nodo es específicamente un `from ALGO import ALGO`? ¿Y ese ALGO es el archivo
+  que quiero borrar?".
+- `importadores.append(otro_archivo)`: si sí, anota que ESTE archivo depende del que se
+  quiere borrar.
+- `return importadores`: al final, devuelve la lista completa. Si la lista viene vacía
+  para los 19 archivos, es seguro borrarlos.
+
+---
+
 ## Nota final
 
 Los ejemplos de código de este documento están **simplificados** a propósito para que se
