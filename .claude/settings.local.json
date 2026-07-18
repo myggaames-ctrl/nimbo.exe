@@ -196,7 +196,8 @@
       "Bash(sed -i '292s/database\\\\/aronium\\\\.py/database\\\\/nimbo_db.py/' gen_data.py)",
       "Bash(sed -i '313s/database\\\\/aronium\\\\.py/database\\\\/nimbo_db.py/' gen_data.py)",
       "Bash(sed -i '340s/database\\\\/aronium\\\\.py/database\\\\/nimbo_db.py/' gen_data.py)",
-      "Bash(sed -i '345s/database\\\\/aronium\\\\.py/database\\\\/nimbo_db.py/' gen_data.py)"
+      "Bash(sed -i '345s/database\\\\/aronium\\\\.py/database\\\\/nimbo_db.py/' gen_data.py)",
+      "Bash(git show *)"
     ]
   }
 }
