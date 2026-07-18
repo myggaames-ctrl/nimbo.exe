@@ -15,6 +15,7 @@ from functools import wraps
 from datetime import datetime
 from dotenv import load_dotenv
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for, g
+from werkzeug.exceptions import HTTPException
 from flask_cors import CORS
 from flask_login import (
     LoginManager, login_user, logout_user, login_required, current_user
@@ -80,6 +81,31 @@ def load_user(user_id):
     return get_usuario_by_id(user_id)
 
 
+def _es_ruta_api():
+    """True si el request es a un endpoint /api/* (o /login o /select-empresa vistos
+    desde fetch() - en la practica solo /api/* llama a esto). Estas rutas las
+    consume JavaScript con fetch()+JSON.parse(), nunca un navegador navegando
+    directo - por eso NUNCA deben responder con una redireccion (302) ni con una
+    pagina HTML de error: JSON.parse() sobre HTML explota con
+    "Unexpected token '<'" en vez de mostrar el error real (sesion vencida, sin
+    empresa elegida, JSON invalido, etc.). Ver BUGS_Y_FIXES.md para el bug real
+    que este chequeo corrige."""
+    return request.path.startswith("/api/")
+
+
+@login_manager.unauthorized_handler
+def unauthorized():
+    """Reemplaza el redirect-a-/login por defecto de Flask-Login para rutas
+    /api/*. Sin esto, un fetch('/api/chat') con la sesion vencida (o con un
+    cookie viejo de antes de la migracion multi-tenant, sin empresa_slug)
+    terminaba siguiendo la cadena de redirects /login -> /select-empresa y
+    devolviendo la pagina HTML de seleccion de empresa con status 200 - el
+    frontend intentaba hacer JSON.parse() sobre ese HTML y tronaba."""
+    if _es_ruta_api():
+        return jsonify({"error": "Tu sesión expiró. Vuelve a iniciar sesión."}), 401
+    return redirect(url_for("login", next=request.path))
+
+
 # ── Onboarding (primera instalación) ───────────────────────
 ONBOARDING_PASOS = (1, 2, 3, 4, 5, 6, 7)
 
@@ -134,7 +160,29 @@ def require_setup():
     # request, pero es la unica forma correcta de no confundir el "ya
     # completo" de una empresa con el de otra).
     if not _onboarding_completado():
+        if _es_ruta_api():
+            # Mismo motivo que unauthorized() arriba: una ruta /api/* nunca
+            # debe devolver un redirect ni una pagina HTML - fetch()+JSON.parse()
+            # tronaria igual que con la sesion vencida.
+            return jsonify({"error": "Esta empresa todavía no completó la configuración inicial."}), 409
         return redirect(url_for("setup"))
+
+
+@app.errorhandler(HTTPException)
+def error_json_para_api(e):
+    """Red de seguridad general para rutas /api/*: cualquier HTTPException que
+    Werkzeug/Flask genere ANTES de que el codigo de la ruta corra (ej. 400 si
+    request.json no logra parsear el body, 415 si el Content-Type no es
+    application/json, 404, 405) se convierte a JSON en vez de la pagina HTML de
+    error por defecto de Flask - mismo motivo que unauthorized_handler y el
+    chequeo de require_setup de arriba: cualquier respuesta HTML para una ruta
+    que el frontend consume con fetch()+JSON.parse() rompe con
+    "Unexpected token '<'" en vez de mostrar el error real. Las rutas que no son
+    /api/* (paginas normales del navegador) conservan las paginas de error HTML
+    de siempre."""
+    if _es_ruta_api():
+        return jsonify({"error": e.description}), e.code
+    return e
 
 
 def admin_required(f):

@@ -966,3 +966,77 @@ Cocina nunca se guardó explícitamente, así que cae al default `"Mi Cocina"` t
 lugares de la documentación).
 
 **Archivos modificados:** `templates/index.html`.
+
+---
+
+## [2026-07-18] El chat devolvía HTML en vez de JSON ("Unexpected token '<'")
+
+**Qué pasaba:** al mandar un mensaje en el chat, el frontend a veces explotaba con
+`Unexpected token '<'` en vez de mostrar la respuesta de Nimbo o un error entendible.
+`templates/index.html` (función `sendChat()`, línea ~1608) hace
+`const d = JSON.parse(text)` directo sobre lo que devuelve `fetch('/api/chat')` - si
+`text` no es JSON de verdad, `JSON.parse()` tira esa excepción exacta.
+
+**Por qué pasaba (causa técnica):** **no era una excepción de Python sin capturar** -
+por eso no aparecía ningún traceback en la terminal donde corre `app.py` (se buscó
+específicamente, reproduciendo el bug en vivo antes de tocar nada, y no había ninguno).
+La causa real eran tres respuestas que `/api/chat` podía devolver sin pasar nunca por
+sus propios `try/except` (que sí devuelven `jsonify` correctamente):
+1. **Sesión vencida o sin empresa elegida** (el caso más común en la práctica): sin una
+   sesión de Flask-Login válida, `@login_required` redirige (302) a `/login`; como
+   `/login` a su vez redirige (302) a `/select-empresa` cuando no hay `empresa_slug` en
+   la sesión (comportamiento agregado en la migración multi-tenant del mismo día -
+   ver más arriba), la cadena completa termina en la página HTML real de
+   "Elegir empresa", con status **200**. `fetch()` sigue redirects automáticamente, así
+   que el frontend recibía esa página completa pensando que era la respuesta del chat.
+2. `data = request.json` (línea 733, antes de cualquier `try`) - si el `Content-Type`
+   no es `application/json` o el body no es JSON válido, Flask/Werkzeug lanza su propia
+   `HTTPException` (415 o 400) con una página de error HTML por defecto, sin pasar por
+   ningún código de la ruta.
+3. Cualquier otra `HTTPException` de Werkzeug antes de llegar al código de la vista
+   (404 en una URL mal armada, 405 método no permitido, etc.) - mismo problema: HTML en
+   vez de JSON.
+
+**Cómo se reprodujo (antes de tocar nada):** se corrió el servidor real (código sin
+modificar) en una copia aislada, y se mandaron requests con `curl` replicando
+exactamente lo que hace `fetch()` en el frontend. Sin sesión: `POST /api/chat` → `302
+/login?next=/api/chat` → `302 /select-empresa` → `200 text/html` (la página completa de
+selección de empresa). Sin `Content-Type` correcto: `415` con HTML de Flask. Con JSON
+inválido en el body: `400` con HTML de Flask. Los tres casos, confirmados con `curl -w
+"%{http_code} %{content_type}"`, sin ningún traceback de Python en la consola del
+servidor - consistente con que no era una excepción sin capturar, sino respuestas
+"exitosas" (redirects seguidos, o `HTTPException`s ya manejadas por Flask) con el
+`Content-Type` equivocado para lo que el frontend esperaba.
+
+**Cómo se arregló:** se agregó `_es_ruta_api()` (`request.path.startswith("/api/")`) y
+tres puntos donde ahora se usa:
+- `login_manager.unauthorized_handler` (nuevo): si la ruta es `/api/*`, devuelve
+  `jsonify({"error": "Tu sesión expiró..."}), 401` en vez de dejar que Flask-Login
+  redirija a `/login` (que a su vez redirige a `/select-empresa`).
+- `require_setup()`: si la empresa activa no completó el onboarding y la ruta es
+  `/api/*`, devuelve `jsonify({"error": "..."}), 409` en vez de `redirect(url_for("setup"))`.
+- `@app.errorhandler(HTTPException)` (nuevo, red de seguridad general): cualquier
+  `HTTPException` (400, 404, 405, 415, etc.) en una ruta `/api/*` se convierte a
+  `jsonify({"error": e.description}), e.code` en vez de la página HTML de error de
+  Flask. Las rutas que NO son `/api/*` (páginas normales del navegador) conservan sus
+  páginas de error HTML de siempre - el `errorhandler` re-lanza la excepción (`raise e`)
+  para esos casos, sin cambiar su comportamiento.
+
+Se volvió a probar exactamente la misma reproducción de arriba contra el código ya
+corregido (misma técnica, copia aislada nueva): los tres casos ahora devuelven JSON con
+el status code correcto (401, 415, 400) en vez de HTML; se agregó un cuarto caso
+(empresa con `onboarding_completado` pendiente, simulada a mano) que también pasó de
+devolver HTML (409 en HTML) a JSON; y se confirmó que una ruta normal que no es `/api/*`
+(ej. una URL inexistente cualquiera) sigue mostrando la página HTML de error 404 de
+siempre - el fix no afecta la navegación normal del navegador, solo las rutas que
+`fetch()` consume.
+
+**Nota operativa:** el servidor real que estaba corriendo en el puerto 5000 (con
+`debug=True`, que recarga solo con cada cambio de archivo) dejó de responder en algún
+momento mientras se editaba `app.py` directamente para este fix - lo más probable es
+que el propio recargador automático de Flask/Werkzeug haya fallado al reiniciarse tras
+alguno de los cambios sucesivos, aunque no se descarta que se haya detenido por otra
+razón ajena a este trabajo. Hace falta volver a arrancarlo a mano para que el fix quede
+activo en la sesión real.
+
+**Archivos modificados:** `app.py`.
