@@ -925,3 +925,44 @@ queda como pendiente de limpieza cosmética para el futuro.
 **Archivos modificados:** ninguno (solo verificación); `nimbo_master.db` y
 `data/empresas/surti-la-union/` quedaron con datos reales nuevos como resultado de la
 prueba.
+
+---
+
+## [2026-07-18] Multi-tenant — "Mi Cocina" hardcodeado en templates/index.html
+
+**Problema:** el hallazgo cosmético anotado al final del Paso 8 (ver entrada anterior)
+se corrigió: `templates/index.html` tenía "Mi Cocina" escrito directo en el HTML en 3
+lugares que no usaban la variable `negocio_nombre` - el `<title>` de la página, el
+saludo inicial del chat, y el placeholder de ejemplo del campo "Nombre del negocio" en
+el panel Configuración. Con dos empresas reales ya usando el mismo Nimbo (Mi Cocina y
+Surti La Unión), cualquier empresa que NO fuera Mi Cocina veía el nombre de otro negocio
+en su propia pestaña del navegador y en el primer mensaje del chat.
+
+**Causa:** el proyecto nació pensado para una sola empresa (Mi Cocina), antes de que
+existiera el concepto de empresa activa - esos 3 textos se escribieron directo en el
+HTML porque en ese momento nunca iba a haber otro nombre posible. El único lugar que ya
+usaba la variable correctamente era el nombre del sidebar
+(`{{ negocio_nombre or 'Mi Cocina' }}`, línea 591) - la migración a multi-tenant del
+mismo día no tocó `templates/index.html` porque no estaba entre los archivos que ese
+plan pedía modificar.
+
+**Solución:** se reemplazaron los 3 textos por el mismo patrón Jinja que ya usaba el
+sidebar (`{{ negocio_nombre or 'Mi Cocina' }}` / `{{ negocio_nombre or 'Mi Cocina
+Electrodomésticos' }}` en el placeholder, conservando el nombre completo como
+alternativa de respaldo ahí porque así era el texto de ejemplo original) - `app.py` ya
+le pasaba `negocio_nombre=get_config("negocio_nombre", "Mi Cocina")` a este template
+desde antes, así que no hizo falta tocar ninguna ruta, solo el HTML. Se probó
+renderizando el dashboard completo con una sesión real logueada (no se puede probar
+`current_user.tiene_permiso(...)` sin una sesión real, ese método no existe en el
+usuario anónimo de Flask-Login) para dos empresas de prueba en copias aisladas del
+proyecto: una empresa nueva ("Ferretería El Martillo") mostró correctamente su propio
+nombre en el título, el saludo del chat y el placeholder, sin ningún rastro de "Mi
+Cocina"; y se confirmó que Mi Cocina, sin cambios, sigue mostrando exactamente lo mismo
+que mostraba antes de este fix (`"Mi Cocina — Centro de Control"` / `"Hola, soy tu
+asistente de Mi Cocina."` - el valor real de `Configuracion.negocio_nombre` para Mi
+Cocina nunca se guardó explícitamente, así que cae al default `"Mi Cocina"` tanto en
+`core/configuracion.py.DEFAULTS` como en el fallback de `app.py` - no es
+"Mi Cocina Electrodomésticos" como podría parecer por el nombre completo usado en otros
+lugares de la documentación).
+
+**Archivos modificados:** `templates/index.html`.
