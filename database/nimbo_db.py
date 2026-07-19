@@ -56,6 +56,20 @@ def _buscar_productos_similares(search, limit=100, umbral=UMBRAL_SIMILITUD_PRODU
     candidatos.sort(key=lambda x: x[0], reverse=True)
     return [p for _, p in candidatos[:limit]]
 
+
+def contar_productos(db_path=None):
+    """COUNT(*) de Producto (sin filtrar por Activo - una empresa recien
+    registrada tiene 0 de cualquier forma). Usado por index() en app.py para
+    decidir si el primer mensaje del chat debe ser el tutorial normal o la
+    guia de "todavia no tenes inventario cargado"."""
+    conn = nimbo_connect(db_path)
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) AS total FROM Producto")
+    total = cur.fetchone()["total"]
+    conn.close()
+    return total
+
+
 def get_products(search="", limit=100):
     conn = nimbo_connect()
     cur = conn.cursor()
@@ -303,19 +317,20 @@ def buscar_producto_duplicado(nombre, codigo=None):
 def crear_producto_importado(fila):
     """Inserta un producto nuevo a partir de una fila ya normalizada y validada
     del importador masivo (nombre, precio, costo, codigo, stock, stock_minimo,
-    categoria - los opcionales llegan en None si la celda del archivo venia
-    vacia, todavia SIN el default aplicado; se aplican aqui mismo: costo 0,
-    stock 0, stock_minimo 5). Si no trae codigo se le genera un EAN-13
-    automaticamente (mismo criterio que 'generar codigo' del chat). Retorna el
-    Id del producto creado."""
+    categoria, descripcion, unidad - los opcionales llegan en None si la
+    celda del archivo venia vacia, todavia SIN el default aplicado; se
+    aplican aqui mismo: costo 0, stock 0, stock_minimo 5, unidad 'unidad').
+    Si no trae codigo se le genera un EAN-13 automaticamente (mismo criterio
+    que 'generar codigo' del chat). Retorna el Id del producto creado."""
     conn = nimbo_connect()
     cur = conn.cursor()
     ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cur.execute(
-        "INSERT INTO Producto (Codigo, Nombre, Precio, Costo, Categoria, Unidad, Activo, FechaCreado) "
-        "VALUES (?,?,?,?,?,?,1,?)",
+        "INSERT INTO Producto (Codigo, Nombre, Precio, Costo, Categoria, Descripcion, Unidad, Activo, FechaCreado) "
+        "VALUES (?,?,?,?,?,?,?,1,?)",
         (fila.get("codigo") or "", fila["nombre"], fila["precio"], fila.get("costo") or 0,
-         fila.get("categoria") or None, "unidad", ahora)
+         fila.get("categoria") or None, fila.get("descripcion") or None,
+         fila.get("unidad") or "unidad", ahora)
     )
     producto_id = cur.lastrowid
     cur.execute(
@@ -338,12 +353,12 @@ def actualizar_producto_importado(producto_id, fila):
     """Actualiza un producto existente con los datos de una fila importada,
     cuando el usuario elige 'actualizar' ante un duplicado detectado por
     buscar_producto_duplicado(). Solo pisa los campos que la fila trae
-    (distinto de None) - una fila con Costo/Stock/StockMinimo/Categoria en
-    blanco NO borra lo que el producto ya tenia (para que reimportar solo para
-    actualizar precios no vacie el stock por accidente). Precio si es
-    obligatorio en la fila, siempre se actualiza. Si la fila trae Codigo y el
-    producto no tenia uno todavia, se lo asigna; si ya tenia uno no se pisa
-    (evita choques accidentales de codigos)."""
+    (distinto de None) - una fila con Costo/Stock/StockMinimo/Categoria/
+    Descripcion/Unidad en blanco NO borra lo que el producto ya tenia (para
+    que reimportar solo para actualizar precios no vacie el stock por
+    accidente). Precio si es obligatorio en la fila, siempre se actualiza. Si
+    la fila trae Codigo y el producto no tenia uno todavia, se lo asigna; si
+    ya tenia uno no se pisa (evita choques accidentales de codigos)."""
     conn = nimbo_connect()
     cur = conn.cursor()
     ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -357,6 +372,10 @@ def actualizar_producto_importado(producto_id, fila):
         campos.append("Costo=?"); valores.append(fila["costo"])
     if fila.get("categoria"):
         campos.append("Categoria=?"); valores.append(fila["categoria"])
+    if fila.get("descripcion"):
+        campos.append("Descripcion=?"); valores.append(fila["descripcion"])
+    if fila.get("unidad"):
+        campos.append("Unidad=?"); valores.append(fila["unidad"])
     if fila.get("codigo") and not codigo_actual:
         campos.append("Codigo=?"); valores.append(fila["codigo"])
     valores.append(producto_id)

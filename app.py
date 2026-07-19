@@ -39,7 +39,8 @@ from core.empresa import (
     init_master, get_empresa_by_slug, listar_empresas, get_db_path, crear_empresa
 )
 from database.nimbo_db import (
-    get_diagnostico, diagnostico_completado, guardar_diagnostico, resetear_diagnostico
+    get_diagnostico, diagnostico_completado, guardar_diagnostico, resetear_diagnostico,
+    contar_productos
 )
 import tools
 
@@ -254,6 +255,11 @@ def index():
         negocio_nombre=get_config("negocio_nombre", "Mi Cocina"),
         tour_pendiente=current_user.is_admin and get_config("tour_completado") != "1",
         chat_tutorial_pendiente=get_config("chat_tutorial_mostrado") != "1",
+        # Solo importa si el tutorial todavia esta pendiente (ver
+        # mostrarTutorialChatSiCorresponde() en templates/index.html) - una
+        # empresa sin ningun producto cargado ve la guia de "sube tu Excel o
+        # agrega productos" en vez del tutorial normal de comandos.
+        sin_inventario=contar_productos() == 0,
     )
 
 
@@ -1447,13 +1453,23 @@ def db_delete_product(pid):
 # ── Importacion masiva de productos (Excel/CSV) ─────────────────────────
 # Columnas reconocidas (con o sin acentos/mayusculas/espacios, ver
 # _normalizar_header): Nombre y Precio son obligatorias, Costo/Codigo/Stock/
-# StockMinimo/Categoria son opcionales. Ver CLAUDE.md seccion "Importacion
-# masiva de productos" para el flujo completo (deteccion de duplicados,
-# generacion automatica de codigo de barras).
+# StockMinimo/Categoria/Descripcion/Unidad son opcionales. Ver CLAUDE.md
+# seccion "Importacion masiva de productos" para el flujo completo
+# (deteccion de duplicados, generacion automatica de codigo de barras,
+# preview + mapeo manual de columnas).
 COLUMNAS_IMPORTACION_PRODUCTOS = {
     "nombre": "nombre", "precio": "precio", "costo": "costo",
     "codigo": "codigo", "stock": "stock", "stockminimo": "stock_minimo",
-    "categoria": "categoria",
+    "categoria": "categoria", "descripcion": "descripcion", "unidad": "unidad",
+}
+
+# Etiquetas en espanol para el selector de mapeo manual del modal de
+# importacion (templates/index.html) - mismo orden en que conviene
+# mostrarlas, campo interno -> texto visible.
+CAMPOS_IMPORTACION_LABELS = {
+    "nombre": "Nombre", "precio": "Precio", "costo": "Costo",
+    "codigo": "Código", "stock": "Stock", "stock_minimo": "Stock mínimo",
+    "categoria": "Categoría", "descripcion": "Descripción", "unidad": "Unidad",
 }
 
 
@@ -1483,32 +1499,56 @@ def _leer_filas_excel_productos(archivo):
     return [list(row) for row in ws.iter_rows(values_only=True)]
 
 
-def _leer_archivo_productos(archivo):
-    """Parsea un archivo .csv o .xlsx de importacion masiva de productos.
-    Primera fila = encabezados. Retorna (filas_validas, errores):
-    filas_validas es una lista de dicts normalizados (nombre, precio, costo,
-    codigo, stock, stock_minimo, categoria - los opcionales quedan en None si
-    la celda venia vacia, sin aplicar todavia ningun default, ver
-    database.nimbo_db.crear_producto_importado) y errores es una lista de
-    {"fila": numero, "motivo": texto} para filas que no se pudieron importar
-    (nombre o precio faltante/invalido) - no bloquean el resto del archivo."""
+def _leer_filas_crudas_productos(archivo):
+    """Detecta el formato por extension y devuelve la matriz cruda de celdas
+    (primera fila = encabezados tal como vienen en el archivo, sin normalizar
+    todavia) - paso compartido entre el preview y la importacion real."""
     ext = archivo.filename.rsplit(".", 1)[-1].lower() if "." in archivo.filename else ""
     if ext == "csv":
-        filas_crudas = _leer_filas_csv_productos(archivo)
+        return _leer_filas_csv_productos(archivo)
     elif ext in ("xlsx", "xls"):
-        filas_crudas = _leer_filas_excel_productos(archivo)
-    else:
-        raise ValueError("Formato no soportado. Usa un archivo .csv o .xlsx")
+        return _leer_filas_excel_productos(archivo)
+    raise ValueError("Formato no soportado. Usa un archivo .csv o .xlsx")
 
-    if not filas_crudas:
-        return [], []
 
-    encabezados = [_normalizar_header(h) for h in filas_crudas[0]]
+def _mapeo_automatico(fila_encabezados):
+    """{campo_interno: indice_columna} detectado a partir de los encabezados
+    crudos del archivo, usando COLUMNAS_IMPORTACION_PRODUCTOS (con o sin
+    acentos/mayusculas/espacios, ver _normalizar_header)."""
+    encabezados = [_normalizar_header(h) for h in fila_encabezados]
     columnas = {}
     for idx, h in enumerate(encabezados):
         campo = COLUMNAS_IMPORTACION_PRODUCTOS.get(h)
         if campo:
             columnas[campo] = idx
+    return columnas
+
+
+def _leer_archivo_productos(archivo, mapeo_manual=None):
+    """Parsea un archivo .csv o .xlsx de importacion masiva de productos.
+    Primera fila = encabezados. `mapeo_manual`, si se pasa, es un dict
+    {"indice_columna_como_texto": "campo_interno"} armado por el admin en el
+    modal de preview (templates/index.html) - reemplaza por completo la
+    deteccion automatica de columnas, para cuando los encabezados del archivo
+    no coinciden con ningun sinonimo conocido. Retorna (filas_validas,
+    errores): filas_validas es una lista de dicts normalizados (nombre,
+    precio, costo, codigo, stock, stock_minimo, categoria, descripcion,
+    unidad - los opcionales quedan en None si la celda venia vacia, sin
+    aplicar todavia ningun default, ver database.nimbo_db.
+    crear_producto_importado) y errores es una lista de {"fila": numero,
+    "motivo": texto} para filas que no se pudieron importar (nombre o precio
+    faltante/invalido) - no bloquean el resto del archivo."""
+    filas_crudas = _leer_filas_crudas_productos(archivo)
+    if not filas_crudas:
+        return [], []
+
+    if mapeo_manual:
+        columnas = {}
+        for idx_texto, campo in mapeo_manual.items():
+            if campo:
+                columnas[campo] = int(idx_texto)
+    else:
+        columnas = _mapeo_automatico(filas_crudas[0])
 
     if "nombre" not in columnas or "precio" not in columnas:
         raise ValueError("El archivo debe tener al menos las columnas Nombre y Precio.")
@@ -1534,6 +1574,8 @@ def _leer_archivo_productos(archivo):
 
         codigo = _celda(fila, "codigo")
         categoria = _celda(fila, "categoria")
+        descripcion = _celda(fila, "descripcion")
+        unidad = _celda(fila, "unidad")
 
         filas_validas.append({
             "nombre": nombre,
@@ -1543,6 +1585,8 @@ def _leer_archivo_productos(archivo):
             "stock": _parsear_numero_importado(_celda(fila, "stock")),
             "stock_minimo": _parsear_numero_importado(_celda(fila, "stock_minimo")),
             "categoria": str(categoria).strip() if categoria else None,
+            "descripcion": str(descripcion).strip() if descripcion else None,
+            "unidad": str(unidad).strip() if unidad else None,
         })
 
     return filas_validas, errores
@@ -1551,22 +1595,105 @@ def _leer_archivo_productos(archivo):
 @app.route("/api/db/products/plantilla")
 @login_required
 def db_products_plantilla():
+    """Template de importacion (2026-07-19): Nombre|Codigo|Precio|Costo|Stock|
+    Descripcion|Unidad, con una fila de ejemplo ya llena, una fila en blanco
+    lista para escribir, y una segunda hoja "Instrucciones" explicando cada
+    columna - pensado tanto para el boton fijo de Inventario como para el
+    boton "Descargar template" del mensaje del chat cuando la empresa
+    todavia no tiene productos cargados (ver index() en app.py)."""
     import openpyxl
+    from openpyxl.styles import Font
     from flask import send_file
+
     wb = openpyxl.Workbook()
+
     ws = wb.active
     ws.title = "Productos"
-    ws.append(["Nombre", "Precio", "Costo", "Codigo", "Stock", "StockMinimo", "Categoria"])
-    ws.append(["Licuadora Oster Clasica 3 velocidades", 450, 280, "", 15, 5, "Electrodomesticos"])
-    ws.append(["Cuchilla oster original", 45, 20, "7501234567890", 30, 10, "Repuestos"])
-    ws.append(["Olla de presion 8 litros", 380, "", "", "", "", "Ollas"])
+    columnas = ["Nombre", "Codigo", "Precio", "Costo", "Stock", "Descripcion", "Unidad"]
+    ws.append(columnas)
+    for cel in ws[1]:
+        cel.font = Font(bold=True)
+    ws.append([
+        "Licuadora Oster Clasica 3 velocidades", "7501234567890", 450, 280, 15,
+        "Licuadora de vaso de vidrio, 3 velocidades, 600W", "unidad",
+    ])
+    ws.append(["", "", "", "", "", "", ""])
+    ws.column_dimensions["A"].width = 34
+    ws.column_dimensions["F"].width = 40
+
+    instrucciones = wb.create_sheet("Instrucciones")
+    instrucciones.append(["Columna", "Que va aca"])
+    for cel in instrucciones[1]:
+        cel.font = Font(bold=True)
+    filas_instrucciones = [
+        ("Nombre", "Obligatoria. El nombre del producto tal como lo vas a buscar despues."),
+        ("Codigo", "Opcional. El codigo de barras si ya tiene uno - si lo dejas vacio, "
+                    "Nimbo le genera uno automaticamente."),
+        ("Precio", "Obligatoria. El precio de venta al cliente, sin el simbolo Q."),
+        ("Costo", "Opcional. Cuanto te cuesta a vos ese producto - lo usa Nimbo para "
+                   "calcular margenes y sugerencias de precio."),
+        ("Stock", "Opcional. Cuantas unidades tenes ahorita mismo. Si lo dejas vacio, "
+                   "entra con 0."),
+        ("Descripcion", "Opcional. Una descripcion mas larga del producto, para mostrarla "
+                         "en el chat o en la pagina publica del producto."),
+        ("Unidad", "Opcional. Como se vende (unidad, caja, docena, par...). Si lo dejas "
+                    "vacio, queda como 'unidad'."),
+    ]
+    for fila in filas_instrucciones:
+        instrucciones.append(fila)
+    instrucciones.column_dimensions["A"].width = 14
+    instrucciones.column_dimensions["B"].width = 80
+
     buffer = io.BytesIO()
     wb.save(buffer)
     buffer.seek(0)
     return send_file(
-        buffer, as_attachment=True, download_name="plantilla_productos.xlsx",
+        buffer, as_attachment=True, download_name="template_inventario_nimbo.xlsx",
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
+
+@app.route("/api/db/products/import/preview", methods=["POST"])
+@login_required
+def db_products_import_preview():
+    """Paso previo a importar de verdad: lee el archivo, sugiere el mapeo de
+    columnas automatico (mismo criterio que la importacion real) y devuelve
+    los encabezados crudos + las primeras 5 filas de datos para que el modal
+    de Inventario (o el que abre el boton 'Subir mi Excel' del chat) las
+    muestre antes de confirmar - no importa nada todavia."""
+    if "archivo" not in request.files:
+        return jsonify({"error": "No se envio ningun archivo"}), 400
+    archivo = request.files["archivo"]
+    if archivo.filename == "":
+        return jsonify({"error": "Archivo vacio"}), 400
+
+    try:
+        filas_crudas = _leer_filas_crudas_productos(archivo)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": f"No se pudo leer el archivo: {e}"}), 400
+
+    if not filas_crudas:
+        return jsonify({"error": "El archivo está vacío."}), 400
+
+    headers_crudos = ["" if h is None else str(h) for h in filas_crudas[0]]
+    mapeo_sugerido = {
+        str(idx): campo for campo, idx in _mapeo_automatico(filas_crudas[0]).items()
+    }
+    filas_datos = filas_crudas[1:]
+    filas_preview = [
+        ["" if celda is None else celda for celda in fila]
+        for fila in filas_datos[:5]
+    ]
+
+    return jsonify({
+        "headers": headers_crudos,
+        "mapeo_sugerido": mapeo_sugerido,
+        "campos_disponibles": CAMPOS_IMPORTACION_LABELS,
+        "filas_preview": filas_preview,
+        "total_filas": len(filas_datos),
+    })
 
 
 @app.route("/api/db/products/import", methods=["POST"])
@@ -1579,8 +1706,20 @@ def db_products_import():
     if archivo.filename == "":
         return jsonify({"error": "Archivo vacio"}), 400
 
+    # Mapeo manual opcional (JSON, campo de formulario "mapeo") armado en el
+    # paso de preview del modal - si no viene, _leer_archivo_productos cae a
+    # la deteccion automatica de siempre (mismo comportamiento que antes de
+    # este feature).
+    mapeo_manual = None
+    mapeo_raw = request.form.get("mapeo")
+    if mapeo_raw:
+        try:
+            mapeo_manual = json.loads(mapeo_raw)
+        except (TypeError, ValueError):
+            mapeo_manual = None
+
     try:
-        filas, errores = _leer_archivo_productos(archivo)
+        filas, errores = _leer_archivo_productos(archivo, mapeo_manual)
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     except Exception as e:

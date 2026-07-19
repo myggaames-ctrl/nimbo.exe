@@ -157,7 +157,9 @@ mostrarlo (por ejemplo, el nombre del negocio, la lista de productos).
 
 **Para qué sirve en Nimbo:** `templates/index.html`, `templates/login.html`,
 `templates/setup.html`, etc. Flask usa `render_template("login.html")` para tomar ese
-archivo, rellenar lo que haga falta, y mandarlo al navegador ya armado.
+archivo, rellenar lo que haga falta, y mandarlo al navegador ya armado. No confundir con
+el "template de importación (Excel)" (ver ese término más abajo) - son dos cosas
+distintas que en este proyecto comparten la misma palabra.
 
 **Ejemplo de la vida real:** es como una plantilla de carta con espacios en blanco
 ("Estimado ____") que se llenan con el nombre de cada destinatario antes de imprimirla.
@@ -855,3 +857,60 @@ concreto para cada una dentro de Nimbo.
 **Ejemplo de la vida real:** es como el cuestionario de salud que llena un paciente
 antes de su primera cita con un médico nuevo - las respuestas ayudan al médico a saber
 por dónde empezar, en vez de partir de cero sin ningún antecedente.
+
+
+---
+
+### importación masiva
+**Qué es:** cargar muchos registros de una sola vez a partir de un archivo (Excel o
+CSV), en vez de escribirlos uno por uno a mano en un formulario.
+
+**Para qué sirve en Nimbo:** el admin puede subir un archivo con su inventario completo
+(botón "📦 Importar desde Excel" en el panel Inventario, o "Subir mi Excel" en el chat
+cuando la empresa todavía no tiene productos cargados) y Nimbo crea todos los productos
+de una vez (`app.py`, ruta `POST /api/db/products/import` → `database.nimbo_db.
+crear_producto_importado()`), en vez de tener que decir "agregar producto X" decenas o
+cientos de veces.
+
+**Ejemplo de la vida real:** es como llevarle al banco una lista completa de cheques
+para depositar de una vez, en vez de ir ventanilla por ventanilla depositando cada uno
+por separado.
+
+---
+
+### mapeo de columnas
+**Qué es:** hacer corresponder cada columna de un archivo externo (con sus propios
+nombres de encabezado, que pueden ser cualquier cosa) con el campo interno que el
+sistema realmente espera - por ejemplo, que una columna llamada "Precio Venta" se
+entienda como el campo `precio`.
+
+**Para qué sirve en Nimbo:** al importar un Excel de inventario, `app.py.
+_mapeo_automatico()` intenta adivinar solo qué columna es cuál (comparando los
+encabezados contra una lista de sinónimos conocidos: "Precio", "Precio Venta", etc. -
+todos apuntan al mismo campo interno `precio`). Si el archivo del usuario usa
+encabezados que Nimbo no reconoce, el modal de importación muestra un `<select>` por
+columna para que el admin corrija el mapeo a mano antes de confirmar, en vez de que la
+importación falle o adivine mal en silencio.
+
+**Ejemplo de la vida real:** es como cuando llenás un formulario migrado de otro
+sistema y tenés que indicar "esta columna de tu archivo va en este campo de acá" -
+alguien tiene que decidir la correspondencia cuando los nombres no son idénticos.
+
+---
+
+### template de importación (Excel)
+**Qué es:** (no confundir con el "template" de Flask/Jinja, ver ese término más arriba
+- comparten la palabra pero son conceptos distintos) un archivo Excel de ejemplo, ya
+con las columnas correctas y una fila de muestra llena, que el usuario descarga, llena
+con sus propios datos, y vuelve a subir.
+
+**Para qué sirve en Nimbo:** `GET /api/db/products/plantilla` genera
+`template_inventario_nimbo.xlsx` al vuelo (con `openpyxl`, sin guardar nada en disco):
+columnas Nombre/Codigo/Precio/Costo/Stock/Descripcion/Unidad, una fila ya llena con un
+producto de ejemplo, una fila en blanco para empezar a escribir, y una segunda hoja
+"Instrucciones" explicando qué va en cada columna - para que alguien que nunca usó
+Nimbo entienda el formato esperado sin tener que adivinarlo.
+
+**Ejemplo de la vida real:** es como el formulario de muestra "ya lleno" que te dan de
+ejemplo antes de entregarte el formulario en blanco - ver un caso resuelto ayuda a
+entender qué se espera en cada casilla.

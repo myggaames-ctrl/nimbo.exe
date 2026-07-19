@@ -348,22 +348,49 @@ identificacion de cobro).
   - Widget en el dashboard (/api/inventario/alertas-predictivas, @login_required igual que
     /api/db/alertas - visible para empleado y admin): muestra solo los productos CRITICO con
     sus dias estimados; si no hay ninguno muestra "Sin productos criticos".
-  - Importacion masiva de productos (Excel/CSV): boton "📦 Importar Excel/CSV" en el panel
-    Inventario del dashboard (templates/index.html, junto a "+ Agregar"), abre el modal
-    modal-importar-productos. Columnas reconocidas (con o sin acentos/mayusculas/espacios,
-    app.py _normalizar_header): Nombre y Precio obligatorias; Costo, Codigo, Stock,
-    StockMinimo, Categoria opcionales. Boton "⬇️ Descargar plantilla" dentro del modal
-    (GET /api/db/products/plantilla) genera un .xlsx en memoria (openpyxl) con esas columnas
-    y 3 filas de ejemplo, sin guardar nada en disco.
+  - Importacion masiva de productos (Excel/CSV): boton "📦 Importar desde Excel" fijo en el
+    panel Inventario del dashboard (templates/index.html, junto a "+ Agregar" y a
+    "📄 Descargar template" - ambos siempre visibles para el admin, no solo dentro de un
+    flujo especial), abre el modal modal-importar-productos. Columnas reconocidas (con o
+    sin acentos/mayusculas/espacios, app.py _normalizar_header): Nombre y Precio
+    obligatorias; Costo, Codigo, Stock, StockMinimo, Categoria, Descripcion, Unidad
+    opcionales (Descripcion/Unidad agregadas 2026-07-19 - antes se leian del archivo pero
+    database.nimbo_db.crear_producto_importado() nunca las guardaba: Unidad quedaba
+    siempre en el literal fijo "unidad" sin importar lo que trajera la fila, y Descripcion
+    ni se intentaba leer; ahora ambas se guardan igual que el resto de columnas opcionales).
+    - Preview + mapeo manual de columnas (2026-07-19, antes de esto la deteccion de
+      columnas era 100% automatica y sin forma de corregirla): al elegir un archivo en el
+      modal, POST /api/db/products/import/preview (multipart, sin importar nada todavia)
+      devuelve los encabezados crudos, el mapeo automatico sugerido
+      (app.py._mapeo_automatico(), mismo diccionario COLUMNAS_IMPORTACION_PRODUCTOS que ya
+      usaba la importacion real) y las primeras 5 filas de datos. El modal muestra un
+      <select> por columna (pre-seleccionado segun la sugerencia, con las opciones de
+      CAMPOS_IMPORTACION_LABELS) para que el admin corrija el mapeo si sus encabezados no
+      coinciden con ningun sinonimo conocido (ej. "Nombre Producto", "Precio Venta"). Al
+      confirmar, POST /api/db/products/import (el mismo endpoint de siempre) recibe ademas
+      un campo de formulario opcional "mapeo" (JSON, {indice_columna: campo_interno}) que
+      reemplaza por completo la deteccion automatica cuando viene presente -
+      app.py._leer_archivo_productos(archivo, mapeo_manual=None) - si no se manda mapeo
+      (ej. una integracion externa que llame al endpoint directo) el comportamiento es
+      exactamente el de antes.
+    - Boton "Descargar template" (GET /api/db/products/plantilla, mismo endpoint de
+      siempre, contenido reescrito 2026-07-19) genera un .xlsx en memoria (openpyxl,
+      nombre de descarga template_inventario_nimbo.xlsx) con columnas Nombre, Codigo,
+      Precio, Costo, Stock, Descripcion, Unidad - una fila de ejemplo ya llena, una fila en
+      blanco lista para escribir, y una segunda hoja "Instrucciones" explicando que va en
+      cada columna. Mismo boton usado desde el modal de Inventario, el boton fijo del panel
+      Inventario, y el mensaje del chat cuando la empresa no tiene productos (ver
+      "Chat inteligente segun estado del inventario" mas abajo).
     - POST /api/db/products/import (multipart, campo "archivo", @login_required):
       app.py._leer_archivo_productos() detecta .csv (modulo csv, decodifica utf-8-sig para
       tolerar el BOM que agrega Excel) o .xlsx/.xls (openpyxl, data_only=True). Cada fila se
-      normaliza a un dict (nombre, precio, costo, codigo, stock, stock_minimo, categoria) -
-      los opcionales quedan en None si la celda vino vacia, SIN aplicarles todavia ningun
-      default (el default se aplica recien al crear, ver mas abajo) para poder distinguir
-      "no vino en el archivo" de "vino en 0" cuando se trata de una actualizacion. Filas sin
-      Nombre se ignoran en silencio (fila vacia); filas con Precio faltante o <= 0 se reportan
-      en "errores" (fila, motivo) sin bloquear el resto del archivo.
+      normaliza a un dict (nombre, precio, costo, codigo, stock, stock_minimo, categoria,
+      descripcion, unidad) - los opcionales quedan en None si la celda vino vacia, SIN
+      aplicarles todavia ningun default (el default se aplica recien al crear, ver mas
+      abajo) para poder distinguir "no vino en el archivo" de "vino en 0" cuando se trata de
+      una actualizacion. Filas sin Nombre se ignoran en silencio (fila vacia); filas con
+      Precio faltante o <= 0 se reportan en "errores" (fila, motivo) sin bloquear el resto
+      del archivo.
     - Deteccion de duplicados: database.nimbo_db.buscar_producto_duplicado(nombre, codigo)
       busca primero por Codigo exacto (si la fila trae uno) y si no por similitud de Nombre
       (mismo difflib.SequenceMatcher y UMBRAL_SIMILITUD_PRODUCTO que usa la busqueda fuzzy de
@@ -382,11 +409,25 @@ identificacion de cobro).
       para todo el lote. Al confirmar, el frontend manda TODAS las filas+decisiones juntas
       (sin volver a subir el archivo) a POST /api/db/products/import/resolver (JSON, no
       multipart): "actualizar" llama a database.nimbo_db.actualizar_producto_importado(), que
-      solo pisa los campos que la fila trae (Costo/Stock/StockMinimo/Categoria en None no se
-      tocan) - para que reimportar un archivo que solo trae precios actualizados no vacie el
-      stock existente por accidente; el Codigo del producto existente tampoco se pisa si ya
-      tenia uno (evita choques de codigos). "crear" llama a crear_producto_importado()
-      igual que una fila sin duplicado. "saltar" no hace nada.
+      solo pisa los campos que la fila trae (Costo/Stock/StockMinimo/Categoria/Descripcion/
+      Unidad en None no se tocan) - para que reimportar un archivo que solo trae precios
+      actualizados no vacie el stock existente por accidente; el Codigo del producto
+      existente tampoco se pisa si ya tenia uno (evita choques de codigos). "crear" llama a
+      crear_producto_importado() igual que una fila sin duplicado. "saltar" no hace nada.
+  - Chat inteligente segun estado del inventario (2026-07-19): index() en app.py calcula
+    sin_inventario = database.nimbo_db.contar_productos() == 0 y lo pasa al template junto
+    a chat_tutorial_pendiente (ver seccion "Diagnostico de negocio + tour del dashboard +
+    tutorial del chat" mas abajo). La primera vez que se abre el chat
+    (mostrarTutorialChatSiCorresponde() en templates/index.html), si sin_inventario es
+    true muestra un mensaje distinto al tutorial normal: explica que hace falta cargar
+    productos antes de poder ayudar con ventas/reportes, con 2 botones funcionales (no
+    decorativos) - "📥 Subir mi Excel" (llama a abrirImportarProductos(), el mismo modal de
+    Inventario) y "📋 Descargar template" (llama a descargarPlantillaProductos()) - y
+    menciona la alternativa de agregar productos uno por uno por chat. Si la empresa ya
+    tiene productos, se muestra el tutorial normal sin cambios; si el tutorial ya se
+    mostro antes (Configuracion.chat_tutorial_mostrado="1"), no se muestra nada, sin
+    importar el estado del inventario - la clave se marca una sola vez, no se re-evalua
+    despues de la primera vez que se abre el chat.
   - Etiquetas desde el dashboard: boton 🏷 por fila en la tabla de Inventario
     (GET /api/db/products/<id>/etiqueta, @login_required) - si el producto no tiene Codigo se
     lo genera de una vez (asignar_codigo_barras) y genera su PDF de etiqueta con

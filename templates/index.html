@@ -1213,18 +1213,30 @@
     </div>
 
     <div class="modal-overlay" id="modal-importar-productos" style="display:none">
-      <div class="modal-box" style="max-width:560px">
+      <div class="modal-box" style="max-width:640px">
         <div class="card-title">📦 Importar productos desde Excel/CSV</div>
         <div class="text-muted" style="font-size:13px;margin-bottom:10px">
-          Columnas: Nombre y Precio (obligatorias), Costo, Codigo, Stock, StockMinimo, Categoria (opcionales).
-          Si un producto no trae Codigo, se le genera uno automaticamente.
+          Columnas reconocidas: Nombre y Precio (obligatorias), Codigo, Costo, Stock, StockMinimo,
+          Categoria, Descripcion, Unidad (opcionales). Si un producto no trae Codigo, se le genera
+          uno automaticamente.
         </div>
         <div class="flex gap-2 mb-4">
-          <button class="btn btn-ghost btn-sm" onclick="descargarPlantillaProductos()">⬇️ Descargar plantilla</button>
+          <button class="btn btn-ghost btn-sm" onclick="descargarPlantillaProductos()">⬇️ Descargar template</button>
         </div>
-        <input type="file" id="importar-productos-file" accept=".csv,.xlsx,.xls" class="input">
+        <input type="file" id="importar-productos-file" accept=".csv,.xlsx,.xls" class="input" onchange="previsualizarImportacion()">
+
+        <div id="importar-preview-wrap" style="display:none;margin-top:14px">
+          <div class="text-muted" style="font-size:12px;margin-bottom:6px" id="importar-preview-resumen"></div>
+          <div class="table-wrap" style="max-height:220px">
+            <table style="font-size:11.5px">
+              <thead><tr id="importar-preview-mapeo-row"></tr></thead>
+              <tbody id="importar-preview-filas"></tbody>
+            </table>
+          </div>
+        </div>
+
         <div class="flex gap-2" style="margin-top:12px">
-          <button class="btn btn-primary" onclick="importarProductosArchivo()">Importar</button>
+          <button class="btn btn-primary" id="importar-productos-btn" onclick="importarProductosArchivo()" disabled>Importar</button>
           <button class="btn btn-ghost" onclick="cerrarModal('modal-importar-productos')">Cerrar</button>
         </div>
         <div id="importar-productos-resultado" style="margin-top:14px;font-size:13px"></div>
@@ -1458,7 +1470,8 @@
         <input class="input" id="inv-search" placeholder="Buscar producto..." style="max-width:300px" oninput="searchInventory()">
         <button class="btn btn-primary" onclick="loadInventory()">↻ Recargar</button>
         <button class="btn btn-primary" onclick="addProduct()">+ Agregar</button>
-        <button class="btn btn-primary" onclick="abrirImportarProductos()">📦 Importar Excel/CSV</button>
+        <button class="btn btn-primary" onclick="abrirImportarProductos()">📦 Importar desde Excel</button>
+        <button class="btn btn-ghost" onclick="descargarPlantillaProductos()">📄 Descargar template</button>
       </div>
 
       <div class="card" style="padding:0;overflow:hidden">
@@ -1483,6 +1496,9 @@
 // lo ve quien sea que abra el chat primero.
 let tourPendiente = {{ 'true' if tour_pendiente else 'false' }};
 let chatTutorialPendiente = {{ 'true' if chat_tutorial_pendiente else 'false' }};
+// Calculado en index() con COUNT(*) FROM Producto - decide cual de los 2
+// mensajes iniciales del chat mostrar (ver mostrarTutorialChatSiCorresponde()).
+const sinInventario = {{ 'true' if sin_inventario else 'false' }};
 
 // ── STATE ──────────────────────────────────────────────
 let useOpenclaw = false;
@@ -1633,7 +1649,41 @@ function mostrarTutorialChatSiCorresponde() {
   if (!chatTutorialPendiente) return;
   chatTutorialPendiente = false;
 
-  const texto = [
+  const texto = sinInventario ? textoChatSinInventario() : textoChatTutorialNormal();
+
+  addMsgToUI('assistant', texto, new Date().toLocaleTimeString('es-GT', {hour:'2-digit', minute:'2-digit'}), true);
+  fetch('/api/chat/tutorial-mostrado', { method: 'POST' }).catch(() => {});
+}
+
+// Empresa sin ningun producto cargado (COUNT(*) FROM Producto = 0, ver
+// sin_inventario en index() de app.py) - en vez del tutorial de comandos, se
+// guia al admin a cargar su inventario primero. Los botones llaman
+// directo a las mismas funciones que usa el panel Inventario (no son
+// decorativos): abrirImportarProductos() abre el modal con preview +
+// mapeo de columnas, descargarPlantillaProductos() baja el .xlsx.
+function textoChatSinInventario() {
+  return [
+    '¡Hola! Soy Nimbo. Antes de poder ayudarte con ventas y reportes, necesito conocer tus productos.',
+    '',
+    'Tienes dos opciones para empezar:',
+    '',
+    '📥 <b>Opción 1 — Subir tu Excel actual</b><br>' +
+      'Si ya llevás tu inventario en Excel, subílo directamente y lo importo.<br>' +
+      '<button class="btn btn-primary btn-sm" style="margin-top:6px" onclick="showPanel(\'inventory\'); abrirImportarProductos()">📥 Subir mi Excel</button>',
+    '',
+    '📋 <b>Opción 2 — Usar el template de Nimbo</b><br>' +
+      'Si no tenés nada organizado, descargá el template, llenalo con tus productos y subílo.<br>' +
+      '<button class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="descargarPlantillaProductos()">📋 Descargar template</button>',
+    '',
+    'También podés agregar productos uno por uno diciéndome:<br>' +
+      '"Agregar producto Coca Cola 500ml, precio Q8, costo Q5, stock 24"',
+    '',
+    'Cuando tengas al menos tus productos principales cargados, podré ayudarte con ventas, reportes y mucho más.',
+  ].join('<br>');
+}
+
+function textoChatTutorialNormal() {
+  return [
     '¡Hola! Soy Nimbo, tu asistente de negocio. Puedes escribirme en español normal.',
     'Aquí van algunas cosas que puedes pedirme:',
     '',
@@ -1662,9 +1712,6 @@ function mostrarTutorialChatSiCorresponde() {
     '',
     'Puedes preguntarme lo que necesites. ¡Estoy aquí!',
   ].join('<br>');
-
-  addMsgToUI('assistant', texto, new Date().toLocaleTimeString('es-GT', {hour:'2-digit', minute:'2-digit'}), true);
-  fetch('/api/chat/tutorial-mostrado', { method: 'POST' }).catch(() => {});
 }
 
 // ── CONFIGURACION: resumen del diagnostico + tour ───────
@@ -2363,6 +2410,9 @@ function searchInventory() {
 function abrirImportarProductos() {
   document.getElementById('importar-productos-file').value = '';
   document.getElementById('importar-productos-resultado').innerHTML = '';
+  document.getElementById('importar-preview-wrap').style.display = 'none';
+  document.getElementById('importar-productos-btn').disabled = true;
+  _importPreviewHeaders = [];
   document.getElementById('modal-importar-productos').style.display = 'flex';
 }
 
@@ -2371,6 +2421,74 @@ function descargarPlantillaProductos() {
 }
 
 let _duplicadosImportacion = [];
+let _importPreviewHeaders = [];
+
+// Se dispara al elegir un archivo: sube el archivo una vez para ver el
+// mapeo automatico de columnas + las primeras 5 filas, ANTES de importar
+// nada de verdad - el admin puede corregir el mapeo si sus encabezados no
+// coinciden con ningun sinonimo conocido (ver CAMPOS_IMPORTACION_LABELS en
+// app.py).
+async function previsualizarImportacion() {
+  const input = document.getElementById('importar-productos-file');
+  const file = input.files[0];
+  const previewWrap = document.getElementById('importar-preview-wrap');
+  const btnImportar = document.getElementById('importar-productos-btn');
+  document.getElementById('importar-productos-resultado').innerHTML = '';
+  if (!file) { previewWrap.style.display = 'none'; btnImportar.disabled = true; return; }
+
+  const formData = new FormData();
+  formData.append('archivo', file);
+  previewWrap.style.display = 'block';
+  document.getElementById('importar-preview-resumen').textContent = 'Leyendo archivo...';
+  document.getElementById('importar-preview-mapeo-row').innerHTML = '';
+  document.getElementById('importar-preview-filas').innerHTML = '';
+  btnImportar.disabled = true;
+
+  try {
+    const r = await fetch('/api/db/products/import/preview', {method: 'POST', body: formData});
+    const d = await r.json();
+    if (d.error) {
+      document.getElementById('importar-preview-resumen').innerHTML = `<span style="color:var(--red)">${d.error}</span>`;
+      return;
+    }
+    _importPreviewHeaders = d.headers;
+    renderPreviewImportacion(d);
+    btnImportar.disabled = false;
+  } catch (e) {
+    document.getElementById('importar-preview-resumen').innerHTML = `<span style="color:var(--red)">Error: ${e.message}</span>`;
+  }
+}
+
+function renderPreviewImportacion(d) {
+  document.getElementById('importar-preview-resumen').textContent =
+    `${d.total_filas} fila(s) de datos detectadas. Revisa el mapeo de columnas antes de importar:`;
+
+  const opciones = [['', '(no importar)']].concat(Object.entries(d.campos_disponibles));
+  const filaMapeo = document.getElementById('importar-preview-mapeo-row');
+  filaMapeo.innerHTML = d.headers.map((h, idx) => {
+    const sugerido = d.mapeo_sugerido[String(idx)] || '';
+    const selects = opciones.map(([valor, etiqueta]) =>
+      `<option value="${valor}" ${valor === sugerido ? 'selected' : ''}>${etiqueta}</option>`
+    ).join('');
+    return `<th style="min-width:120px">
+      <div class="text-muted" style="font-weight:400;margin-bottom:3px">${h || '(sin encabezado)'}</div>
+      <select class="input" style="font-size:11px;padding:4px" data-col-idx="${idx}">${selects}</select>
+    </th>`;
+  }).join('');
+
+  const filasBody = document.getElementById('importar-preview-filas');
+  filasBody.innerHTML = d.filas_preview.map(fila =>
+    '<tr>' + d.headers.map((_, idx) => `<td>${fila[idx] !== undefined ? fila[idx] : ''}</td>`).join('') + '</tr>'
+  ).join('') || '<tr><td class="text-muted">Sin filas de datos para mostrar.</td></tr>';
+}
+
+function _mapeoActualImportacion() {
+  const mapeo = {};
+  document.querySelectorAll('#importar-preview-mapeo-row select[data-col-idx]').forEach(sel => {
+    if (sel.value) mapeo[sel.dataset.colIdx] = sel.value;
+  });
+  return mapeo;
+}
 
 async function importarProductosArchivo() {
   const input = document.getElementById('importar-productos-file');
@@ -2378,6 +2496,9 @@ async function importarProductosArchivo() {
   if (!file) { alert('Selecciona un archivo primero.'); return; }
   const formData = new FormData();
   formData.append('archivo', file);
+  if (_importPreviewHeaders.length) {
+    formData.append('mapeo', JSON.stringify(_mapeoActualImportacion()));
+  }
   const resultadoDiv = document.getElementById('importar-productos-resultado');
   resultadoDiv.innerHTML = 'Importando...';
   try {
@@ -2394,10 +2515,12 @@ async function importarProductosArchivo() {
 
 function renderResultadoImportacion(creados, errores) {
   const div = document.getElementById('importar-productos-resultado');
-  let html = `<div class="success-box">${creados} producto(s) importado(s) exitosamente.</div>`;
+  const resumen = `Se importaron ${creados} producto(s) correctamente.` +
+    (errores.length ? ` ${errores.length} fila(s) tuvieron errores.` : '');
+  let html = `<div class="success-box">${resumen}</div>`;
 
   if (errores.length) {
-    html += `<div style="color:var(--red);margin-top:8px">${errores.length} fila(s) con error:</div>`;
+    html += `<div style="color:var(--red);margin-top:8px">Detalle:</div>`;
     html += '<ul style="margin:4px 0 0 18px;font-size:12px">' +
       errores.map(e => `<li>Fila ${e.fila}: ${e.motivo}</li>`).join('') + '</ul>';
   }

@@ -1306,3 +1306,82 @@ incluida.
 
 **Archivos modificados:** `database/nimbo_db.py`, `core/empresa.py`, `app.py`,
 `templates/diagnostico.html` (nuevo), `templates/index.html`, `CLAUDE.md`.
+
+---
+
+## [2026-07-19] Nueva instalacion: chat inteligente segun estado del inventario + importacion de Excel con preview y mapeo de columnas
+
+**Problema:** una empresa que terminaba el diagnostico de negocio y entraba al
+dashboard por primera vez veia el tutorial normal del chat (ejemplos de comandos de
+ventas, reportes, etc.) aunque no tuviera ni un solo producto cargado - esos comandos
+no le servian de nada todavia, porque no habia inventario contra el cual vender o
+reportar. Ademas, la importacion masiva de Excel/CSV ya existente (ver CLAUDE.md,
+"Importacion masiva de productos") detectaba columnas solo de forma automatica, sin
+ninguna manera de corregir el mapeo si los encabezados del archivo del usuario no
+coincidian con ningun sinonimo conocido - y aunque el importador ya leia las columnas
+Descripcion/Unidad del archivo, `crear_producto_importado()` nunca las guardaba
+(Unidad quedaba siempre en el literal fijo `"unidad"`, sin importar lo que trajera la
+fila).
+
+**Causa:** no es un bug, es una funcionalidad nueva pedida explicitamente. Se
+documenta aca (ademas de en `CLAUDE.md`) porque asi se pidio para esta instalacion, y
+porque de paso se encontro y corrigio el descuido real de `crear_producto_importado()`
+(campo `Unidad` hardcodeado en vez de leerlo de la fila).
+
+**Solucion:**
+- `database/nimbo_db.py`: nueva `contar_productos()` (COUNT(*) FROM Producto).
+  `crear_producto_importado()` y `actualizar_producto_importado()` ahora si guardan
+  `Descripcion`/`Unidad` cuando la fila las trae (antes `Unidad` se pisaba siempre con
+  el literal `"unidad"`, sin leer `fila.get("unidad")`).
+- `app.py`: `COLUMNAS_IMPORTACION_PRODUCTOS` reconoce ahora tambien `descripcion` y
+  `unidad` como encabezados validos. `_leer_archivo_productos()` acepta un
+  `mapeo_manual` opcional (`{indice_columna: campo_interno}`) que reemplaza la
+  deteccion automatica cuando se pasa - nuevo endpoint `POST
+  /api/db/products/import/preview` (multipart, no importa nada todavia) devuelve los
+  encabezados crudos, el mapeo automatico sugerido y las primeras 5 filas de datos,
+  para que el modal de Inventario le muestre al admin un `<select>` por columna antes
+  de confirmar. `POST /api/db/products/import` (el mismo endpoint de siempre) ahora
+  acepta un campo de formulario opcional `"mapeo"` (JSON) con la correccion manual - si
+  no viene, el comportamiento es exactamente el de antes (deteccion 100% automatica).
+  `GET /api/db/products/plantilla` (mismo endpoint, contenido reescrito) genera ahora
+  `template_inventario_nimbo.xlsx`: columnas Nombre/Codigo/Precio/Costo/Stock/
+  Descripcion/Unidad, una fila de ejemplo ya llena, una fila en blanco, y una segunda
+  hoja "Instrucciones" explicando cada columna. `index()` calcula `sin_inventario`
+  (`contar_productos() == 0`) y lo pasa al template junto a `chat_tutorial_pendiente`.
+- `templates/index.html`: el modal `modal-importar-productos` gana un paso de preview
+  (tabla con las primeras 5 filas + un `<select>` de mapeo por columna, pre-seleccionado
+  segun la sugerencia automatica) antes de habilitar el boton "Importar" - se dispara
+  solo con elegir el archivo (`previsualizarImportacion()`), sin necesidad de un paso
+  aparte. `mostrarTutorialChatSiCorresponde()` ahora elige entre 2 mensajes segun
+  `sinInventario` (flag Jinja): si la empresa no tiene productos, muestra la guia de
+  "sube tu Excel o descarga el template" con 2 botones funcionales (no decorativos,
+  llaman directo a `abrirImportarProductos()`/`descargarPlantillaProductos()`, las
+  mismas funciones que usa el panel Inventario) en vez del tutorial normal de comandos;
+  si ya tiene productos, o si el tutorial ya se mostro antes
+  (`chat_tutorial_mostrado="1"`), el comportamiento es el mismo de antes. Panel
+  Inventario gana un boton fijo nuevo "📄 Descargar template" (antes solo estaba
+  disponible dentro del modal) junto al ya existente "📦 Importar desde Excel"
+  (renombrado desde "📦 Importar Excel/CSV", mismo boton y mismo modal de siempre).
+
+**Verificacion:** en una copia aislada (servidor real en el puerto 5098), se registro
+una empresa nueva, se completo el diagnostico, y se confirmo `sinInventario = true` en
+el HTML del dashboard con 0 productos. Se probo `POST /api/db/products/import/preview`
+con un archivo de encabezados no estandar ("Nombre Producto", "Precio Venta",
+"Existencias", "Costo Unitario") y se confirmo que `mapeo_sugerido` salia vacio (como
+se esperaba, ningun sinonimo coincide) - se importo ese mismo archivo pasando un
+`mapeo` manual armado a mano y los 2 productos se crearon correctamente. Se probo
+tambien un archivo CON columnas Descripcion/Unidad reconocidas automaticamente
+(`mapeo_sugerido` con las 7 columnas detectadas) y se confirmo en la base de datos real
+que ambos campos quedaron guardados (antes de este fix, Unidad hubiera quedado en el
+literal `"unidad"` sin importar el valor real de la celda). Se descargo
+`template_inventario_nimbo.xlsx` y se verifico con `openpyxl` que tiene exactamente 2
+hojas ("Productos" con las 7 columnas + fila de ejemplo + fila en blanco,
+"Instrucciones" con una fila por columna). Se confirmo que `sinInventario` pasa a
+`false` apenas el primer producto existe, y que `chatTutorialPendiente` se queda en
+`false` una vez marcado como mostrado sin importar el estado del inventario. Se
+extrajeron las 2 funciones de armado del mensaje del chat
+(`textoChatSinInventario()`/`textoChatTutorialNormal()`) y se corrieron con Node.js
+por separado para confirmar que generan HTML valido sin errores de sintaxis.
+
+**Archivos modificados:** `database/nimbo_db.py`, `app.py`, `templates/index.html`,
+`CLAUDE.md`.

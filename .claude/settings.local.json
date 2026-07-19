@@ -242,7 +242,10 @@
       "Bash(rm -f nimbo_master.db)",
       "Bash(rm -rf data/empresas)",
       "Bash(nohup python3 app.py --port 5099)",
-      "Bash(pkill -f \"nimbo_test_diagnostico/app.py\")"
+      "Bash(pkill -f \"nimbo_test_diagnostico/app.py\")",
+      "Bash(rsync -a --exclude=.git --exclude=__pycache__ --exclude=.env --exclude=static/videos/* --exclude=static/fotos/* --exclude=static/fotos_servicio/* --exclude=static/cotizaciones/* --exclude=static/etiquetas/* --exclude=backups /home/victor/nimbo.exe/ /home/victor/.claude/jobs/eb84e6d2/tmp/nimbo_test_excel/)",
+      "Bash(sed -i 's/app.run\\(debug=True, port=5000\\)/app.run\\(debug=False, port=5098\\)/' app.py)",
+      "Bash(pkill -f \"nimbo_test_excel/app.py\")"
     ]
   }
 }
