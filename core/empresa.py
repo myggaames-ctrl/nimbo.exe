@@ -150,12 +150,31 @@ def _inicializar_tablas_empresa(db_path_absoluto):
         init_cuentas_cobrar, init_cuentas_pagar, init_pagos_fijos_ext,
         init_metas_semanales, init_venta_cobrador_ext, init_reembolsos,
         init_venta_metodo_pago_ext, init_ajuste_pos,
+        # Tablas fundacionales (bug encontrado 2026-07-18, ver BUGS_Y_FIXES.md):
+        # no tenian ningun init_* propio, asi que crear_empresa() las omitia por
+        # completo. Van ANTES que init_grupos_cliente/init_pagos_fijos_ext/
+        # init_venta_metodo_pago_ext/init_venta_cobrador_ext/
+        # init_servicio_tecnico_ext en la lista de abajo a proposito: esas cinco
+        # hacen ALTER TABLE sobre Cliente/PagoFijo/Venta/OrdenServicio, y
+        # ALTER TABLE sobre una tabla que todavia no existe falla en silencio
+        # (mismo except sqlite3.OperationalError que ya usan para "la columna ya
+        # existe") - si corrieran primero, la tabla base se creaba DESPUES sin
+        # esas columnas nuevas.
+        init_clientes, init_ventas, init_kardex_stock_minimo, init_proveedores,
+        init_ordenes_servicio, init_producto_contenido, init_contabilidad_base,
+        init_pagos_fijos, init_chat_historial, init_recordatorios,
     )
 
     init_usuarios(db_path_absoluto)
     init_configuracion(db_path_absoluto)
     for init_fn in (
-        init_productos, init_cotizaciones, init_caja, init_descuentos,
+        init_productos,
+        # Tablas fundacionales primero (ver comentario del import de arriba).
+        init_clientes, init_ventas, init_kardex_stock_minimo, init_proveedores,
+        init_ordenes_servicio, init_producto_contenido, init_contabilidad_base,
+        init_pagos_fijos, init_chat_historial, init_recordatorios,
+        # El resto, en el mismo orden que ya tenia esta lista.
+        init_cotizaciones, init_caja, init_descuentos,
         init_garantias, init_combos, init_unidades_medida, init_puntos,
         init_codigos_barras, init_grupos_cliente, init_fotos_servicio,
         init_servicio_tecnico_ext, init_informes_revision, init_tarifas_mano_obra,

@@ -225,7 +225,8 @@
       "Bash(rsync -a --exclude=.git --exclude=__pycache__ --exclude=.env --exclude=static/videos/* --exclude=static/fotos/* --exclude=static/fotos_servicio/* ./ /tmp/claude-1000/-home-victor-nimbo-exe/25133093-50db-4de4-b745-577801ba104d/scratchpad/nimbo_repro_chat/)",
       "Bash(kill %1)",
       "Bash(pkill -f \"_run_test_server.py\")",
-      "Bash(ps -p 21423,21424 -o pid,cmd)"
+      "Bash(ps -p 21423,21424 -o pid,cmd)",
+      "Bash(rsync -a --exclude=.git --exclude=__pycache__ --exclude=.env --exclude=static/videos/* --exclude=static/fotos/* --exclude=static/fotos_servicio/* ./ /tmp/claude-1000/-home-victor-nimbo-exe/25133093-50db-4de4-b745-577801ba104d/scratchpad/nimbo_test_tablas/)"
     ]
   }
 }

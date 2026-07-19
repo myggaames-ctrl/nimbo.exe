@@ -452,6 +452,348 @@ def init_productos(db_path=None):
     conn.close()
 
 
+# ── Tablas fundacionales sin init_* (bug encontrado 2026-07-18) ────────────
+#
+# Estas 19 tablas (Cliente, Venta, Proveedor, OrdenServicio, OrdenCompra, Kardex,
+# PagoFijo, ChatHistorial, Gasto, HistorialOrden, HistorialPrecio, ItemOrdenCompra,
+# ProductoFoto, ProductoInfo, ProductoProveedor, RecordatorioPersonal,
+# ResumenContable, ResumenTrimestral, StockMinimo, ContactoProveedor) existen en
+# nimbo.db de Mi Cocina y las usa activamente el resto del codebase (get_products,
+# registrar_venta_cliente, crear_orden_servicio, etc.) - pero NINGUN init_* las
+# creaba: son anteriores a que existiera la convencion de un init_* por tabla/
+# funcionalidad, y como el nimbo.db de Mi Cocina ya las tenia desde siempre, nunca
+# hizo falta un CREATE TABLE para ellas en la practica de un solo tenant. Al pasar
+# a multi-tenant (ver seccion "Multi-tenant" mas arriba y BUGS_Y_FIXES.md) una
+# empresa nueva se queda sin estas tablas - varias funciones ALTER TABLE de mas
+# abajo (init_grupos_cliente, init_pagos_fijos_ext, init_venta_metodo_pago_ext,
+# init_venta_cobrador_ext, init_servicio_tecnico_ext) tambien fallaban en
+# silencio contra una empresa nueva, porque "ALTER TABLE X ADD COLUMN" sobre una
+# tabla X que no existe lanza el mismo sqlite3.OperationalError que ya atrapan a
+# proposito para el caso "la columna ya existe" - un ALTER contra una tabla
+# inexistente se veia identico a "no hacer nada porque ya estaba aplicado".
+# database.nimbo_db.crear_empresa() (ver core/empresa.py) ahora llama a estas
+# funciones ANTES que esas de ALTER TABLE, para que la tabla base ya exista
+# cuando intenten agregarle columnas.
+
+def init_clientes(db_path=None):
+    conn = nimbo_connect(db_path)
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS Cliente (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            Nombre TEXT NOT NULL,
+            Telefono TEXT,
+            Email TEXT,
+            Direccion TEXT,
+            Nit TEXT,
+            FechaCreado DATETIME DEFAULT CURRENT_TIMESTAMP,
+            Notas TEXT,
+            UltimaCompra DATETIME,
+            FechaCumpleanos DATE,
+            GrupoCliente TEXT DEFAULT 'detallista',
+            CreditoTienda NUMERIC DEFAULT 0
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def init_ventas(db_path=None):
+    conn = nimbo_connect(db_path)
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS Venta (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ClienteId INTEGER,
+            Descripcion TEXT,
+            Total NUMERIC DEFAULT 0,
+            Fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
+            Mes INTEGER,
+            Trimestre INTEGER,
+            Anio INTEGER,
+            CobradorNombre TEXT,
+            MetodoPago TEXT,
+            MontoTarjeta NUMERIC DEFAULT 0,
+            FOREIGN KEY (ClienteId) REFERENCES Cliente(Id)
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def init_kardex_stock_minimo(db_path=None):
+    conn = nimbo_connect(db_path)
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS Kardex (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ProductId INTEGER,
+            ProductName TEXT,
+            Tipo TEXT,
+            Cantidad NUMERIC,
+            StockAntes NUMERIC,
+            StockDespues NUMERIC,
+            Razon TEXT,
+            Fecha DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS StockMinimo (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ProductId INTEGER UNIQUE,
+            ProductName TEXT,
+            Minimo NUMERIC DEFAULT 5
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def init_proveedores(db_path=None):
+    conn = nimbo_connect(db_path)
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS Proveedor (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            Nombre TEXT NOT NULL,
+            WhatsApp TEXT,
+            Email TEXT,
+            Direccion TEXT,
+            Notas TEXT,
+            FechaCreado DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS ContactoProveedor (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ProveedorId INTEGER,
+            Nombre TEXT,
+            Cargo TEXT,
+            WhatsApp TEXT,
+            Email TEXT,
+            EsPrincipal INTEGER DEFAULT 0,
+            FOREIGN KEY (ProveedorId) REFERENCES Proveedor(Id)
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS ProductoProveedor (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ProveedorId INTEGER,
+            ProductoNombre TEXT,
+            ProductoId INTEGER,
+            FOREIGN KEY (ProveedorId) REFERENCES Proveedor(Id)
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS OrdenCompra (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            NumeroOrden TEXT UNIQUE,
+            ProveedorId INTEGER,
+            ContactoId INTEGER,
+            Estado TEXT DEFAULT 'PENDIENTE',
+            Total NUMERIC DEFAULT 0,
+            Notas TEXT,
+            Fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FechaEntrega DATETIME,
+            FOREIGN KEY (ProveedorId) REFERENCES Proveedor(Id)
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS ItemOrdenCompra (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            OrdenId INTEGER,
+            ProductoNombre TEXT,
+            ProductoId INTEGER,
+            Cantidad NUMERIC,
+            PrecioUnitario NUMERIC,
+            Total NUMERIC,
+            FOREIGN KEY (OrdenId) REFERENCES OrdenCompra(Id)
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS HistorialPrecio (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ProveedorId INTEGER,
+            ProductoNombre TEXT,
+            ProductoId INTEGER,
+            PrecioAnterior NUMERIC,
+            PrecioNuevo NUMERIC,
+            Diferencia NUMERIC,
+            PorcentajeCambio NUMERIC,
+            Fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (ProveedorId) REFERENCES Proveedor(Id)
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def init_ordenes_servicio(db_path=None):
+    conn = nimbo_connect(db_path)
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS OrdenServicio (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            NumeroOrden TEXT UNIQUE,
+            ClienteId INTEGER,
+            Equipo TEXT,
+            Marca TEXT,
+            Modelo TEXT,
+            Serie TEXT,
+            Problema TEXT,
+            Diagnostico TEXT,
+            Presupuesto NUMERIC DEFAULT 0,
+            ManoObra NUMERIC DEFAULT 0,
+            Estado TEXT DEFAULT 'RECEPCION',
+            Observaciones TEXT,
+            FechaRecepcion DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FechaEntrega DATETIME,
+            Tecnico TEXT,
+            TecnicoId INTEGER,
+            TecnicoNombre TEXT,
+            FOREIGN KEY (ClienteId) REFERENCES Cliente(Id)
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS HistorialOrden (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            OrdenId INTEGER,
+            Estado TEXT,
+            Nota TEXT,
+            Fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (OrdenId) REFERENCES OrdenServicio(Id)
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def init_producto_contenido(db_path=None):
+    conn = nimbo_connect(db_path)
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS ProductoFoto (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ProductoId INTEGER,
+            ProductoNombre TEXT,
+            RutaFoto TEXT,
+            FechaSubida DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS ProductoInfo (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ProductoId INTEGER UNIQUE,
+            ProductoNombre TEXT,
+            Descripcion TEXT,
+            DescripcionCorta TEXT,
+            FechaActualizado DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def init_contabilidad_base(db_path=None):
+    conn = nimbo_connect(db_path)
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS Gasto (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            Descripcion TEXT NOT NULL,
+            Monto NUMERIC NOT NULL,
+            Categoria TEXT DEFAULT 'general',
+            Mes INTEGER,
+            Trimestre INTEGER,
+            Anio INTEGER,
+            Fecha DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS ResumenContable (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            Periodo TEXT,
+            Mes INTEGER,
+            Trimestre INTEGER,
+            Anio INTEGER,
+            TotalIngresos NUMERIC DEFAULT 0,
+            TotalGastos NUMERIC DEFAULT 0,
+            TotalCostos NUMERIC DEFAULT 0,
+            ComisionPOS NUMERIC DEFAULT 0,
+            IVA NUMERIC DEFAULT 0,
+            ISR NUMERIC DEFAULT 0,
+            UtilidadNeta NUMERIC DEFAULT 0,
+            FechaGenerado DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS ResumenTrimestral (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            Anio INTEGER,
+            Trimestre INTEGER,
+            TotalVentas NUMERIC,
+            TotalOrdenes INTEGER,
+            ClientesActivos INTEGER,
+            FechaGenerado DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def init_pagos_fijos(db_path=None):
+    conn = nimbo_connect(db_path)
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS PagoFijo (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            Nombre TEXT NOT NULL,
+            Frecuencia TEXT DEFAULT 'mensual',
+            DiaPago INTEGER,
+            DiasAntes INTEGER DEFAULT 2,
+            Activo INTEGER DEFAULT 1,
+            FechaCreado DATETIME DEFAULT CURRENT_TIMESTAMP,
+            Monto NUMERIC DEFAULT 0
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def init_chat_historial(db_path=None):
+    conn = nimbo_connect(db_path)
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS ChatHistorial (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            Role TEXT,
+            Content TEXT,
+            Fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
+            Sesion TEXT DEFAULT 'default'
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def init_recordatorios(db_path=None):
+    conn = nimbo_connect(db_path)
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS RecordatorioPersonal (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            Mensaje TEXT NOT NULL,
+            Fecha DATE,
+            Hora TEXT DEFAULT '08:00',
+            Repetir TEXT DEFAULT 'no',
+            Completado INTEGER DEFAULT 0,
+            FechaCreado DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
 def migrar_productos_desde_aronium():
     """Se corre una sola vez al arrancar (ver app.py, justo despues de
     init_productos()). Si Producto ya tiene filas (ya se migro antes, o es un

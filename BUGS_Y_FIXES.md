@@ -1040,3 +1040,77 @@ razón ajena a este trabajo. Hace falta volver a arrancarlo a mano para que el f
 activo en la sesión real.
 
 **Archivos modificados:** `app.py`.
+
+---
+
+## [2026-07-18] crear_empresa() creaba una base de datos con 19 tablas faltantes
+
+**Qué pasaba:** una empresa nueva registrada vía `crear_empresa()` (por ejemplo Surti La
+Unión) quedaba sin las tablas `PagoFijo`, `HistorialPrecio`, `Gasto`, `Kardex`, `Venta`,
+y otras 14 más - cualquier intento de vender, registrar un cliente, un proveedor, una
+orden de servicio técnico o un gasto hubiera fallado con
+`sqlite3.OperationalError: no such table`.
+
+**Por qué pasaba (causa real, más profunda de lo que parecía al principio):** no era que
+`crear_empresa()` se olvidara de llamar a algunas funciones `init_*` que ya existían - al
+revisar, **no existía ningún `init_*` para esas 19 tablas en absoluto, en ningún archivo
+del proyecto** (`grep` de `CREATE TABLE.*NombreTabla` contra todo `database/nimbo_db.py`,
+`core/auth.py`, `core/configuracion.py` y `app.py` no encontró ni una sola coincidencia
+para `Cliente`, `Venta`, `Proveedor`, `OrdenServicio`, `Kardex`, etc.). Estas tablas son
+anteriores a que existiera la convención actual de "un `init_*` por funcionalidad" -
+`nimbo.db` de Mi Cocina ya las tenía desde que el proyecto era single-tenant, así que en
+la práctica de un solo tenant nunca hizo falta un `CREATE TABLE` para ellas: el archivo
+ya las traía. Encima, 5 funciones que sí existen (`init_grupos_cliente`,
+`init_pagos_fijos_ext`, `init_venta_metodo_pago_ext`, `init_venta_cobrador_ext`,
+`init_servicio_tecnico_ext`) hacen `ALTER TABLE Cliente/PagoFijo/Venta/OrdenServicio ADD
+COLUMN ...` asumiendo que esas tablas base ya existen - contra una empresa nueva,
+`ALTER TABLE` sobre una tabla inexistente lanza el mismo `sqlite3.OperationalError` que
+esas funciones ya atrapan a propósito para el caso "la columna ya existe", así que
+fallaban en silencio sin avisar nada.
+
+**Cómo se encontró el alcance completo:** se compararon los `.tables` reales de Mi
+Cocina contra una empresa de prueba con `diff` - 19 tablas de diferencia exactas
+(`ChatHistorial`, `Cliente`, `ContactoProveedor`, `Gasto`, `HistorialOrden`,
+`HistorialPrecio`, `ItemOrdenCompra`, `Kardex`, `OrdenCompra`, `OrdenServicio`,
+`PagoFijo`, `ProductoFoto`, `ProductoInfo`, `ProductoProveedor`, `Proveedor`,
+`RecordatorioPersonal`, `ResumenContable`, `ResumenTrimestral`, `StockMinimo`, `Venta`).
+Se extrajo el esquema exacto de cada una desde `nimbo.db` de Mi Cocina (`sqlite3 ...
+".schema TABLA"`, la fuente autoritativa, en producción desde antes de esta migración)
+para replicarlo tal cual, columna por columna, incluyendo las columnas que ya se habían
+agregado con `ALTER TABLE` a lo largo de la historia del proyecto (`Cliente.GrupoCliente`,
+`PagoFijo.Monto`, `Venta.MetodoPago/MontoTarjeta/CobradorNombre`,
+`OrdenServicio.TecnicoId/TecnicoNombre`).
+
+**Cómo se arregló:**
+- Se agregaron 10 funciones `init_*` nuevas a `database/nimbo_db.py`, agrupando las 19
+  tablas por área relacionada: `init_clientes` (Cliente), `init_ventas` (Venta),
+  `init_kardex_stock_minimo` (Kardex, StockMinimo), `init_proveedores` (Proveedor,
+  ContactoProveedor, ProductoProveedor, OrdenCompra, ItemOrdenCompra, HistorialPrecio),
+  `init_ordenes_servicio` (OrdenServicio, HistorialOrden), `init_producto_contenido`
+  (ProductoFoto, ProductoInfo), `init_contabilidad_base` (Gasto, ResumenContable,
+  ResumenTrimestral), `init_pagos_fijos` (PagoFijo), `init_chat_historial`
+  (ChatHistorial), `init_recordatorios` (RecordatorioPersonal) - cada una sigue
+  exactamente el mismo patrón `(db_path=None)` que ya usan las demás.
+- Se agregaron a `core/empresa.py._inicializar_tablas_empresa()`, colocadas
+  deliberadamente ANTES de las 5 funciones que hacen `ALTER TABLE` sobre estas mismas
+  tablas, para que la tabla base ya exista cuando esas intenten agregarle columnas.
+- Se corrigió también retroactivamente la base de datos real de Surti La Unión
+  (ya creada con el esquema incompleto antes de este fix): se corrieron las 10 funciones
+  nuevas más las 5 de `ALTER TABLE` directo contra su `nimbo.db`, sin perder ningún dato
+  que ya tuviera (se verificó que su usuario admin seguía intacto después).
+
+**Verificación:** en una copia aislada, se creó una empresa de prueba nueva y se comparó
+`sqlite3 ... ".tables"` contra Mi Cocina con `diff` - sin ninguna diferencia. Se
+verificaron también las columnas agregadas por `ALTER TABLE` (`PRAGMA table_info`) -
+`GrupoCliente`, `Monto`, `MetodoPago`/`MontoTarjeta`/`CobradorNombre`,
+`TecnicoId`/`TecnicoNombre` - todas presentes. Se hizo además una prueba funcional real
+por el chat (no solo de esquema): crear un cliente, crear y vender un producto,
+registrar un proveedor, iniciar una orden de servicio y registrar un gasto - todas esas
+operaciones insertaron filas reales sin ningún error. Por último, sobre el proyecto
+real: `sqlite3 ~/nimbo.exe/data/empresas/mi-cocina/nimbo.db ".tables"` y `sqlite3
+~/nimbo.exe/data/empresas/surti-la-union/nimbo.db ".tables"` ahora devuelven exactamente
+las mismas 49 tablas.
+
+**Archivos modificados:** `database/nimbo_db.py`, `core/empresa.py`, y
+`data/empresas/surti-la-union/nimbo.db` (backfill de las tablas faltantes, sin perder
+datos existentes).
