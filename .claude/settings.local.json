@@ -245,7 +245,10 @@
       "Bash(pkill -f \"nimbo_test_diagnostico/app.py\")",
       "Bash(rsync -a --exclude=.git --exclude=__pycache__ --exclude=.env --exclude=static/videos/* --exclude=static/fotos/* --exclude=static/fotos_servicio/* --exclude=static/cotizaciones/* --exclude=static/etiquetas/* --exclude=backups /home/victor/nimbo.exe/ /home/victor/.claude/jobs/eb84e6d2/tmp/nimbo_test_excel/)",
       "Bash(sed -i 's/app.run\\(debug=True, port=5000\\)/app.run\\(debug=False, port=5098\\)/' app.py)",
-      "Bash(pkill -f \"nimbo_test_excel/app.py\")"
+      "Bash(pkill -f \"nimbo_test_excel/app.py\")",
+      "Bash(sudo -n readlink /proc/84176/cwd)",
+      "Read(//proc/84176/**)",
+      "Bash(ps -o pid,lstart,cmd -p 84175,84176)"
     ]
   }
 }

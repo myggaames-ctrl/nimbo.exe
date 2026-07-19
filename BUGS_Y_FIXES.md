@@ -1427,3 +1427,66 @@ generado mostró `&lt;img src=x onerror=alert(1)&gt;` y `&lt;script&gt;alert(2)&
 /script&gt;` como texto escapado, no como etiquetas reales.
 
 **Archivos modificados:** `templates/index.html`.
+
+---
+
+## [2026-07-19] Un empresa_slug fantasma en la sesión mandaba a /login en vez de /select-empresa, y de ahí al wizard viejo (/setup/demo)
+
+**Problema:** al entrar a `localhost:5000`, en vez de caer en `/select-empresa` (el
+punto de entrada correcto del sistema multi-tenant), el navegador terminaba en
+`/setup/demo/1` - el wizard de onboarding viejo de 7 pasos, que solo debería
+aparecer si alguien hace clic a propósito en el link "🔍 Ver demo del onboarding" de
+`/login`.
+
+**Causa (más profunda de lo que parecía al principio):** no era que `/` redirigiera
+directo a `/setup/demo` - eso no existe en ningún lado del código. El problema real
+era `set_empresa_context()` (el `before_request` que resuelve `g.empresa_slug`/
+`g.empresa_db` a partir de `session["empresa_slug"]`, ver `app.py`): si la sesión
+tenía un slug que YA NO EXISTE en `nimbo_master.db` (por ejemplo, el de una empresa de
+prueba borrada en una limpieza anterior - ver la entrada de `empresa-temporal-de-
+prueba` en este mismo archivo), `get_db_path(slug)` devolvía `None` para
+`g.empresa_db`, pero `g.empresa_slug` se quedaba con el valor viejo (truthy) igual.
+Tanto `index()` como `login()` solo revisan "¿hay ALGÚN slug en la sesión?" (`if not
+session.get("empresa_slug")`), nunca "¿ese slug sigue existiendo de verdad?" - así que
+un slug fantasma pasaba ese chequeo sin problema. El resultado: `index()` no
+redirigía a `/select-empresa` (redirigía a `/login`, porque no había sesión de
+usuario), y `/login` TAMPOCO redirigía a `/select-empresa` (mismo chequeo, mismo
+bug) - el usuario quedaba atascado viendo un formulario de login para una empresa que
+ya no existe, sin ninguna salida visible salvo el link "Ver demo del onboarding" de
+esa misma página, que sí es un link real y funcional - clickearlo (pensando que era
+parte del flujo normal) llevaba a `/setup/demo/1`.
+
+**Cómo se encontró:** se reprodujo primero con curl contra el servidor real corriendo
+- con una sesión completamente limpia, `GET /` sí redirigía correctamente a
+`/select-empresa` (no reproducía el bug tal cual). Se armó entonces un
+`app.test_client()` con `session_transaction()` inyectando a mano un
+`empresa_slug` que no existe en `nimbo_master.db` (mismo tipo de valor que hubiera
+quedado en el navegador de alguien que probó una empresa de prueba ya borrada) -
+ahí sí se reprodujo exacto: `GET /` devolvía `302` a `/login?next=/` en vez de a
+`/select-empresa`, y `GET /login` devolvía `200` (el formulario de login) en vez de
+redirigir también.
+
+**Cómo se arregló:** `set_empresa_context()` ahora, cuando el slug de la sesión no
+resuelve a ningún `DbPath` real (`get_db_path(slug)` es `None`), limpia
+`session["empresa_slug"]`/`session["empresa_db"]` en el momento y deja
+`g.empresa_slug`/`g.empresa_db` en `None` - así todo lo que corre después en el mismo
+request (`index()`, `login()`, `require_setup()`) trata la situación exactamente
+igual que "nunca se eligió ninguna empresa", sin necesidad de tocar esas otras
+funciones una por una.
+
+**Verificación:** con `app.test_client()`, el mismo escenario que antes reproducía el
+bug (`session["empresa_slug"] = "empresa-que-ya-no-existe"`) ahora responde `GET /`
+con `302` a `/select-empresa`, y la sesión queda limpia después (`sess.get
+("empresa_slug")` es `None`). Se confirmó también que el camino sano no se rompió:
+sin ninguna sesión, `GET /` sigue yendo a `/select-empresa`; con un slug real y
+válido (`mi-cocina`), sin login todavía, `GET /` sigue yendo a `/login` y la sesión
+conserva el slug real sin tocarlo. Siguiendo la cadena completa de redirects
+(`follow_redirects=True`) desde el escenario del bug, la página final es
+`/select-empresa` ("Nimbo — Elegir empresa"), no `/setup/demo`.
+
+**Adicional (pedido en la misma tarea):** se verificó el usuario `admin` de Mi Cocina
+(`data/empresas/mi-cocina/nimbo.db`) contra `werkzeug.security.check_password_hash()`
+y contra `core.auth.verify_login()` (el mismo camino que usa `/login` de verdad) - la
+contraseña ya era `admin123`, no hizo falta actualizar nada.
+
+**Archivos modificados:** `app.py`.

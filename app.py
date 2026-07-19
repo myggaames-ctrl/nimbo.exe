@@ -134,12 +134,28 @@ def _onboarding_paso_actual():
 @app.before_request
 def set_empresa_context():
     slug = session.get("empresa_slug")
+    g.empresa_slug = None
+    g.empresa_db = None
     if slug:
-        g.empresa_slug = slug
-        g.empresa_db = get_db_path(slug)
-    else:
-        g.empresa_slug = None
-        g.empresa_db = None
+        db_path = get_db_path(slug)
+        if db_path:
+            g.empresa_slug = slug
+            g.empresa_db = db_path
+        else:
+            # Slug presente en la sesion pero ya no existe en nimbo_master.db
+            # (empresa borrada, o un slug de prueba viejo - bug real
+            # encontrado 2026-07-19, ver BUGS_Y_FIXES.md): antes esto dejaba
+            # g.empresa_slug con el valor viejo igual, asi que index()/login()
+            # (que solo chequean "hay ALGUN slug en la sesion", no si ese slug
+            # sigue existiendo) nunca redirigian a /select-empresa - el
+            # usuario quedaba atascado en un /login para una empresa
+            # fantasma, sin mas salida visible que el link "Ver demo del
+            # onboarding", que lo mandaba a /setup/demo/1 en vez del flujo
+            # multi-tenant normal. Se limpia la sesion aca mismo para que
+            # todo lo que venga despues (index(), login(), require_setup())
+            # trate esto exactamente igual que "nunca elegiste una empresa".
+            session.pop("empresa_slug", None)
+            session.pop("empresa_db", None)
 
 
 ENDPOINTS_SIN_EMPRESA = (
