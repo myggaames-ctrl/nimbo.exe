@@ -2459,6 +2459,17 @@ async function previsualizarImportacion() {
   }
 }
 
+// Escapa texto que viene de un archivo subido por el usuario (encabezados y
+// celdas del preview de importacion) antes de meterlo en innerHTML - sin
+// esto, un encabezado o celda con algo como "<img src=x onerror=...>" en el
+// Excel/CSV se ejecutaria como HTML real dentro de la sesion autenticada del
+// admin en vez de mostrarse como texto.
+function escHtml(valor) {
+  const div = document.createElement('div');
+  div.textContent = valor === null || valor === undefined ? '' : String(valor);
+  return div.innerHTML;
+}
+
 function renderPreviewImportacion(d) {
   document.getElementById('importar-preview-resumen').textContent =
     `${d.total_filas} fila(s) de datos detectadas. Revisa el mapeo de columnas antes de importar:`;
@@ -2471,14 +2482,14 @@ function renderPreviewImportacion(d) {
       `<option value="${valor}" ${valor === sugerido ? 'selected' : ''}>${etiqueta}</option>`
     ).join('');
     return `<th style="min-width:120px">
-      <div class="text-muted" style="font-weight:400;margin-bottom:3px">${h || '(sin encabezado)'}</div>
+      <div class="text-muted" style="font-weight:400;margin-bottom:3px">${escHtml(h) || '(sin encabezado)'}</div>
       <select class="input" style="font-size:11px;padding:4px" data-col-idx="${idx}">${selects}</select>
     </th>`;
   }).join('');
 
   const filasBody = document.getElementById('importar-preview-filas');
   filasBody.innerHTML = d.filas_preview.map(fila =>
-    '<tr>' + d.headers.map((_, idx) => `<td>${fila[idx] !== undefined ? fila[idx] : ''}</td>`).join('') + '</tr>'
+    '<tr>' + d.headers.map((_, idx) => `<td>${fila[idx] !== undefined ? escHtml(fila[idx]) : ''}</td>`).join('') + '</tr>'
   ).join('') || '<tr><td class="text-muted">Sin filas de datos para mostrar.</td></tr>';
 }
 
@@ -2522,7 +2533,7 @@ function renderResultadoImportacion(creados, errores) {
   if (errores.length) {
     html += `<div style="color:var(--red);margin-top:8px">Detalle:</div>`;
     html += '<ul style="margin:4px 0 0 18px;font-size:12px">' +
-      errores.map(e => `<li>Fila ${e.fila}: ${e.motivo}</li>`).join('') + '</ul>';
+      errores.map(e => `<li>Fila ${e.fila}: ${escHtml(e.motivo)}</li>`).join('') + '</ul>';
   }
 
   if (_duplicadosImportacion.length) {
@@ -2546,8 +2557,8 @@ function renderListaDuplicados() {
     const f = d.fila, e = d.producto_existente;
     const marcado = a => d.accion === a ? 'btn-primary' : 'btn-ghost';
     return `<div class="card" style="padding:8px;margin-bottom:6px;font-size:12px">
-      <div><b>${f.nombre}</b> (Q${f.precio}${f.stock != null ? ', stock ' + f.stock : ''}) se parece a
-        <b>${e.Name}</b> (Q${e.Price}, stock actual ${e.Stock})</div>
+      <div><b>${escHtml(f.nombre)}</b> (Q${f.precio}${f.stock != null ? ', stock ' + f.stock : ''}) se parece a
+        <b>${escHtml(e.Name)}</b> (Q${e.Price}, stock actual ${e.Stock})</div>
       <div class="flex gap-2" style="margin-top:6px">
         <button class="btn ${marcado('actualizar')} btn-sm" onclick="marcarDuplicado(${i},'actualizar')">Actualizar existente</button>
         <button class="btn ${marcado('crear')} btn-sm" onclick="marcarDuplicado(${i},'crear')">Crear como nuevo</button>
