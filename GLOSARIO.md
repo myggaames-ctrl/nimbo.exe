@@ -796,3 +796,62 @@ de que afectara a una empresa real.
 revisar instalaciones eléctricas, en vez de pedirle al arquitecto general del edificio
 que también sepa de electricidad - el inspector se enfoca en una sola cosa y da su
 reporte sin necesidad de conocer el resto del proyecto.
+
+
+---
+
+### onboarding
+**Qué es:** el proceso guiado que ayuda a un usuario nuevo a arrancar a usar un
+sistema por primera vez, en vez de dejarlo solo frente a una pantalla vacía sin saber
+qué hacer.
+
+**Para qué sirve en Nimbo:** hay dos onboardings distintos en el proyecto: el wizard
+de `/setup` (7 pasos, datos del negocio/cuenta admin/configuración financiera, se
+completa una sola vez por instalación) y, más nuevo, el diagnóstico de negocio +
+tour del dashboard + tutorial del chat que ve el admin la primera vez que entra a una
+empresa recién registrada (ver `DiagnosticoNegocio` y `tour guiado` abajo).
+
+**Ejemplo de la vida real:** es como el recorrido que te da un guía turístico el primer
+día en un lugar nuevo, en vez de soltarte solo en el centro de la ciudad con un mapa en
+blanco - te muestra lo esencial primero, para que el resto lo explores con más
+confianza.
+
+---
+
+### tour guiado (Shepherd.js)
+**Qué es:** una secuencia de recuadros que van resaltando, uno por uno, distintas
+partes de una pantalla, con una explicación corta de qué es cada una - el usuario
+avanza con un botón "Siguiente" hasta terminar el recorrido.
+
+**Para qué sirve en Nimbo:** el tour del dashboard (`templates/index.html`,
+función `iniciarTourDashboard()`) usa la librería Shepherd.js (cargada por CDN, no
+instalada con npm - el proyecto no tiene un paso de build de JavaScript) para resaltar
+10 elementos reales del sidebar y el dashboard (el chat, las alertas, Inventario,
+Caja...) la primera vez que un admin entra después de completar el diagnóstico de
+negocio. Se controla con la clave `tour_completado` en `Configuracion` - una vez
+cerrado, no se vuelve a mostrar solo, salvo que se pida de nuevo desde el botón "Ver
+tour del dashboard" en Configuración.
+
+**Ejemplo de la vida real:** es como cuando alguien te muestra una casa nueva
+señalando cuarto por cuarto ("aquí la cocina, aquí el baño...") en vez de dejarte
+explorarla solo desde el primer día - después de esa vuelta ya sabes dónde está todo.
+
+---
+
+### DiagnosticoNegocio
+**Qué es:** (no es un término genérico, es el nombre real de una tabla de este
+proyecto) una tabla que guarda las respuestas de un cuestionario sobre cómo funciona
+un negocio: qué vende, cómo lleva el inventario, si el dueño se paga un sueldo, etc.
+
+**Para qué sirve en Nimbo:** cuando un admin entra por primera vez a una empresa
+recién registrada, `/diagnostico` le hace 23 preguntas en 6 bloques (el negocio, cómo
+opera, el control actual, su equipo tecnológico, él como dueño, y su meta) antes de
+dejarlo entrar al dashboard. Con las respuestas, `database.nimbo_db.
+guardar_diagnostico()` calcula automáticamente un resumen del negocio y las 3 "áreas
+de oportunidad" con más problema (por ejemplo, si el dueño contesta que lleva el
+inventario "en la cabeza", esa se marca como un área crítica) junto con un primer paso
+concreto para cada una dentro de Nimbo.
+
+**Ejemplo de la vida real:** es como el cuestionario de salud que llena un paciente
+antes de su primera cita con un médico nuevo - las respuestas ayudan al médico a saber
+por dónde empezar, en vez de partir de cero sin ningún antecedente.

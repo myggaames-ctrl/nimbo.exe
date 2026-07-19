@@ -163,6 +163,7 @@ def _inicializar_tablas_empresa(db_path_absoluto):
         init_clientes, init_ventas, init_kardex_stock_minimo, init_proveedores,
         init_ordenes_servicio, init_producto_contenido, init_contabilidad_base,
         init_pagos_fijos, init_chat_historial, init_recordatorios,
+        init_diagnostico_negocio,
     )
 
     init_usuarios(db_path_absoluto)
@@ -180,6 +181,6 @@ def _inicializar_tablas_empresa(db_path_absoluto):
         init_servicio_tecnico_ext, init_informes_revision, init_tarifas_mano_obra,
         init_cuentas_cobrar, init_cuentas_pagar, init_pagos_fijos_ext,
         init_metas_semanales, init_venta_cobrador_ext, init_reembolsos,
-        init_venta_metodo_pago_ext, init_ajuste_pos,
+        init_venta_metodo_pago_ext, init_ajuste_pos, init_diagnostico_negocio,
     ):
         init_fn(db_path_absoluto)

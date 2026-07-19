@@ -1233,3 +1233,76 @@ login") o desinstalar/deshabilitar el plugin `semgrep` si no se quiere usar ese
 escaneo.
 
 **Archivos modificados:** ninguno (es una nota de entorno, no un cambio de código).
+
+---
+
+## [2026-07-19] Nueva instalacion: diagnostico de negocio + tour del dashboard + tutorial del chat
+
+**Problema:** una empresa nueva (creada por /register-empresa) llegaba directo al
+dashboard vacio despues del wizard de registro, sin ninguna guia sobre que hacer
+primero ni ningun dato sobre el negocio mas alla de nombre/tipo/pais - Nimbo no tenia
+forma de saber si el dueno llevaba el inventario "en la cabeza", si tenia deudas, o si
+sabia cuanto gano el mes pasado, informacion que hubiera sido util para orientar al
+admin desde el primer dia.
+
+**Causa:** no es un bug, es una funcionalidad nueva pedida explicitamente (diagnostico
+de negocio de 6 bloques + tour del dashboard con Shepherd.js + tutorial del chat como
+primer mensaje). Se documenta aca (ademas de en CLAUDE.md, seccion "Modulos
+completados") porque asi se pidio explicitamente para esta instalacion.
+
+**Solucion:**
+- Tabla `DiagnosticoNegocio` nueva en nimbo.db (33 columnas: 6 bloques de preguntas +
+  3 columnas de resultado calculado + metadata de completado). `database/nimbo_db.py`
+  agrega `init_diagnostico_negocio()`, `get_diagnostico()`, `diagnostico_completado()`,
+  `guardar_diagnostico()` (calcula `ResumenDiagnostico`/`AreasOportunidad`/
+  `PrimerosTresPasos` a partir de las respuestas, ver `_AREAS_CANDIDATAS`) y
+  `resetear_diagnostico()`. `core/empresa.py._inicializar_tablas_empresa()` ahora
+  tambien llama a `init_diagnostico_negocio()`, asi que toda empresa nueva ya nace con
+  la tabla - verificado con el skill `verificar-esquema-empresa` (instalado la sesion
+  anterior) contra dos empresas de prueba creadas en una copia aislada: mismo esquema
+  exacto que la empresa de referencia.
+- `app.py`: `index()` redirige a la ruta nueva `/diagnostico` si `current_user.is_admin`
+  y el diagnostico todavia no esta completo (un empleado o tecnico nunca la ve). Rutas
+  nuevas: `GET /diagnostico`, `POST /api/diagnostico/guardar`, `GET
+  /api/diagnostico/resumen`, `POST /api/diagnostico/repetir`, `POST
+  /api/tour/completar`, `POST /api/tour/resetear`, `POST
+  /api/chat/tutorial-mostrado`.
+- `templates/diagnostico.html` (nuevo): formulario de una sola pagina, mismo estilo
+  oscuro que `login.html`/`register_empresa.html`, 6 bloques con barra de progreso y
+  navegacion Anterior/Siguiente (todos los bloques ya estan en el DOM, JS solo
+  muestra/oculta), termina en una pantalla de resultado con el resumen, las 3 areas de
+  oportunidad y los 3 primeros pasos calculados por el servidor.
+- `templates/index.html`: Shepherd.js por CDN (con `integrity`/`crossorigin` -
+  verificados calculando el hash real sha384 de los archivos servidos por jsdelivr en
+  el momento, no copiados de ningun lado, por el aviso del hook de
+  `security-guidance@claude-code-plugins` que senalo la falta de Subresource
+  Integrity) - tour de 10 pasos sobre elementos reales del sidebar/dashboard (el paso
+  "Ventas" queda como paso informativo sin resaltar nada, porque no existe un panel
+  "Ventas" separado - las ventas se hacen desde Caja o por chat). Arranca solo al
+  cargar el dashboard si `tour_pendiente` (Jinja). El mensaje de tutorial del chat se
+  inyecta como un mensaje mas del chat (no un popup) la primera vez que se abre el
+  panel Chat, para cualquier rol. Panel Configuracion (solo admin) gana una tarjeta
+  nueva con el resumen del ultimo diagnostico y los botones "Repetir diagnostico de
+  negocio" / "Ver tour del dashboard".
+- Dos claves nuevas en `Configuracion`: `tour_completado` y `chat_tutorial_mostrado`
+  (mismo patron clave/valor que `onboarding_completado`).
+
+**Verificacion:** en una copia aislada (servidor real en el puerto 5099, no
+`test_client()`), se registro una empresa nueva por `/api/empresa/crear`, se logueo el
+admin y se confirmo el redirect automatico a `/diagnostico`; se envio un diagnostico
+completo simulando un negocio con problemas reales (inventario "en mi cabeza", no sabe
+cuanto gana, se paga "agarrando del cajon") y se verifico que las 3 areas criticas
+correctas salieran en el orden esperado (Inventario, Contabilidad, Finanzas personales
+del dueno) por encima de las de "atencion" (Cuentas por cobrar, que tambien aplicaba);
+se confirmo que `GET /` ya no redirige a `/diagnostico` despues de completarlo, que
+`/api/tour/completar` y `/api/chat/tutorial-mostrado` apagan sus flags
+correspondientes en el HTML del dashboard, que `/api/diagnostico/repetir` los vuelve a
+encender sin borrar las respuestas anteriores (`Completado=0` pero los datos siguen en
+la fila), y que un usuario con rol empleado nunca ve `/diagnostico` (ni por el redirect
+de `index()`, ni entrando directo por URL, ni contra el endpoint `/api/diagnostico/
+guardar`, que responde 403). Se creo ademas una segunda empresa nueva y se corrio
+`verificar_esquema.py` contra las dos - mismo esquema exacto, `DiagnosticoNegocio`
+incluida.
+
+**Archivos modificados:** `database/nimbo_db.py`, `core/empresa.py`, `app.py`,
+`templates/diagnostico.html` (nuevo), `templates/index.html`, `CLAUDE.md`.

@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nimbo — Diagnóstico de negocio</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+  :root {
+    --bg:        #0a0a0f;
+    --surface:   #111118;
+    --surface2:  #1a1a24;
+    --border:    #22222e;
+    --accent:    #f97316;
+    --accent2:   #fb923c;
+    --text:      #e8e8f0;
+    --muted:     #6b6b80;
+    --red:       #ef4444;
+    --green:     #22c55e;
+    --radius:    12px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Inter', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+
+  .card {
+    width: 100%;
+    max-width: 560px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 32px 28px;
+  }
+
+  .logo-mark {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 2px;
+  }
+  .logo-name { font-size: 20px; font-weight: 700; margin-bottom: 6px; }
+  .logo-sub { font-size: 13px; color: var(--muted); margin-bottom: 22px; }
+
+  /* ── PROGRESO ─────────────────────────── */
+  .progress-track { display: flex; align-items: center; margin-bottom: 8px; }
+  .progress-step {
+    flex: 1;
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    margin: 0 3px;
+    transition: background 0.2s;
+  }
+  .progress-step:first-child { margin-left: 0; }
+  .progress-step:last-child { margin-right: 0; }
+  .progress-step.done { background: var(--accent); }
+  .progress-step.current { background: var(--accent2); }
+  .progress-label { font-size: 11px; color: var(--muted); margin-bottom: 22px; }
+  .progress-label b { color: var(--accent); font-weight: 600; }
+
+  .bloque-titulo { font-size: 17px; font-weight: 700; margin-bottom: 4px; }
+  .bloque-sub { font-size: 12.5px; color: var(--muted); margin-bottom: 20px; }
+
+  .pregunta { margin-bottom: 20px; }
+  .pregunta-texto { font-size: 13.5px; font-weight: 500; margin-bottom: 8px; }
+
+  .opciones { display: flex; flex-direction: column; gap: 6px; }
+  .opcion {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 9px 12px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .opcion:hover { border-color: var(--accent2); }
+  .opcion:has(input:checked) { border-color: var(--accent); background: rgba(249,115,22,0.1); color: var(--accent2); font-weight: 500; }
+  .opcion input { accent-color: var(--accent); }
+
+  .input, textarea.input {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    padding: 10px 12px;
+    font-size: 14px;
+    font-family: inherit;
+    outline: none;
+    resize: vertical;
+  }
+  .input:focus { border-color: var(--accent); }
+  .char-count { font-size: 11px; color: var(--muted); text-align: right; margin-top: 4px; }
+
+  .btn-primary {
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 11px 20px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .btn-primary:hover { background: var(--accent2); }
+  .btn-primary:disabled { opacity: .5; cursor: default; }
+  .btn-primary.w-full { width: 100%; }
+
+  .btn-ghost {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 18px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .btn-ghost:hover { color: var(--accent2); border-color: var(--accent2); }
+
+  .nav-row { display: flex; justify-content: space-between; margin-top: 22px; }
+  .nav-row.solo-siguiente { justify-content: flex-end; }
+
+  .error-box {
+    background: rgba(239,68,68,0.12);
+    border: 1px solid var(--red);
+    color: var(--red);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 13px;
+    margin-bottom: 16px;
+  }
+
+  .paso { display: none; }
+  .paso.activo { display: block; }
+
+  /* ── RESULTADO ────────────────────────── */
+  .resultado-seccion { margin-bottom: 18px; }
+  .resultado-titulo {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  .resultado-texto { font-size: 13.5px; line-height: 1.6; white-space: pre-line; }
+  .area-item {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 13px;
+    margin-bottom: 6px;
+  }
+  .paso-item {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    font-size: 13.5px;
+    line-height: 1.5;
+    margin-bottom: 10px;
+  }
+  .paso-numero {
+    background: var(--accent);
+    color: white;
+    width: 20px;
+    height: 20px;
+    min-width: 20px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 700;
+  }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <div class="logo-mark">Nimbo</div>
+  <div class="logo-name">Diagnóstico de tu negocio</div>
+  <div class="logo-sub">Unas preguntas honestas para saber por dónde empezar. Toma unos 5 minutos.</div>
+
+  <div id="progreso-wrap">
+    <div class="progress-track" id="progress-track"></div>
+    <div class="progress-label">Bloque <b id="bloque-actual-num">1</b> de 6</div>
+  </div>
+
+  <div id="error-box" class="error-box" style="display:none"></div>
+
+  <form id="form-diagnostico">
+
+  <!-- BLOQUE 1 -->
+  <div class="paso activo" data-bloque="1">
+    <div class="bloque-titulo">Tu negocio</div>
+    <div class="bloque-sub">Lo básico, para ubicarnos.</div>
+
+    <div class="pregunta">
+      <div class="pregunta-texto">¿Qué vende tu negocio?</div>
+      <input class="input" type="text" id="QueVende" placeholder="Ej. Electrodomésticos y repuestos">
+    </div>
+    <div class="pregunta" data-name="TieneLocalFisico" data-required="true">
+      <div class="pregunta-texto">¿Tienes local físico?</div>
+      <div class="opciones">
+        <label class="opcion"><input type="radio" name="TieneLocalFisico" value="1"><span>Sí</span></label>
+        <label class="opcion"><input type="radio" name="TieneLocalFisico" value="0"><span>No</span></label>
+      </div>
+    </div>
+    <div class="pregunta" data-name="HaceDelivery" data-required="true">
+      <div class="pregunta-texto">¿Haces delivery?</div>
+      <div class="opciones">
+        <label class="opcion"><input type="radio" name="HaceDelivery" value="1"><span>Sí</span></label>
+        <label class="opcion"><input type="radio" name="HaceDelivery" value="0"><span>No</span></label>
+      </div>
+    </div>
+    <div class="pregunta" data-name="TiempoOperando" data-required="true">
+      <div class="pregunta-texto">¿Cuánto tiempo lleva operando?</div>
+      <div class="opciones">
+        <label class="opcion"><input type="radio" name="TiempoOperando" value="menos_1"><span>Menos de 1 año</span></label>
+        <label class="opcion"><input type="radio" name="TiempoOperando" value="1_3"><span>1-3 años</span></label>
+        <label class="opcion"><input type="radio" name="TiempoOperando" value="mas_3"><span>Más de 3 años</span></label>
+      </div>
+    </div>
+    <div class="pregunta" data-name="NumeroEmpleados" data-required="true">
+      <div class="pregunta-texto">¿Cuántos empleados tienes contando al dueño?</div>
+      <div class="opciones">
+        <label class="opcion"><input type="radio" name="NumeroEmpleados" value="1"><span>1</span></label>
+        <label class="opcion"><input type="radio" name="NumeroEmpleados" value="2"><span>2-5</span></label>
+        <label class="opcion"><input type="radio" name="NumeroEmpleados" value="6"><span>6-15</span></label>
+        <label class="opcion"><input type="radio" name="NumeroEmpleados" value="16"><span>Más de 15</span></label>
+      </div>
+    </div>
+
+    <div class="nav-row solo-siguiente">
+      <button type="button" class="btn-primary" onclick="siguiente(1)">Siguiente</button>
+    </div>
+  </div>
+
+  <!-- BLOQUE 2 -->
+  <div class="paso" data-bloque="2">
+    <div class="bloque-titulo">Cómo operas</div>
+    <div class="bloque-sub">El día a día del negocio.</div>
+
+    <div class="pregunta" data-name="VentasDiariasAprox" data-required="true">
+      <div class="pregunta-texto">¿Cuántas ventas haces al día aproximadamente?</div>
+      <div class="opciones">
+        <label class="opcion"><input type="radio" name="VentasDiariasAprox" value="1"><span>1-10</span></label>
+        <label class="opcion"><input type="radio" name="VentasDiariasAprox" value="11"><span>11-30</span></label>
+        <label class="opcion"><input type="radio" name="VentasDiariasAprox" value="31"><span>31-100</span></label>
+        <label class="opcion"><input type="radio" name="VentasDiariasAprox" value="101"><span>Más de 100</span></label>
+      </div>
+    </div>
+    <div class="pregunta" data-name="ManejaCredito" data-required="true">
+      <div class="pregunta-texto">¿Vendes al crédito o fías a clientes?</div>
+      <div class="opciones">
+        <label class="opcion"><input type="radio" name="ManejaCredito" value="1"><span>Sí</span></label>
+        <label class="opcion"><input type="radio" name="ManejaCredito" value="2"><span>A veces</span></label>
+        <label class="opcion"><input type="radio" name="ManejaCredito" value="0"><span>No</span></label>
+      </div>
+    </div>
+    <div class="pregunta" data-name="ProductosSeVencen" data-required="true">
+      <div class="pregunta-texto">¿Tienes productos que se vencen o dañan?</div>
+      <div class="opciones">
+        <label class="opcion"><input type="radio" name="ProductosSeVencen" value="1"><span>Sí</span></label>
+        <label class="opcion"><input type="radio" name="ProductosSeVencen" value="0"><span>No</span></label>
+      </div>
+    </div>
+    <div class="pregunta" data-name="ProveedoresFijos" data-required="true">
+      <div class="pregunta-texto">¿Compras siempre a los mismos proveedores?</div>
+      <div class="opciones">
+        <label class="opcion"><input type="radio" name="ProveedoresFijos" value="1"><span>Sí</span></label>
+        <label class="opcion"><input type="radio" name="ProveedoresFijos" value="2"><span>Varía</span></label>
+        <label class="opcion"><input type="radio" name="ProveedoresFijos" value="0"><span>No tengo proveedores fijos</span></label>
+      </div>
+    </div>
+
+    <div class="nav-row">
+      <button type="button" class="btn-ghost" onclick="anterior(2)">Anterior</button>
+      <button type="button" class="btn-primary" onclick="siguiente(2)">Siguiente</button>
+    </div>
+  </div>
+
+  <!-- BLOQUE 3 -->
+  <div class="paso" data-bloque="3">
+    <div class="bloque-titulo">El control</div>
+    <div class="bloque-sub">Las preguntas incómodas — pero son las que más ayudan.</div>
+
+    <div class="pregunta" data-name="ComoLlevaInventario" data-required="true">
+      <div class="pregunta-texto">¿Cómo llevas tu inventario hoy?</div>
+      <div class="opciones">
+        <label class="opcion"><input type="radio" name="ComoLlevaInventario" value="En mi cabeza"><span>En mi cabeza</span></label>
+        <label class="opcion"><input type="radio" name="ComoLlevaInventario" value="Cuaderno o papel"><span>Cuaderno o papel</span></label>
+        <label class="opcion"><input type="radio" name="ComoLlevaInventario" value="Excel"><span>Excel</span></label>
+        <label class="opcion"><input type="radio" name="ComoLlevaInventario" value="No lo llevo"><span>No lo llevo</span></label>
+        <label class="opcion"><input type="radio" name="ComoLlevaInventario" value="Otro sistema"><span>Otro sistema</span></label>
+      </div>
+    </div>
+    <div class="pregunta" data-name="SabeCuantoGana" data-required="true">
+      <div class="pregunta-texto">¿Sabes exactamente cuánto ganaste el mes pasado?</div>
+      <div class="opciones">
+        <label class="opcion"><input type="radio" name="SabeCuantoGana" value="1"><span>Sí, lo tengo claro</span></label>
+        <label class="opcion"><input type="radio" name="SabeCuantoGana" value="2"><span>Más o menos</span></label>
+        <label class="opcion"><input type="radio" name="SabeCuantoGana" value="0"><span>La verdad no</span></label>
+      </div>
+    </div>
+    <div class="pregunta" data-name="TieneDeudas" data-required="true">
+      <div class="pregunta-texto">¿Tienes deudas con proveedores o te deben clientes?</div>
+      <div class="opciones">
+        <label class="opcion"><input type="radio" name="TieneDeudas" value="1"><span>Tengo deudas</span></label>
+        <label class="opcion"><input type="radio" name="TieneDeudas" value="2"><span>Me deben</span></label>
+        <label class="opcion"><input type="radio" name="TieneDeudas" value="3"><span>Ambos</span></label>
+        <label class="opcion"><input type="radio" name="TieneDeudas" value="0"><span>Ninguno</span></label>
+      </div>
+    </div>
+    <div class="pregunta" data-name="HaTenidoRobos" data-required="true">
+      <div class="pregunta-texto">¿Has tenido pérdidas de mercadería sin saber exactamente cómo?</div>
+      <div class="opciones">
+        <label class="opcion"><input type="radio" name="HaTenidoRobos" value="1"><span>Sí</span></label>
+        <label class="opcion"><input type="radio" name="HaTenidoRobos" value="0"><span>No</span></label>
+        <label class="opcion"><input type="radio" name="HaTenidoRobos" value="2"><span>No lo sé</span></label>
+      </div>
+    </div>
+
+    <div class="nav-row">
+      <button type="button" class="btn-ghost" onclick="anterior(3)">Anterior</button>
+      <button type="button" class="btn-primary" onclick="siguiente(3)">Siguiente</button>
+    </div>
+  </div>
+
+  <!-- BLOQUE 4 -->
+  <div class="paso" data-bloque="4">
+    <div class="bloque-titulo">Tu equipo tecnológico</div>
+    <div class="bloque-sub">Para ajustar Nimbo a lo que ya tienes.</div>
+
+    <div class="pregunta" data-name="Dispositivos" data-required="true">
+      <div class="pregunta-texto">¿Desde qué dispositivo vas a usar Nimbo principalmente?</div>
+      <div class="opciones">
+        <label class="opcion"><input type="radio" name="Dispositivos" value="PC"><span>PC</span></label>
+        <label class="opcion"><input type="radio" name="Dispositivos" value="Tablet"><span>Tablet</span></label>
+        <label class="opcion"><input type="radio" name="Dispositivos" value="Teléfono"><span>Teléfono</span></label>
+        <label class="opcion"><input type="radio" name="Dispositivos" value="Combinación"><span>Combinación</span></label>
+      </div>
+    </div>
+    <div class="pregunta" data-name="TieneImpresora" data-required="true">
+      <div class="pregunta-texto">¿Tienes impresora?</div>
+      <div class="opciones">
+        <label class="opcion"><input type="radio" name="TieneImpresora" value="1"><span>Sí, de tickets</span></label>
+        <label class="opcion"><input type="radio" name="TieneImpresora" value="2"><span>Sí, normal</span></label>
+        <label class="opcion"><input type="radio" name="TieneImpresora" value="0"><span>No tengo</span></label>
+      </div>
+    </div>
+    <div class="pregunta" data-name="TieneEscaner" data-required="true">
+      <div class="pregunta-texto">¿Tienes escáner de códigos de barras?</div>
+      <div class="opciones">
+        <label class="opcion"><input type="radio" name="TieneEscaner" value="1"><span>Sí, USB</span></label>
+        <label class="opcion"><input type="radio" name="TieneEscaner" value="2"><span>Sí, Bluetooth</span></label>
+        <label class="opcion"><input type="radio" name="TieneEscaner" value="3"><span>No, pero quiero uno</span></label>
+        <label class="opcion"><input type="radio" name="TieneEscaner" value="0"><span>No necesito</span></label>
+      </div>
+    </div>
+    <div class="pregunta" data-name="TieneInternetEstable" data-required="true">
+      <div class="pregunta-texto">¿Tu internet es estable?</div>
+      <div class="opciones">
+        <label class="opcion"><input type="radio" name="TieneInternetEstable" value="1"><span>Sí, siempre</span></label>
+        <label class="opcion"><input type="radio" name="TieneInternetEstable" value="2"><span>A veces falla</span></label>
+        <label class="opcion"><input type="radio" name="TieneInternetEstable" value="0"><span>Casi nunca tengo</span></label>
+      </div>
+    </div>
+    <div class="pregunta" data-name="ComoPrefiereRegistrarVentas" data-required="true">
+      <div class="pregunta-texto">¿Cómo prefieres registrar una venta?</div>
+      <div class="opciones">
+        <label class="opcion"><input type="radio" name="ComoPrefiereRegistrarVentas" value="Escaneando código"><span>Escaneando código</span></label>
+        <label class="opcion"><input type="radio" name="ComoPrefiereRegistrarVentas" value="Buscando el producto"><span>Buscando el producto</span></label>
+        <label class="opcion"><input type="radio" name="ComoPrefiereRegistrarVentas" value="Diciéndoselo a Nimbo por chat"><span>Diciéndoselo a Nimbo por chat</span></label>
+      </div>
+    </div>
+
+    <div class="nav-row">
+      <button type="button" class="btn-ghost" onclick="anterior(4)">Anterior</button>
+      <button type="button" class="btn-primary" onclick="siguiente(4)">Siguiente</button>
+    </div>
+  </div>
+
+  <!-- BLOQUE 5 -->
+  <div class="paso" data-bloque="5">
+    <div class="bloque-titulo">Tú como dueño</div>
+    <div class="bloque-sub">Las preguntas más importantes de todas.</div>
+
+    <div class="pregunta" data-name="SePagaSueldo" data-required="true">
+      <div class="pregunta-texto">¿Te pagas un sueldo fijo del negocio?</div>
+      <div class="opciones">
+        <label class="opcion"><input type="radio" name="SePagaSueldo" value="1"><span>Sí, fijo</span></label>
+        <label class="opcion"><input type="radio" name="SePagaSueldo" value="2"><span>A veces</span></label>
+        <label class="opcion"><input type="radio" name="SePagaSueldo" value="3"><span>Agarro lo que necesito del cajón</span></label>
+        <label class="opcion"><input type="radio" name="SePagaSueldo" value="0"><span>No me pago</span></label>
+      </div>
+    </div>
+    <div class="pregunta" data-name="SabeCuantoGanoMesPasado" data-required="true">
+      <div class="pregunta-texto">¿Sabes cuánto ganó el negocio el mes pasado — no cuánto vendiste, sino cuánto quedó limpio?</div>
+      <div class="opciones">
+        <label class="opcion"><input type="radio" name="SabeCuantoGanoMesPasado" value="1"><span>Sí</span></label>
+        <label class="opcion"><input type="radio" name="SabeCuantoGanoMesPasado" value="2"><span>Más o menos</span></label>
+        <label class="opcion"><input type="radio" name="SabeCuantoGanoMesPasado" value="0"><span>No</span></label>
+      </div>
+    </div>
+    <div class="pregunta" data-name="HorasTrabajaSemana" data-required="true">
+      <div class="pregunta-texto">¿Cuántas horas a la semana trabajas en el negocio?</div>
+      <div class="opciones">
+        <label class="opcion"><input type="radio" name="HorasTrabajaSemana" value="0"><span>Menos de 20</span></label>
+        <label class="opcion"><input type="radio" name="HorasTrabajaSemana" value="20"><span>20-40</span></label>
+        <label class="opcion"><input type="radio" name="HorasTrabajaSemana" value="40"><span>40-60</span></label>
+        <label class="opcion"><input type="radio" name="HorasTrabajaSemana" value="61"><span>Más de 60</span></label>
+      </div>
+    </div>
+
+    <div class="nav-row">
+      <button type="button" class="btn-ghost" onclick="anterior(5)">Anterior</button>
+      <button type="button" class="btn-primary" onclick="siguiente(5)">Siguiente</button>
+    </div>
+  </div>
+
+  <!-- BLOQUE 6 -->
+  <div class="paso" data-bloque="6">
+    <div class="bloque-titulo">Tu meta</div>
+    <div class="bloque-sub">Lo último, y lo más honesto.</div>
+
+    <div class="pregunta" data-name="MetaPrincipal" data-required="true">
+      <div class="pregunta-texto">¿Qué quieres lograr en los próximos 6 meses?</div>
+      <div class="opciones">
+        <label class="opcion"><input type="radio" name="MetaPrincipal" value="Vender más"><span>Vender más</span></label>
+        <label class="opcion"><input type="radio" name="MetaPrincipal" value="Perder menos"><span>Perder menos</span></label>
+        <label class="opcion"><input type="radio" name="MetaPrincipal" value="Tener más orden"><span>Tener más orden</span></label>
+        <label class="opcion"><input type="radio" name="MetaPrincipal" value="Crecer con más empleados"><span>Crecer con más empleados</span></label>
+        <label class="opcion"><input type="radio" name="MetaPrincipal" value="Saber si el negocio es rentable"><span>Saber si el negocio es rentable</span></label>
+      </div>
+    </div>
+    <div class="pregunta">
+      <div class="pregunta-texto">¿Qué es lo que más te duele del negocio hoy?</div>
+      <textarea class="input" id="QueLesDueleMas" rows="3" maxlength="200" placeholder="Cuéntanos, en tus palabras..." oninput="actualizarContador()"></textarea>
+      <div class="char-count"><span id="contador-duele">0</span>/200</div>
+    </div>
+
+    <div class="nav-row">
+      <button type="button" class="btn-ghost" onclick="anterior(6)">Anterior</button>
+      <button type="button" class="btn-primary" id="btn-terminar" onclick="terminarDiagnostico()">Ver mi diagnóstico</button>
+    </div>
+  </div>
+
+  </form>
+
+  <!-- RESULTADO -->
+  <div class="paso" data-bloque="resultado">
+    <div class="bloque-titulo">Tu diagnóstico</div>
+    <div class="bloque-sub">Esto es lo que vemos, según lo que nos contaste.</div>
+
+    <div class="resultado-seccion">
+      <div class="resultado-titulo">Resumen</div>
+      <div class="resultado-texto" id="res-resumen">—</div>
+    </div>
+
+    <div class="resultado-seccion">
+      <div class="resultado-titulo">Áreas de oportunidad</div>
+      <div id="res-areas"></div>
+    </div>
+
+    <div class="resultado-seccion">
+      <div class="resultado-titulo">Tus primeros 3 pasos en Nimbo</div>
+      <div id="res-pasos"></div>
+    </div>
+
+    <button type="button" class="btn-primary w-full" onclick="window.location.href='{{ url_for('index') }}'">Entrar a Nimbo</button>
+  </div>
+
+</div>
+
+<script>
+const TOTAL_BLOQUES = 6;
+
+function pintarProgreso(bloqueActual) {
+  const track = document.getElementById('progress-track');
+  track.innerHTML = '';
+  for (let i = 1; i <= TOTAL_BLOQUES; i++) {
+    const step = document.createElement('div');
+    step.className = 'progress-step' + (i < bloqueActual ? ' done' : (i === bloqueActual ? ' current' : ''));
+    track.appendChild(step);
+  }
+  document.getElementById('bloque-actual-num').textContent = bloqueActual;
+}
+pintarProgreso(1);
+
+function mostrarError(msg) {
+  const box = document.getElementById('error-box');
+  box.textContent = msg;
+  box.style.display = 'block';
+}
+function ocultarError() {
+  document.getElementById('error-box').style.display = 'none';
+}
+
+function irABloque(n) {
+  document.querySelectorAll('.paso').forEach(p => p.classList.remove('activo'));
+  document.querySelector(`.paso[data-bloque="${n}"]`).classList.add('activo');
+  if (n !== 'resultado') pintarProgreso(n);
+  window.scrollTo(0, 0);
+}
+
+function validarBloque(n) {
+  const bloque = document.querySelector(`.paso[data-bloque="${n}"]`);
+  const requeridos = bloque.querySelectorAll('[data-required="true"]');
+  for (const grupo of requeridos) {
+    const nombre = grupo.dataset.name;
+    if (!bloque.querySelector(`input[name="${nombre}"]:checked`)) {
+      mostrarError('Falta responder: ' + grupo.querySelector('.pregunta-texto').textContent);
+      return false;
+    }
+  }
+  if (n === 1) {
+    const queVende = document.getElementById('QueVende').value.trim();
+    if (!queVende) {
+      mostrarError('Cuéntanos qué vende tu negocio.');
+      return false;
+    }
+  }
+  return true;
+}
+
+function siguiente(actual) {
+  ocultarError();
+  if (!validarBloque(actual)) return;
+  irABloque(actual + 1);
+}
+
+function anterior(actual) {
+  ocultarError();
+  irABloque(actual - 1);
+}
+
+function actualizarContador() {
+  document.getElementById('contador-duele').textContent =
+    document.getElementById('QueLesDueleMas').value.length;
+}
+
+function recolectarRespuestas() {
+  const form = document.getElementById('form-diagnostico');
+  const datos = { QueVende: document.getElementById('QueVende').value.trim() };
+  const camposRadio = [
+    'TieneLocalFisico', 'HaceDelivery', 'TiempoOperando', 'NumeroEmpleados',
+    'VentasDiariasAprox', 'ManejaCredito', 'ProductosSeVencen', 'ProveedoresFijos',
+    'ComoLlevaInventario', 'SabeCuantoGana', 'TieneDeudas', 'HaTenidoRobos',
+    'Dispositivos', 'TieneImpresora', 'TieneEscaner', 'TieneInternetEstable',
+    'ComoPrefiereRegistrarVentas', 'SePagaSueldo', 'SabeCuantoGanoMesPasado',
+    'HorasTrabajaSemana', 'MetaPrincipal',
+  ];
+  const camposEnteros = new Set([
+    'TieneLocalFisico', 'HaceDelivery', 'NumeroEmpleados', 'VentasDiariasAprox',
+    'ManejaCredito', 'ProductosSeVencen', 'ProveedoresFijos', 'SabeCuantoGana',
+    'TieneDeudas', 'HaTenidoRobos', 'TieneImpresora', 'TieneEscaner',
+    'TieneInternetEstable', 'SePagaSueldo', 'SabeCuantoGanoMesPasado', 'HorasTrabajaSemana',
+  ]);
+  camposRadio.forEach(nombre => {
+    const el = form.querySelector(`input[name="${nombre}"]:checked`);
+    if (!el) { datos[nombre] = null; return; }
+    datos[nombre] = camposEnteros.has(nombre) ? parseInt(el.value, 10) : el.value;
+  });
+  datos.QueLesDueleMas = document.getElementById('QueLesDueleMas').value.trim();
+  return datos;
+}
+
+async function terminarDiagnostico() {
+  ocultarError();
+  if (!validarBloque(6)) return;
+
+  const btn = document.getElementById('btn-terminar');
+  btn.disabled = true;
+  btn.textContent = 'Calculando...';
+
+  try {
+    const resp = await fetch("{{ url_for('api_diagnostico_guardar') }}", {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(recolectarRespuestas())
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      mostrarError(data.error || 'No se pudo guardar el diagnóstico.');
+      btn.disabled = false;
+      btn.textContent = 'Ver mi diagnóstico';
+      return;
+    }
+    mostrarResultado(data);
+  } catch (e) {
+    mostrarError('Error de conexión. Intenta de nuevo.');
+    btn.disabled = false;
+    btn.textContent = 'Ver mi diagnóstico';
+  }
+}
+
+function mostrarResultado(data) {
+  document.getElementById('res-resumen').textContent = data.resumen || '';
+
+  const areasEl = document.getElementById('res-areas');
+  areasEl.innerHTML = (data.areas_oportunidad || '')
+    .split('\n')
+    .filter(l => l.trim())
+    .map(l => `<div class="area-item">${l}</div>`)
+    .join('') || '<div class="resultado-texto">Sin áreas críticas detectadas — buen trabajo.</div>';
+
+  const pasosEl = document.getElementById('res-pasos');
+  pasosEl.innerHTML = (data.primeros_tres_pasos || '')
+    .split('\n')
+    .filter(l => l.trim())
+    .map(l => {
+      const texto = l.replace(/^\d+\.\s*/, '');
+      const numero = (l.match(/^(\d+)\./) || [,'•'])[1];
+      return `<div class="paso-item"><div class="paso-numero">${numero}</div><div>${texto}</div></div>`;
+    })
+    .join('');
+
+  document.getElementById('progreso-wrap').style.display = 'none';
+  irABloque('resultado');
+}
+</script>
+
+</body>
+</html>

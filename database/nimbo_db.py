@@ -5576,3 +5576,250 @@ def get_progreso_meta_semanal():
         "fecha_inicio": meta["FechaInicio"],
         "fecha_fin": meta["FechaFin"],
     }
+
+
+# ── DIAGNOSTICO DE NEGOCIO ──────────────────────────────────
+#
+# Cuestionario de 6 bloques que el admin completa la primera vez que entra a
+# una empresa nueva (ver app.py, ruta /diagnostico) - una sola fila por
+# empresa (singleton logico, siempre se lee/actualiza la primera fila). Las
+# preguntas de rango (ej. "cuantos empleados") se guardan en las columnas
+# INTEGER como el limite inferior de la categoria elegida (1/2/6/16 para
+# empleados, por ejemplo) - el formulario ya manda ese numero directo como
+# valor del radio button. Las preguntas de mas de 2 opciones sin un rango
+# natural (ej. "sabes cuanto ganaste") se guardan como un codigo entero
+# documentado en las constantes de abajo, que el formulario tambien manda
+# directo. TipoNegocio queda sin llenar a proposito - ya se pregunta en el
+# wizard de /setup (Configuracion.negocio_tipo), preguntarlo de nuevo aca
+# hubiera sido redundante. PlazoMeta siempre se guarda como "6 meses" porque
+# la pregunta de la meta ya viene acotada a ese plazo, no hace falta
+# preguntarlo aparte.
+
+MANEJA_CREDITO = {"no": 0, "si": 1, "a_veces": 2}
+PROVEEDORES_FIJOS = {"no": 0, "si": 1, "varia": 2}
+SABE_CUANTO_GANA = {"no": 0, "si": 1, "mas_o_menos": 2}
+TIENE_DEUDAS = {"ninguno": 0, "tengo_deudas": 1, "me_deben": 2, "ambos": 3}
+HA_TENIDO_ROBOS = {"no": 0, "si": 1, "no_se": 2}
+TIENE_IMPRESORA = {"no": 0, "tickets": 1, "normal": 2}
+TIENE_ESCANER = {"no_necesita": 0, "usb": 1, "bluetooth": 2, "quiere": 3}
+TIENE_INTERNET = {"no": 0, "siempre": 1, "a_veces": 2}
+SE_PAGA_SUELDO = {"no": 0, "fijo": 1, "a_veces": 2, "cajon": 3}
+SABE_CUANTO_GANO_MES = {"no": 0, "si": 1, "mas_o_menos": 2}
+
+_SE_PAGA_SUELDO_LABELS = {
+    SE_PAGA_SUELDO["no"]: "No me pago",
+    SE_PAGA_SUELDO["fijo"]: "Sí, fijo",
+    SE_PAGA_SUELDO["a_veces"]: "A veces",
+    SE_PAGA_SUELDO["cajon"]: "Agarro lo que necesito del cajón",
+}
+
+
+def init_diagnostico_negocio(db_path=None):
+    conn = nimbo_connect(db_path)
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS DiagnosticoNegocio (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            Completado INTEGER DEFAULT 0,
+            FechaCompletado TEXT,
+            UltimaActualizacion TEXT,
+            TipoNegocio TEXT,
+            QueVende TEXT,
+            TieneLocalFisico INTEGER,
+            HaceDelivery INTEGER,
+            TiempoOperando TEXT,
+            NumeroEmpleados INTEGER,
+            VentasDiariasAprox INTEGER,
+            ManejaCredito INTEGER,
+            ProductosSeVencen INTEGER,
+            ProveedoresFijos INTEGER,
+            ComoLlevaInventario TEXT,
+            SabeCuantoGana INTEGER,
+            TieneDeudas INTEGER,
+            HaTenidoRobos INTEGER,
+            Dispositivos TEXT,
+            TieneImpresora INTEGER,
+            TieneEscaner INTEGER,
+            TieneInternetEstable INTEGER,
+            ComoPrefiereRegistrarVentas TEXT,
+            SePagaSueldo INTEGER,
+            ComoSePaga TEXT,
+            SabeCuantoGanoMesPasado INTEGER,
+            HorasTrabajaSemana INTEGER,
+            MetaPrincipal TEXT,
+            PlazoMeta TEXT,
+            QueLesDueleMas TEXT,
+            ResumenDiagnostico TEXT,
+            AreasOportunidad TEXT,
+            PrimerosTresPasos TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def get_diagnostico(db_path=None):
+    """La (unica) fila de DiagnosticoNegocio de esta empresa, o None si
+    todavia no se guardo ninguna respuesta."""
+    conn = nimbo_connect(db_path)
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM DiagnosticoNegocio ORDER BY Id LIMIT 1")
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def diagnostico_completado(db_path=None):
+    d = get_diagnostico(db_path)
+    return bool(d and d.get("Completado"))
+
+
+def _texto_resumen_diagnostico(d):
+    """Las 2 lineas de ResumenDiagnostico, a partir de las respuestas del
+    bloque 1 (el negocio) y el dato de ventas diarias del bloque 2."""
+    vende = d.get("QueVende") or "productos"
+    local = "con local físico" if d.get("TieneLocalFisico") else "sin local físico"
+    delivery = " y hace delivery" if d.get("HaceDelivery") else ""
+    tiempo_map = {
+        "menos_1": "hace menos de 1 año",
+        "1_3": "entre 1 y 3 años",
+        "mas_3": "hace más de 3 años",
+    }
+    tiempo = tiempo_map.get(d.get("TiempoOperando"), "sin especificar hace cuánto")
+    empleados = d.get("NumeroEmpleados") or 1
+    ventas = d.get("VentasDiariasAprox") or 0
+
+    linea1 = f"Negocio que vende {vende}, {local}{delivery}, operando {tiempo}."
+    linea2 = f"Aproximadamente {ventas} venta(s) al día, {empleados} empleado(s) contando al dueño."
+    return linea1 + "\n" + linea2
+
+
+# Cada candidata: (condicion(datos) -> bool, nombre del area, nivel,
+# score para el orden de "las 3 con mas problema", primer paso concreto en
+# Nimbo). Las primeras 5 son exactamente las reglas pedidas para el
+# diagnostico; las ultimas 3 son una extension directa de esas mismas
+# preguntas del bloque 3 (control actual) para poder completar "las 3 areas
+# con mas problema" incluso cuando menos de 3 de las 5 reglas originales
+# disparan.
+_AREAS_CANDIDATAS = (
+    (lambda d: (d.get("ComoLlevaInventario") or "") in ("En mi cabeza", "No lo llevo"),
+     "Inventario", "crítica", 3,
+     "Registra tu inventario actual en Nimbo (Inventario > Agregar producto o Importar "
+     "Excel/CSV) para dejar de depender de la memoria o el papel."),
+    (lambda d: d.get("SabeCuantoGana") == SABE_CUANTO_GANA["no"],
+     "Contabilidad", "crítica", 3,
+     "Pídele a Nimbo 'cómo voy este mes' cada semana para ver ingresos, gastos y "
+     "ganancia real, no solo cuánto vendiste."),
+    (lambda d: d.get("SePagaSueldo") in (SE_PAGA_SUELDO["no"], SE_PAGA_SUELDO["cajon"]),
+     "Finanzas personales del dueño", "crítica", 3,
+     "Define un sueldo fijo para ti mismo en Configuración y registra cada retiro como "
+     "gasto, en vez de 'agarrar del cajón'."),
+    (lambda d: d.get("HaTenidoRobos") in (HA_TENIDO_ROBOS["si"], HA_TENIDO_ROBOS["no_se"]),
+     "Control de merma", "crítica", 3,
+     "Activa las alertas de inventario (Inventario > alertas predictivas) para detectar "
+     "diferencias de stock apenas aparecen."),
+    (lambda d: d.get("ManejaCredito") == MANEJA_CREDITO["si"],
+     "Cuentas por cobrar", "atención", 2,
+     "Registra cada venta al crédito en Nimbo (Cuentas por Cobrar) para saber en todo "
+     "momento quién te debe y cuánto."),
+    (lambda d: d.get("TieneDeudas") in (TIENE_DEUDAS["tengo_deudas"], TIENE_DEUDAS["ambos"]),
+     "Cuentas por pagar", "atención", 2,
+     "Registra tus deudas con proveedores en Nimbo (Cuentas por Pagar) para no perder de "
+     "vista cuándo vencen."),
+    (lambda d: d.get("SabeCuantoGanoMesPasado") == SABE_CUANTO_GANO_MES["no"],
+     "Rentabilidad del dueño", "atención", 2,
+     "Pídele a Nimbo tu balance del mes pasado para ver cuánto quedó limpio, no solo "
+     "cuánto vendiste."),
+    (lambda d: d.get("TieneInternetEstable") == TIENE_INTERNET["no"],
+     "Infraestructura tecnológica", "atención", 1,
+     "Ten un respaldo de datos móviles para los días que tu internet falle - el chat con "
+     "IA de Nimbo necesita conexión."),
+)
+
+
+def _calcular_areas_y_pasos(d):
+    """Evalua las reglas de arriba contra las respuestas del diagnostico y
+    devuelve (AreasOportunidad, PrimerosTresPasos) ya armados como texto: las
+    3 areas con mas problema (mayor score primero, orden de la lista como
+    desempate) junto con su primer paso concreto en Nimbo."""
+    candidatas = [
+        (score, area, nivel, paso)
+        for condicion, area, nivel, score, paso in _AREAS_CANDIDATAS
+        if condicion(d)
+    ]
+    candidatas.sort(key=lambda t: -t[0])
+    top3 = candidatas[:3]
+    areas_texto = "\n".join(f"{area} ({nivel})" for _, area, nivel, _ in top3)
+    pasos_texto = "\n".join(f"{i + 1}. {paso}" for i, (_, _, _, paso) in enumerate(top3))
+    return areas_texto, pasos_texto
+
+
+def guardar_diagnostico(datos, db_path=None):
+    """Guarda (crea la primera vez, actualiza las siguientes - siempre una
+    unica fila por empresa) las respuestas del diagnostico y calcula
+    ResumenDiagnostico/AreasOportunidad/PrimerosTresPasos. `datos` es un dict
+    con claves = columnas de DiagnosticoNegocio tal como las manda el
+    formulario (ver templates/diagnostico.html); las que no vengan quedan en
+    None. Devuelve un dict con el resultado calculado, para mostrar la
+    pantalla final del diagnostico sin tener que volver a leerlo de la
+    base de datos."""
+    from datetime import datetime
+
+    columnas = (
+        "QueVende", "TieneLocalFisico", "HaceDelivery", "TiempoOperando", "NumeroEmpleados",
+        "VentasDiariasAprox", "ManejaCredito", "ProductosSeVencen", "ProveedoresFijos",
+        "ComoLlevaInventario", "SabeCuantoGana", "TieneDeudas", "HaTenidoRobos",
+        "Dispositivos", "TieneImpresora", "TieneEscaner", "TieneInternetEstable",
+        "ComoPrefiereRegistrarVentas", "SePagaSueldo", "SabeCuantoGanoMesPasado",
+        "HorasTrabajaSemana", "MetaPrincipal", "QueLesDueleMas",
+    )
+    valores = {c: datos.get(c) for c in columnas}
+    valores["ComoSePaga"] = _SE_PAGA_SUELDO_LABELS.get(valores.get("SePagaSueldo"), "")
+
+    resumen = _texto_resumen_diagnostico(valores)
+    areas_texto, pasos_texto = _calcular_areas_y_pasos(valores)
+    ahora = datetime.now().isoformat(timespec="seconds")
+
+    todas_columnas = list(columnas) + ["ComoSePaga", "PlazoMeta"]
+    todos_valores = [valores[c] for c in columnas] + [valores["ComoSePaga"], "6 meses"]
+
+    conn = nimbo_connect(db_path)
+    cur = conn.cursor()
+    cur.execute("SELECT Id FROM DiagnosticoNegocio ORDER BY Id LIMIT 1")
+    existente = cur.fetchone()
+
+    if existente:
+        set_sql = ", ".join(f"{c} = ?" for c in todas_columnas)
+        cur.execute(f"""
+            UPDATE DiagnosticoNegocio SET
+                {set_sql},
+                Completado = 1, FechaCompletado = ?, UltimaActualizacion = ?,
+                ResumenDiagnostico = ?, AreasOportunidad = ?, PrimerosTresPasos = ?
+            WHERE Id = ?
+        """, todos_valores + [ahora, ahora, resumen, areas_texto, pasos_texto, existente["Id"]])
+    else:
+        insert_columnas = todas_columnas + [
+            "Completado", "FechaCompletado", "UltimaActualizacion",
+            "ResumenDiagnostico", "AreasOportunidad", "PrimerosTresPasos",
+        ]
+        placeholders = ", ".join("?" for _ in insert_columnas)
+        cur.execute(f"""
+            INSERT INTO DiagnosticoNegocio ({", ".join(insert_columnas)})
+            VALUES ({placeholders})
+        """, todos_valores + [1, ahora, ahora, resumen, areas_texto, pasos_texto])
+    conn.commit()
+    conn.close()
+
+    return {"resumen": resumen, "areas_oportunidad": areas_texto, "primeros_tres_pasos": pasos_texto}
+
+
+def resetear_diagnostico(db_path=None):
+    """Marca el diagnostico como no completado (Completado=0) sin borrar las
+    respuestas anteriores - al volver a completarlo, guardar_diagnostico() las
+    pisa. Usado por el boton 'Repetir diagnostico de negocio' de
+    Configuracion."""
+    conn = nimbo_connect(db_path)
+    cur = conn.cursor()
+    cur.execute("UPDATE DiagnosticoNegocio SET Completado = 0")
+    conn.commit()
+    conn.close()

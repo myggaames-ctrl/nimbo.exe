@@ -38,6 +38,9 @@ from core.configuracion import get_config, set_config
 from core.empresa import (
     init_master, get_empresa_by_slug, listar_empresas, get_db_path, crear_empresa
 )
+from database.nimbo_db import (
+    get_diagnostico, diagnostico_completado, guardar_diagnostico, resetear_diagnostico
+)
 import tools
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -238,8 +241,20 @@ def index():
         return redirect(url_for("select_empresa"))
     if not current_user.is_authenticated:
         return login_manager.unauthorized()
-    return render_template("index.html", rol=current_user.rol, nombre=current_user.nombre,
-                            negocio_nombre=get_config("negocio_nombre", "Mi Cocina"))
+    # Diagnostico de negocio: solo se le pide al admin (las preguntas son
+    # sobre el negocio y el dueño, no tienen sentido para un empleado o
+    # tecnico) y solo hasta que lo completa una vez - despues de eso entra
+    # directo al dashboard, igual que cualquier otra empresa que ya lo
+    # completo. Se repite manualmente desde Configuracion (ver
+    # /api/diagnostico/repetir), nunca de forma automatica.
+    if current_user.is_admin and not diagnostico_completado():
+        return redirect(url_for("diagnostico"))
+    return render_template(
+        "index.html", rol=current_user.rol, nombre=current_user.nombre,
+        negocio_nombre=get_config("negocio_nombre", "Mi Cocina"),
+        tour_pendiente=current_user.is_admin and get_config("tour_completado") != "1",
+        chat_tutorial_pendiente=get_config("chat_tutorial_mostrado") != "1",
+    )
 
 
 @app.route("/setup")
@@ -565,6 +580,82 @@ def api_empresa_crear():
     session["empresa_db"] = empresa["db_path"]
 
     return jsonify({"ok": True, "slug": empresa["slug"]})
+
+
+@app.route("/diagnostico", methods=["GET"])
+@login_required
+def diagnostico():
+    # Solo el admin lo completa (las preguntas son sobre el negocio y el
+    # dueño) y solo si todavia no lo completo - si un empleado llega aca por
+    # URL directa, o un admin que ya lo completo, se lo manda de vuelta al
+    # dashboard en vez de un 403 (esta es una pagina normal del navegador,
+    # no una ruta /api/*, asi que un redirect es lo esperado aca).
+    if not current_user.is_admin or diagnostico_completado():
+        return redirect(url_for("index"))
+    return render_template("diagnostico.html", nombre=current_user.nombre)
+
+
+@app.route("/api/diagnostico/guardar", methods=["POST"])
+@admin_required
+def api_diagnostico_guardar():
+    data = request.json or {}
+    resultado = guardar_diagnostico(data)
+    return jsonify({"ok": True, **resultado})
+
+
+@app.route("/api/diagnostico/resumen", methods=["GET"])
+@admin_required
+def api_diagnostico_resumen():
+    """Para el panel Configuracion: fecha + areas de oportunidad del ultimo
+    diagnostico completado, o completado=False si nunca se hizo uno."""
+    d = get_diagnostico()
+    if not d or not d.get("Completado"):
+        return jsonify({"completado": False})
+    return jsonify({
+        "completado": True,
+        "fecha_completado": d.get("FechaCompletado"),
+        "resumen": d.get("ResumenDiagnostico"),
+        "areas_oportunidad": d.get("AreasOportunidad"),
+        "primeros_tres_pasos": d.get("PrimerosTresPasos"),
+    })
+
+
+@app.route("/api/diagnostico/repetir", methods=["POST"])
+@admin_required
+def api_diagnostico_repetir():
+    """Boton 'Repetir diagnostico de negocio' de Configuracion: solo marca
+    Completado=0 (no borra las respuestas anteriores, ver
+    resetear_diagnostico) - el frontend redirige a /diagnostico despues de
+    esto, que vuelve a mostrar el formulario vacio."""
+    resetear_diagnostico()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/tour/completar", methods=["POST"])
+@admin_required
+def api_tour_completar():
+    set_config("tour_completado", "1")
+    return jsonify({"ok": True})
+
+
+@app.route("/api/tour/resetear", methods=["POST"])
+@admin_required
+def api_tour_resetear():
+    """Boton 'Ver tour del dashboard' de Configuracion - el frontend recarga
+    la pagina despues de esto, y el tour arranca de nuevo porque
+    tour_pendiente vuelve a ser True en index()."""
+    set_config("tour_completado", "0")
+    return jsonify({"ok": True})
+
+
+@app.route("/api/chat/tutorial-mostrado", methods=["POST"])
+@login_required
+def api_chat_tutorial_mostrado():
+    """Cualquier rol puede disparar esto (no solo admin) - el mensaje de
+    tutorial del chat lo ve quien sea que abra el chat primero, no solo el
+    admin que hizo el diagnostico."""
+    set_config("chat_tutorial_mostrado", "1")
+    return jsonify({"ok": True})
 
 
 @app.route("/logout")

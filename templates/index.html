@@ -581,7 +581,24 @@
     font-size: 12.5px;
     white-space: pre-wrap;
   }
+
+  /* ── TOUR (Shepherd.js) ───────────────────────────────── */
+  .shepherd-element { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; font-family: 'Inter', sans-serif; }
+  .shepherd-arrow:before { background: var(--surface); border: 1px solid var(--border); }
+  .shepherd-header { background: var(--surface); border-radius: 10px 10px 0 0; padding: 14px 16px 0; }
+  .shepherd-title { color: var(--text); font-size: 14.5px; font-weight: 700; }
+  .shepherd-text { color: var(--muted); font-size: 13px; line-height: 1.5; padding: 10px 16px 4px; }
+  .shepherd-footer { padding: 8px 16px 14px; }
+  .shepherd-button { background: var(--accent); color: white; border: none; border-radius: 6px; padding: 7px 14px; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+  .shepherd-button:hover { background: var(--accent2); }
+  .shepherd-button.shepherd-button-secondary { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+  .shepherd-cancel-icon { color: var(--muted); }
+  .shepherd-modal-overlay-container { opacity: 0.55; }
 </style>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/shepherd.js@11/dist/css/shepherd.css"
+      integrity="sha384-VWUneuWoHPNxFdNI1gGBoHQsTHU9ki8FAOtN7qJ3wNozUj0xiQ1+JLfKp7snTYw0" crossorigin="anonymous">
+<script src="https://cdn.jsdelivr.net/npm/shepherd.js@11/dist/js/shepherd.min.js"
+        integrity="sha384-dMiT8q1ZankaUau1nsxn+NA9DnaJSMAoyxeKkClYz6qtnx2SeCo1C4IACUkog8eX" crossorigin="anonymous"></script>
 </head>
 <body>
 
@@ -1420,6 +1437,15 @@
         </div>
       </div>
 
+      <div class="card">
+        <div class="card-title">Diagnóstico y tour</div>
+        <div id="diag-resumen-wrap" class="mb-2"><div class="text-muted" style="font-size:12.5px">Cargando...</div></div>
+        <div class="flex gap-2" style="flex-wrap:wrap">
+          <button class="btn btn-ghost" onclick="repetirDiagnostico()">🔄 Repetir diagnóstico de negocio</button>
+          <button class="btn btn-ghost" onclick="verTourDashboard()">🧭 Ver tour del dashboard</button>
+        </div>
+      </div>
+
       <div id="cfg-negocio-error" class="error-box" style="display:none"></div>
       <div id="cfg-negocio-ok" class="success-box" style="display:none">Configuración guardada.</div>
       <button class="btn btn-primary" onclick="guardarConfigNegocio()">Guardar cambios</button>
@@ -1451,6 +1477,13 @@
 </main>
 
 <script>
+// ── ONBOARDING: tour del dashboard + tutorial del chat ──
+// tourPendiente solo llega true para un admin que nunca cerro el tour
+// (ver index() en app.py); chatTutorialPendiente es independiente del rol -
+// lo ve quien sea que abra el chat primero.
+let tourPendiente = {{ 'true' if tour_pendiente else 'false' }};
+let chatTutorialPendiente = {{ 'true' if chat_tutorial_pendiente else 'false' }};
+
 // ── STATE ──────────────────────────────────────────────
 let useOpenclaw = false;
 function toggleModel() {
@@ -1497,7 +1530,173 @@ function showPanel(id) {
   if (id === 'confignegocio') loadConfigNegocio();
   if (id === 'caja') loadCajaEstado();
   if (id === 'servicio') { loadOrdenesServicio(); loadPipelineServicio(); }
-  if (id === 'chat') refocusInputActivo();
+  if (id === 'confignegocio') cargarResumenDiagnostico();
+  if (id === 'chat') { refocusInputActivo(); mostrarTutorialChatSiCorresponde(); }
+}
+
+// ── TOUR DEL DASHBOARD (Shepherd.js) ────────────────────
+function iniciarTourDashboard() {
+  if (typeof Shepherd === 'undefined') return;
+
+  const tour = new Shepherd.Tour({
+    useModalOverlay: true,
+    defaultStepOptions: {
+      cancelIcon: { enabled: true },
+      scrollTo: { behavior: 'smooth', block: 'center' },
+      classes: 'shepherd-theme-nimbo',
+    },
+  });
+
+  const pasoNav = (id) => `[onclick="showPanel('${id}')"]`;
+
+  tour.addStep({
+    id: 'bienvenida',
+    title: 'Bienvenido a Nimbo',
+    text: 'Este es tu Centro de Control. Vamos a mostrarte todo en 2 minutos.',
+    buttons: [{ text: 'Empezar', action: tour.next }],
+  });
+  tour.addStep({
+    id: 'sidebar',
+    title: 'El menú',
+    text: 'Aquí están todos los módulos. Solo ves los que tu rol tiene activados.',
+    attachTo: { element: '.sidebar-nav', on: 'right' },
+    buttons: [{ text: 'Atrás', action: tour.back, classes: 'shepherd-button-secondary' }, { text: 'Siguiente', action: tour.next }],
+  });
+  tour.addStep({
+    id: 'chat',
+    title: 'Chat de Nimbo',
+    text: 'Este es el corazón. Puedes pedirle casi cualquier cosa en español natural.',
+    attachTo: { element: pasoNav('chat'), on: 'right' },
+    buttons: [{ text: 'Atrás', action: tour.back, classes: 'shepherd-button-secondary' }, { text: 'Siguiente', action: tour.next }],
+  });
+  tour.addStep({
+    id: 'alertas',
+    title: 'Alertas y notificaciones',
+    text: 'Nimbo te avisa cuando hay stock bajo, deudas próximas o anomalías.',
+    attachTo: { element: '#recordatorios-widget', on: 'top' },
+    buttons: [{ text: 'Atrás', action: tour.back, classes: 'shepherd-button-secondary' }, { text: 'Siguiente', action: tour.next }],
+  });
+  tour.addStep({
+    id: 'inventario',
+    title: 'Inventario',
+    text: 'Agrega, busca y controla tus productos desde aquí.',
+    attachTo: { element: pasoNav('inventory'), on: 'right' },
+    buttons: [{ text: 'Atrás', action: tour.back, classes: 'shepherd-button-secondary' }, { text: 'Siguiente', action: tour.next }],
+  });
+  tour.addStep({
+    id: 'ventas',
+    title: 'Ventas',
+    text: 'Registra cada venta desde Caja (con escáner o búsqueda), o simplemente dile a Nimbo por chat "vendí 2 licuadoras".',
+    buttons: [{ text: 'Atrás', action: tour.back, classes: 'shepherd-button-secondary' }, { text: 'Siguiente', action: tour.next }],
+  });
+  tour.addStep({
+    id: 'caja',
+    title: 'Caja',
+    text: 'Abre y cierra tu caja diaria. Nimbo detecta diferencias automáticamente.',
+    attachTo: { element: pasoNav('caja'), on: 'right' },
+    buttons: [{ text: 'Atrás', action: tour.back, classes: 'shepherd-button-secondary' }, { text: 'Siguiente', action: tour.next }],
+  });
+  tour.addStep({
+    id: 'reportes',
+    title: 'Reportes',
+    text: 'Ve cómo va tu negocio: ventas, ganancias, productos más vendidos.',
+    attachTo: { element: pasoNav('analytics'), on: 'right' },
+    buttons: [{ text: 'Atrás', action: tour.back, classes: 'shepherd-button-secondary' }, { text: 'Siguiente', action: tour.next }],
+  });
+  tour.addStep({
+    id: 'configuracion',
+    title: 'Configuración',
+    text: 'Aquí puedes cambiar los datos de tu empresa y repetir el diagnóstico cuando quieras.',
+    attachTo: { element: pasoNav('confignegocio'), on: 'right' },
+    buttons: [{ text: 'Atrás', action: tour.back, classes: 'shepherd-button-secondary' }, { text: 'Siguiente', action: tour.next }],
+  });
+  tour.addStep({
+    id: 'fin',
+    title: 'Listo',
+    text: 'Si tienes dudas, pregúntale a Nimbo en el chat. ¡Empecemos!',
+    buttons: [{ text: 'Ir al chat', action: tour.complete }],
+  });
+
+  const cerrarTour = () => {
+    tourPendiente = false;
+    fetch('/api/tour/completar', { method: 'POST' }).catch(() => {});
+    showPanel('chat');
+  };
+  tour.on('complete', cerrarTour);
+  tour.on('cancel', cerrarTour);
+
+  tour.start();
+}
+
+// ── TUTORIAL DEL CHAT (primer mensaje del sistema) ──────
+function mostrarTutorialChatSiCorresponde() {
+  if (!chatTutorialPendiente) return;
+  chatTutorialPendiente = false;
+
+  const texto = [
+    '¡Hola! Soy Nimbo, tu asistente de negocio. Puedes escribirme en español normal.',
+    'Aquí van algunas cosas que puedes pedirme:',
+    '',
+    '📦 <b>Inventario</b><br>' +
+      '- "¿Cuántas unidades de [producto] tengo?"<br>' +
+      '- "Agregar 20 unidades de [producto]"<br>' +
+      '- "¿Qué productos tienen stock bajo?"',
+    '',
+    '💰 <b>Ventas</b><br>' +
+      '- "Registrar venta de [producto]"<br>' +
+      '- "¿Cuánto vendí hoy?"<br>' +
+      '- "Ver ventas de esta semana"',
+    '',
+    '👥 <b>Clientes</b><br>' +
+      '- "Buscar cliente [nombre]"<br>' +
+      '- "¿Cuánto me debe [cliente]?"',
+    '',
+    '📊 <b>Reportes</b><br>' +
+      '- "¿Cómo voy este mes?"<br>' +
+      '- "¿Cuáles son mis productos más vendidos?"',
+    '',
+    '⚙️ <b>Otros</b><br>' +
+      '- "Abrir caja"<br>' +
+      '- "Cerrar caja"<br>' +
+      '- "Agregar gasto de [monto] por [concepto]"',
+    '',
+    'Puedes preguntarme lo que necesites. ¡Estoy aquí!',
+  ].join('<br>');
+
+  addMsgToUI('assistant', texto, new Date().toLocaleTimeString('es-GT', {hour:'2-digit', minute:'2-digit'}), true);
+  fetch('/api/chat/tutorial-mostrado', { method: 'POST' }).catch(() => {});
+}
+
+// ── CONFIGURACION: resumen del diagnostico + tour ───────
+async function cargarResumenDiagnostico() {
+  const el = document.getElementById('diag-resumen-wrap');
+  if (!el) return;
+  try {
+    const r = await fetch('/api/diagnostico/resumen');
+    const d = await r.json();
+    if (!d.completado) {
+      el.innerHTML = '<div class="text-muted" style="font-size:12.5px">Todavía no completaste el diagnóstico de negocio.</div>';
+      return;
+    }
+    const areas = (d.areas_oportunidad || '').split('\n').filter(l => l.trim())
+      .map(l => `<span class="badge badge-orange" style="margin:2px 4px 2px 0;display:inline-block">${l}</span>`).join('');
+    el.innerHTML = `
+      <div class="text-muted" style="font-size:12px;margin-bottom:6px">Completado: ${d.fecha_completado || '—'}</div>
+      <div>${areas || '<span class="text-muted" style="font-size:12.5px">Sin áreas críticas detectadas.</span>'}</div>
+    `;
+  } catch (e) {
+    el.innerHTML = '<div class="text-muted" style="font-size:12.5px">No se pudo cargar el diagnóstico.</div>';
+  }
+}
+
+async function repetirDiagnostico() {
+  await fetch('/api/diagnostico/repetir', { method: 'POST' });
+  window.location.href = '/diagnostico';
+}
+
+async function verTourDashboard() {
+  await fetch('/api/tour/resetear', { method: 'POST' });
+  window.location.reload();
 }
 
 // ── CLOCK ──────────────────────────────────────────────
@@ -3137,6 +3336,16 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
   refocusInputActivo();
+
+  // El tour arranca sobre panel-dashboard (activo por defecto al cargar la
+  // pagina) - un pequeno delay para que el layout ya este pintado antes de
+  // que Shepherd calcule donde attachear el primer paso. Si no hay tour
+  // pendiente (ya se vio antes, o el rol no es admin) pero el tutorial del
+  // chat si, este se muestra solo hasta que se abre el chat - ver
+  // showPanel().
+  if (tourPendiente) {
+    setTimeout(iniciarTourDashboard, 400);
+  }
 });
 
 async function agregarProductoPorId(productoId) {

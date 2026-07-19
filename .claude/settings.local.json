@@ -236,7 +236,13 @@
       "Bash(chmod +x /home/victor/nimbo.exe/.claude/hooks/block_db_edit.py)",
       "Bash(timedatectl)",
       "Bash(xargs -I{} sh -c 'echo \"--- {} ---\"; cat {}')",
-      "Bash(git checkout *)"
+      "Bash(git checkout *)",
+      "Bash(mkdir -p /home/victor/.claude/jobs/eb84e6d2/tmp)",
+      "Bash(rsync -a --exclude=.git --exclude=__pycache__ --exclude=.env --exclude=static/videos/* --exclude=static/fotos/* --exclude=static/fotos_servicio/* --exclude=static/cotizaciones/* --exclude=static/etiquetas/* --exclude=backups /home/victor/nimbo.exe/ /home/victor/.claude/jobs/eb84e6d2/tmp/nimbo_test_diagnostico/)",
+      "Bash(rm -f nimbo_master.db)",
+      "Bash(rm -rf data/empresas)",
+      "Bash(nohup python3 app.py --port 5099)",
+      "Bash(pkill -f \"nimbo_test_diagnostico/app.py\")"
     ]
   }
 }

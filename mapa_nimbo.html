@@ -281,6 +281,22 @@ const DATA = {
  },
  "nodes": [
   {
+   "id": ".claude/hooks/block_db_edit.py",
+   "name": "block_db_edit.py",
+   "group": "core",
+   "desc": "Archivo nuevo detectado automáticamente - todavía no tiene una descripción curada. Agrégasela en scripts/generar_mapa.py (función curar) para que este mapa la muestre.",
+   "func": "(sin documentar todavía)",
+   "status": "activo"
+  },
+  {
+   "id": ".claude/hooks/py_syntax_check.py",
+   "name": "py_syntax_check.py",
+   "group": "core",
+   "desc": "Archivo nuevo detectado automáticamente - todavía no tiene una descripción curada. Agrégasela en scripts/generar_mapa.py (función curar) para que este mapa la muestre.",
+   "func": "(sin documentar todavía)",
+   "status": "activo"
+  },
+  {
    "id": "app.py",
    "name": "app.py",
    "group": "entrada",
@@ -841,6 +857,14 @@ const DATA = {
    "status": "activo"
   },
   {
+   "id": "templates/diagnostico.html",
+   "name": "diagnostico.html",
+   "group": "template",
+   "desc": "Template detectado automáticamente (render_template en app.py). No tiene descripción curada todavía - agrégala en TEMPLATES_DESC de scripts/generar_mapa.py.",
+   "func": "render_template('diagnostico.html') desde app.py.",
+   "status": "activo"
+  },
+  {
    "id": "templates/forgot_password.html",
    "name": "forgot_password.html",
    "group": "template",
@@ -1345,6 +1369,10 @@ const DATA = {
   {
    "source": "tools/venta_tool.py",
    "target": "database/nimbo_db.py"
+  },
+  {
+   "source": "app.py",
+   "target": "templates/diagnostico.html"
   },
   {
    "source": "app.py",

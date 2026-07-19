@@ -1217,6 +1217,58 @@ identificacion de cobro).
   para esta limpieza se encontro que el Pendiente (ver seccion Pendientes) sobre
   proveedor.orden_compra estaba desactualizado - ya se habia corregido en el pasado sin
   actualizar esta nota, ver la seccion "Cuentas por pagar" mas arriba.
+- Diagnostico de negocio + tour del dashboard + tutorial del chat: onboarding del admin
+  despues del wizard de registro de empresa (/register-empresa) - flujo completo: crear
+  empresa -> wizard -> diagnostico de negocio -> dashboard -> tour -> tutorial del chat.
+  - Diagnostico: tabla DiagnosticoNegocio en nimbo.db (una fila logica por empresa,
+    database.nimbo_db.init_diagnostico_negocio(), agregada a
+    core.empresa._inicializar_tablas_empresa() para que las empresas nuevas la tengan
+    desde el arranque). GET /diagnostico (solo admin, solo si Completado=0 - si ya esta
+    completo redirige al dashboard) muestra un formulario de 6 bloques (el negocio,
+    como opera, el control actual, equipo tecnologico, el dueno, la meta - 23 preguntas
+    en total, la mayoria radio buttons, dos de texto libre) en una sola pagina
+    (templates/diagnostico.html, mismo estilo oscuro que login.html/
+    register_empresa.html, todos los bloques ya en el DOM, JS los muestra/oculta con
+    una barra de progreso). POST /api/diagnostico/guardar (database.nimbo_db.
+    guardar_diagnostico()) calcula ResumenDiagnostico (2 lineas armadas desde las
+    respuestas del bloque 1), AreasOportunidad y PrimerosTresPasos: un set de reglas
+    (_AREAS_CANDIDATAS en database/nimbo_db.py) evalua las respuestas del bloque 3
+    (control actual) y 5 (el dueno) - ej. "lleva el inventario en la cabeza o no lo
+    lleva" -> area critica Inventario, "no sabe cuanto gano" -> area critica
+    Contabilidad, "se paga agarrando del cajon o no se paga" -> area critica Finanzas
+    personales del dueno, "ha tenido perdidas sin saber como" -> area critica Control
+    de merma, "vende al credito" -> area de atencion Cuentas por cobrar (mas 3 reglas
+    adicionales de la misma naturaleza para poder completar siempre 3 areas aunque
+    disparen menos de 3 de las reglas "oficiales") - las 3 con mayor severidad se
+    muestran en la pantalla final del formulario junto a un primer paso concreto en
+    Nimbo por cada una. GET /api/diagnostico/resumen y POST /api/diagnostico/repetir
+    (database.nimbo_db.resetear_diagnostico(), solo pone Completado=0, no borra las
+    respuestas anteriores) alimentan el panel Configuracion (ver mas abajo).
+  - index() en app.py redirige a /diagnostico si current_user.is_admin y
+    database.nimbo_db.diagnostico_completado() es False - un empleado o tecnico nunca
+    ve esta pantalla (las preguntas son sobre el negocio y el dueno).
+  - Tour del dashboard: Shepherd.js (CDN, con integrity/crossorigin - no se instalo
+    via npm) sobre 10 pasos, resaltando elementos reales del sidebar/dashboard
+    (sidebar-nav, boton de Chat, #recordatorios-widget, Inventario, Caja, Analisis,
+    Configuracion) - el paso "Ventas" no resalta ningun elemento particular (no existe
+    un panel "Ventas" separado en el sidebar, las ventas se hacen desde Caja o por
+    chat) y queda como paso informativo centrado. Arranca solo (con un pequeno delay
+    para que el layout ya este pintado) si `tour_pendiente` (Jinja, calculado en
+    index() como current_user.is_admin y Configuracion.tour_completado != "1") es
+    true - templates/index.html. Al terminar o cancelar el tour, POST
+    /api/tour/completar marca Configuracion.tour_completado="1" y cambia al panel de
+    Chat. Boton "Ver tour del dashboard" en Configuracion (POST /api/tour/resetear +
+    recargar la pagina) lo vuelve a mostrar cuando se quiera.
+  - Tutorial del chat: mensaje fijo (ejemplos reales de comandos por categoria -
+    inventario, ventas, clientes, reportes, otros) inyectado como un mensaje mas del
+    chat (addMsgToUI(), no un popup aparte) la primera vez que se abre el panel Chat,
+    independiente del rol (lo ve quien sea que abra el chat primero, no solo el
+    admin). Controlado por Configuracion.chat_tutorial_mostrado (POST
+    /api/chat/tutorial-mostrado lo marca "1" la primera vez que se muestra).
+  - Panel Configuracion (solo admin): tarjeta "Diagnostico y tour" con el resumen del
+    ultimo diagnostico completado (fecha + areas de oportunidad, GET
+    /api/diagnostico/resumen) y los botones "Repetir diagnostico de negocio" y "Ver
+    tour del dashboard" descritos arriba.
 
 ## Tablas nimbo.db
 Producto, Stock, Cliente, OrdenServicio, HistorialOrden, Kardex, StockMinimo, ProductoFoto,
@@ -1226,7 +1278,7 @@ Gasto, ResumenContable, Proveedor, ContactoProveedor, ProductoProveedor,
 OrdenCompra, ItemOrdenCompra, HistorialPrecio, Usuario, PasswordResetToken, Configuracion,
 Cotizacion, CajaTurno, MovimientoCaja, ItemCarrito, Descuento, GarantiaProducto, GarantiaVenta,
 ProductoCombo, ItemCombo, UnidadMedida, PuntosCliente, MovimientoPuntos, CodigoBarrasGenerado,
-GrupoDescuento, CuentaCobrar, PagoCuenta, CuentaPagar, PagoPagar
+GrupoDescuento, CuentaCobrar, PagoCuenta, CuentaPagar, PagoPagar, DiagnosticoNegocio
 
 ## Variables de entorno (.env)
 GEMINI_API_KEY, FB_PAGE_TOKEN, FB_PAGE_ID, WA_TOKEN, WA_PHONE_ID, IG_ACCOUNT_ID,
