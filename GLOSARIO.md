@@ -744,3 +744,55 @@ sesión, `GET /` redirige directo a `/select-empresa` en vez de mostrar el dashb
 todo-incluido para saber a cuál de varios resorts del mismo dueño perteneces - el
 personal la mira para saber en qué restaurante/piscina tenés acceso, sin tener que
 preguntarte cada vez de dónde venís.
+
+### hook
+**Qué es:** un comando que Claude Code corre automáticamente en un momento específico
+(antes o después de que Claude use una herramienta, por ejemplo), sin que nadie tenga
+que pedirlo cada vez.
+
+**Para qué sirve en Nimbo:** `.claude/hooks/py_syntax_check.py` corre `python3 -m
+py_compile` automáticamente cada vez que se edita un archivo `.py` del proyecto, y
+`.claude/hooks/block_db_edit.py` bloquea cualquier intento de editar un `.db` como si
+fuera texto - ambos configurados en `.claude/settings.json` para que se disparen solos,
+sin que haya que acordarse de correrlos a mano.
+
+**Ejemplo de la vida real:** es como el sensor que hace sonar una alarma si abrís la
+puerta de emergencia de un edificio - no hace falta que un guardia esté mirando esa
+puerta todo el día, el sensor reacciona solo cuando pasa el evento que le importa.
+
+---
+
+### PreToolUse / PostToolUse
+**Qué es:** los dos momentos más comunes en los que puede dispararse un **hook** (ver
+arriba) de Claude Code: `PreToolUse` corre ANTES de que una herramienta se ejecute (y
+puede bloquearla), `PostToolUse` corre DESPUÉS de que ya se ejecutó (y puede avisar de
+un problema, pero ya no puede evitar que pasara).
+
+**Para qué sirve en Nimbo:** `block_db_edit.py` está registrado como `PreToolUse` -
+tiene que correr ANTES de que Edit/Write toquen un `.db`, para poder impedirlo a
+tiempo. `py_syntax_check.py` está registrado como `PostToolUse` - corre DESPUÉS de que
+el archivo `.py` ya se guardó, porque recién ahí existe el archivo completo para poder
+revisar su sintaxis con `py_compile`.
+
+**Ejemplo de la vida real:** es la diferencia entre el guardia que te para en la puerta
+ANTES de entrar a un evento sin entrada (`PreToolUse`, todavía se puede evitar) y el
+que te encuentra adentro y te pide que te retires (`PostToolUse`, el problema ya pasó,
+pero se puede corregir).
+
+---
+
+### subagente
+**Qué es:** una instancia separada de Claude, con su propia ventana de contexto y su
+propio set de herramientas permitidas, dedicada a una tarea específica - se puede
+invocar para que trabaje en paralelo sin llenar la conversación principal de detalles.
+
+**Para qué sirve en Nimbo:** `.claude/agents/schema-consistency-reviewer.md` define un
+subagente que revisa que el esquema de base de datos sea consistente entre todas las
+empresas (multi-tenant) y entre el código y las bases de datos reales - la misma clase
+de chequeo que habría atrapado el bug de `crear_empresa()` (19 tablas faltantes) antes
+de que afectara a una empresa real.
+
+**Ejemplo de la vida real:** es como llamar a un inspector externo especializado solo en
+revisar instalaciones eléctricas, en vez de pedirle al arquitecto general del edificio
+que también sepa de electricidad - el inspector se enfoca en una sola cosa y da su
+reporte sin necesidad de conocer el resto del proyecto.

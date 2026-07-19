@@ -226,7 +226,17 @@
       "Bash(kill %1)",
       "Bash(pkill -f \"_run_test_server.py\")",
       "Bash(ps -p 21423,21424 -o pid,cmd)",
-      "Bash(rsync -a --exclude=.git --exclude=__pycache__ --exclude=.env --exclude=static/videos/* --exclude=static/fotos/* --exclude=static/fotos_servicio/* ./ /tmp/claude-1000/-home-victor-nimbo-exe/25133093-50db-4de4-b745-577801ba104d/scratchpad/nimbo_test_tablas/)"
+      "Bash(rsync -a --exclude=.git --exclude=__pycache__ --exclude=.env --exclude=static/videos/* --exclude=static/fotos/* --exclude=static/fotos_servicio/* ./ /tmp/claude-1000/-home-victor-nimbo-exe/25133093-50db-4de4-b745-577801ba104d/scratchpad/nimbo_test_tablas/)",
+      "Bash(awk '{print $2}')",
+      "Skill(update-config)",
+      "Bash(chmod +x /home/victor/nimbo.exe/.claude/hooks/py-syntax-check.sh)",
+      "Bash(apt list *)",
+      "Bash(rm /home/victor/nimbo.exe/.claude/hooks/py-syntax-check.sh)",
+      "Bash(chmod +x /home/victor/nimbo.exe/.claude/hooks/py_syntax_check.py)",
+      "Bash(chmod +x /home/victor/nimbo.exe/.claude/hooks/block_db_edit.py)",
+      "Bash(timedatectl)",
+      "Bash(xargs -I{} sh -c 'echo \"--- {} ---\"; cat {}')",
+      "Bash(git checkout *)"
     ]
   }
 }
