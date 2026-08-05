@@ -1718,3 +1718,64 @@ solo cuando la empresa ya tiene productos cargados:
 
 **Archivos modificados:** `app.py`, `database/nimbo_db.py`,
 `templates/diagnostico.html`, `CLAUDE.md`.
+
+---
+
+## [2026-08-05] Diagnóstico/tour: el salto para empresas con datos debía ser automático, no un botón
+
+**Problema:** el botón "Saltar por ahora" agregado unas horas antes (ver la entrada
+anterior) requería que el admin lo viera y lo presionara a propósito - pero el
+pedido real era que una empresa con datos existentes (como Mi Cocina, con 11
+productos) **nunca llegara a ver la pantalla de diagnóstico ni el tour en absoluto**,
+sin depender de que alguien hiciera clic en nada. Con el botón manual, Mi Cocina
+seguía viendo el formulario completo cada vez que entraba (mientras nadie
+presionara "Saltar"), lo cual no era el comportamiento pedido.
+
+**Solución:** se movió toda la detección a `index()` en `app.py` (la ruta `GET /`,
+el dashboard) - `/diagnostico` en sí mismo ya no participa de esta decisión:
+- **0 productos** (`contar_productos() == 0`): sigue redirigiendo a `/diagnostico`
+  como antes, pero ahora el formulario nunca muestra ningún botón para saltarlo (se
+  quitó el botón "Saltar por ahora" agregado en la entrada anterior, junto con la
+  ruta `POST /api/diagnostico/saltar` y el parámetro `tiene_productos` que ya no
+  hacía falta en el template - la única forma de llegar a esta pantalla ahora es
+  con 0 productos, así que el botón habría sido código muerto).
+- **> 0 productos y diagnóstico sin completar**: `index()` llama directo a
+  `database.nimbo_db.saltar_diagnostico()` (la misma función de la entrada
+  anterior, ahora invocada automáticamente en vez de por un botón) Y ADEMÁS marca
+  `Configuracion.tour_completado = "1"` en el mismo request - el admin nunca ve ni
+  el formulario ni el tour, entra directo al dashboard.
+- **Diagnóstico ya completado o ya saltado**: sin cambios, entra directo (esto ya
+  funcionaba porque `saltar_diagnostico()` usa el mismo `Completado=1` que
+  `guardar_diagnostico()`).
+- `/diagnostico` sigue teniendo su propio chequeo (`if not admin or
+  diagnostico_completado(): redirect`), sin tocar `contar_productos()` - esto es a
+  propósito: así "Repetir diagnóstico de negocio" (botón en Configuración, pone
+  `Completado=0` y redirige directo a `/diagnostico` sin pasar por `index()`) sigue
+  mostrando el formulario real sin importar cuántos productos tenga la empresa, en
+  vez de auto-saltarse a sí mismo. Si el admin abandona ese diagnóstico repetido sin
+  terminarlo, la siguiente vez que entra al dashboard normal (`index()`) se vuelve a
+  saltar solo, igual que la primera vez.
+
+**Nota sobre cómo se verificó (y un aviso de higiene de procesos):** al arrancar el
+servidor de prueba para este cambio, un proceso de una sesión de prueba ANTERIOR
+(este mismo día) había quedado corriendo de fondo sin que un `pkill` previo lo
+matara de verdad (Werkzeug con el reloader de debug activo puede dejar un proceso
+hijo huérfano) - seguía escuchando en el puerto 5000 y, con el auto-reload de
+Werkzeug, había recargado solo el código nuevo de este cambio. En algún momento
+durante esta sesión alguien (probablemente el uso normal del dashboard en el
+navegador) le pegó una request real a `/`, y el código nuevo (ya cargado ahí sin
+que nadie lo arrancara a propósito) marcó de verdad el diagnóstico de
+**Mi Cocina** como saltado y el tour como completado contra la base de datos real
+(`data/empresas/mi-cocina/nimbo.db`). Se revisó el resultado y es exactamente el
+estado que pedía esta tarea ("Mi Cocina tiene 11 productos y nunca debió ver
+diagnóstico ni tour"), así que se dejó tal cual en vez de revertirlo. El resto de
+la verificación (los 3 casos de diagnóstico + los 3 de tour, en ambas direcciones)
+se hizo aparte contra una empresa descartable creada solo para la prueba
+(`test-diagnostico-temp`, vía `POST /api/empresa/crear`) y borrada por completo
+(fila en `nimbo_master.db` + carpeta `data/empresas/`) al terminar - no se tocó
+ninguna otra empresa real. Para la próxima vez: verificar con `pgrep -af app.py` /
+`ss -ltnp | grep 5000` ANTES de asumir que el puerto está libre, no solo confiar en
+que un `pkill` anterior funcionó.
+
+**Archivos modificados:** `app.py`, `database/nimbo_db.py`,
+`templates/diagnostico.html`, `CLAUDE.md`.

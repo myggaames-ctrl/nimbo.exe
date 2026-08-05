@@ -260,14 +260,30 @@ def index():
         return redirect(url_for("select_empresa"))
     if not current_user.is_authenticated:
         return login_manager.unauthorized()
-    # Diagnostico de negocio: solo se le pide al admin (las preguntas son
-    # sobre el negocio y el dueño, no tienen sentido para un empleado o
-    # tecnico) y solo hasta que lo completa una vez - despues de eso entra
-    # directo al dashboard, igual que cualquier otra empresa que ya lo
-    # completo. Se repite manualmente desde Configuracion (ver
-    # /api/diagnostico/repetir), nunca de forma automatica.
+    # Diagnostico de negocio + tour: solo le importan al admin (las preguntas
+    # son sobre el negocio y el dueño, y el tour resalta paneles admin-only -
+    # ninguno de los dos tiene sentido para un empleado o tecnico). La
+    # deteccion de "esta empresa ya tiene datos" se hace aca, al entrar al
+    # dashboard (nunca en /diagnostico) - por diseño: si /diagnostico hiciera
+    # su propio chequeo, una empresa con productos que llegara ahi por un
+    # link viejo/directo alcanzaria a ver el formulario un instante antes de
+    # que algo la sacara.
+    tiene_productos = contar_productos() > 0
     if current_user.is_admin and not diagnostico_completado():
-        return redirect(url_for("diagnostico"))
+        if tiene_productos:
+            # Empresa con datos existentes (ej. admin re-registrado, o el
+            # diagnostico se reseteo manualmente desde Configuracion) - no
+            # tiene sentido forzarla a contestar el cuestionario de negocio
+            # nuevo. Se marca como saltada (mismo Completado=1 que
+            # guardar_diagnostico(), sin inventar respuestas - ver
+            # saltar_diagnostico()) y de paso se marca el tour como
+            # completado, para que tampoco se le muestre: el tour solo tiene
+            # sentido inmediatamente despues del diagnostico real de una
+            # empresa nueva, no para una que ya esta operando.
+            saltar_diagnostico()
+            set_config("tour_completado", "1")
+        else:
+            return redirect(url_for("diagnostico"))
     return render_template(
         "index.html", rol=current_user.rol, nombre=current_user.nombre,
         negocio_nombre=get_config("negocio_nombre", "Mi Cocina"),
@@ -277,7 +293,7 @@ def index():
         # mostrarTutorialChatSiCorresponde() en templates/index.html) - una
         # empresa sin ningun producto cargado ve la guia de "sube tu Excel o
         # agrega productos" en vez del tutorial normal de comandos.
-        sin_inventario=contar_productos() == 0,
+        sin_inventario=not tiene_productos,
     )
 
 
@@ -613,16 +629,15 @@ def diagnostico():
     # dueño) y solo si todavia no lo completo - si un empleado llega aca por
     # URL directa, o un admin que ya lo completo, se lo manda de vuelta al
     # dashboard en vez de un 403 (esta es una pagina normal del navegador,
-    # no una ruta /api/*, asi que un redirect es lo esperado aca).
+    # no una ruta /api/*, asi que un redirect es lo esperado aca). Esta ruta
+    # NO revisa contar_productos() - esa deteccion (saltar automaticamente el
+    # diagnostico de una empresa con datos existentes) se hace en index() al
+    # entrar al dashboard, no aca. Si esta funcion se alcanza de verdad es
+    # porque index() ya determino que la empresa no tiene productos todavia,
+    # asi que el formulario siempre se muestra completo, sin boton de saltar.
     if not current_user.is_admin or diagnostico_completado():
         return redirect(url_for("index"))
-    return render_template(
-        "diagnostico.html", nombre=current_user.nombre,
-        # Boton "Saltar por ahora": solo tiene sentido si la empresa ya esta
-        # usando Nimbo de verdad (productos cargados) - una empresa nueva sin
-        # nada cargado todavia no deberia poder saltarse el diagnostico.
-        tiene_productos=contar_productos() > 0,
-    )
+    return render_template("diagnostico.html", nombre=current_user.nombre)
 
 
 @app.route("/api/diagnostico/guardar", methods=["POST"])
@@ -648,21 +663,6 @@ def api_diagnostico_resumen():
         "areas_oportunidad": d.get("AreasOportunidad"),
         "primeros_tres_pasos": d.get("PrimerosTresPasos"),
     })
-
-
-@app.route("/api/diagnostico/saltar", methods=["POST"])
-@admin_required
-def api_diagnostico_saltar():
-    """Boton 'Saltar por ahora' de /diagnostico (solo visible si la empresa ya
-    tiene productos cargados, ver tiene_productos en diagnostico() arriba) -
-    marca el diagnostico como completado sin guardar ninguna respuesta.
-    Vuelve a validar la misma condicion en el backend (no solo confiar en que
-    el boton estuvo oculto en el HTML) por si alguien llama a este endpoint
-    directo sin pasar por el boton."""
-    if contar_productos() == 0:
-        return jsonify({"error": "Todavia no tienes productos cargados."}), 400
-    saltar_diagnostico()
-    return jsonify({"ok": True})
 
 
 @app.route("/api/diagnostico/repetir", methods=["POST"])

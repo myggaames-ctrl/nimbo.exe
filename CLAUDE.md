@@ -1306,22 +1306,37 @@ identificacion de cobro).
     Nimbo por cada una. GET /api/diagnostico/resumen y POST /api/diagnostico/repetir
     (database.nimbo_db.resetear_diagnostico(), solo pone Completado=0, no borra las
     respuestas anteriores) alimentan el panel Configuracion (ver mas abajo).
-  - Boton "Saltar por ahora" (2026-08-05): en /diagnostico, visible solo si la empresa
-    ya tiene productos cargados (contar_productos() > 0, pasado al template como
-    tiene_productos) - una empresa que ya esta usando Nimbo de verdad (caso tipico:
-    admin re-registrado, o diagnostico reseteado desde Configuracion) no deberia
-    quedar forzada a contestar el cuestionario de negocio nuevo para poder entrar.
-    POST /api/diagnostico/saltar (database.nimbo_db.saltar_diagnostico()) marca
-    Completado=1 con FechaCompletado/UltimaActualizacion, sin tocar ninguna columna
-    de respuestas ni calcular ResumenDiagnostico/AreasOportunidad/PrimerosTresPasos
-    (quedan en None/NULL - _calcular_areas_y_pasos() necesita respuestas reales, y
-    "inventar" un resumen a partir de un dict vacio mostraria datos enganosos en el
-    panel Configuracion). El backend revalida contar_productos() > 0 de nuevo (no
-    confia solo en que el boton estuvo oculto en el HTML), mismo criterio que el
-    resto del proyecto (ver INTENTS_SOLO_ADMIN + admin_o_tecnico_required).
-  - index() en app.py redirige a /diagnostico si current_user.is_admin y
-    database.nimbo_db.diagnostico_completado() es False - un empleado o tecnico nunca
-    ve esta pantalla (las preguntas son sobre el negocio y el dueno).
+  - Salto automatico para empresas con datos existentes (2026-08-05, reemplaza un
+    boton manual "Saltar por ahora" que existio brevemente el mismo dia - ver
+    BUGS_Y_FIXES.md): index() en app.py (GET /, el dashboard) es el UNICO lugar
+    donde se decide si mostrar el diagnostico o saltarlo - /diagnostico en si mismo
+    no revisa nada de esto, solo su propio Completado (ver mas abajo). Cada vez que
+    un admin entra al dashboard con el diagnostico sin completar, index() calcula
+    contar_productos() > 0:
+    - 0 productos (empresa nueva de verdad) -> redirige a /diagnostico, que muestra
+      el formulario completo de 6 bloques, SIN ningun boton para saltarlo.
+    - > 0 productos (empresa con datos existentes - admin re-registrado, o
+      diagnostico reseteado a mano desde Configuracion con "Repetir diagnostico de
+      negocio") -> nunca llega a ver /diagnostico. index() llama de una vez a
+      database.nimbo_db.saltar_diagnostico() (marca Completado=1 con
+      FechaCompletado/UltimaActualizacion, sin tocar ninguna columna de respuestas
+      ni calcular ResumenDiagnostico/AreasOportunidad/PrimerosTresPasos - quedan en
+      None/NULL, porque no hay respuestas reales sobre las que calcularlos e
+      "inventar" un resumen mostraria datos enganosos en el panel Configuracion) Y
+      TAMBIEN marca Configuracion.tour_completado="1" en el mismo request, para que
+      el tour del dashboard (ver mas abajo) tampoco se dispare - el tour solo tiene
+      sentido inmediatamente despues de un diagnostico real de una empresa nueva.
+    Una vez saltado (o completado de verdad), Completado=1 hace que las siguientes
+    visitas a / entren directo al dashboard sin volver a evaluar nada - y una visita
+    directa a /diagnostico por URL vieja/manual tambien redirige derecho a / (mismo
+    chequeo `if not current_user.is_admin or diagnostico_completado(): redirect`
+    que ya existia). "Repetir diagnostico de negocio" (POST /api/diagnostico/repetir,
+    database.nimbo_db.resetear_diagnostico()) sigue funcionando igual que antes -
+    pone Completado=0 y el frontend redirige a /diagnostico directamente (no pasa
+    por index()), asi que un admin que pide repetirlo a proposito SI ve el
+    formulario real sin importar cuantos productos tenga; si lo abandona sin
+    terminarlo, la siguiente vez que entre al dashboard normal (index()) se
+    vuelve a saltar solo, igual que la primera vez.
   - Tour del dashboard: Shepherd.js (CDN, con integrity/crossorigin - no se instalo
     via npm) sobre 10 pasos, resaltando elementos reales del sidebar/dashboard
     (sidebar-nav, boton de Chat, #recordatorios-widget, Inventario, Caja, Analisis,
@@ -1333,7 +1348,10 @@ identificacion de cobro).
     true - templates/index.html. Al terminar o cancelar el tour, POST
     /api/tour/completar marca Configuracion.tour_completado="1" y cambia al panel de
     Chat. Boton "Ver tour del dashboard" en Configuracion (POST /api/tour/resetear +
-    recargar la pagina) lo vuelve a mostrar cuando se quiera.
+    recargar la pagina) lo vuelve a mostrar cuando se quiera. tour_completado tambien
+    se marca "1" automaticamente (sin mostrar el tour) cuando index() salta el
+    diagnostico por tener la empresa datos existentes - ver el punto de "Salto
+    automatico para empresas con datos existentes" mas arriba.
   - Tutorial del chat: mensaje fijo (ejemplos reales de comandos por categoria -
     inventario, ventas, clientes, reportes, otros) inyectado como un mensaje mas del
     chat (addMsgToUI(), no un popup aparte) la primera vez que se abre el panel Chat,

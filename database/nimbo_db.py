@@ -5847,11 +5847,12 @@ def resetear_diagnostico(db_path=None):
 
 def saltar_diagnostico(db_path=None):
     """Marca el diagnostico como completado SIN guardar ninguna respuesta -
-    usado por el boton 'Saltar por ahora' en /diagnostico, que solo se
-    muestra si la empresa ya tiene productos cargados (ver contar_productos(),
-    la empresa ya esta usando Nimbo de verdad, no tiene sentido forzarla a
-    contestar el cuestionario de negocio nuevo). A diferencia de
-    guardar_diagnostico(), no toca ninguna columna de respuestas ni calcula
+    llamado automaticamente desde index() en app.py cuando un admin entra al
+    dashboard con el diagnostico sin completar pero la empresa ya tiene
+    productos cargados (ver contar_productos(): ya esta usando Nimbo de
+    verdad, no tiene sentido forzarla a contestar el cuestionario de negocio
+    nuevo, ni mostrarle la pantalla de /diagnostico para nada). A diferencia
+    de guardar_diagnostico(), no toca ninguna columna de respuestas ni calcula
     ResumenDiagnostico/AreasOportunidad/PrimerosTresPasos - no hay datos reales
     sobre los que calcularlos, y dejarlos como estaban (None si nunca se
     contesto nada) evita mostrar un resumen inventado en el panel
