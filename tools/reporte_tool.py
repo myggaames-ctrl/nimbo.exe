@@ -4,6 +4,7 @@ Herramienta de Reportes
 import os
 from core.tool_registry import register
 from database.nimbo_db import get_reporte_dia, get_reporte_periodo, get_cuadre_pos_dia, crear_ajuste_pos
+from services.ollama_service import analizar_ollama
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -230,7 +231,7 @@ def _texto_patrones(p):
     return dias_txt, horas_txt, juntos_txt, ciclicos_txt, tendencia_txt
 
 
-def _resumen_patrones_sin_gemini(p, dias_txt, horas_txt, juntos_txt, ciclicos_txt, tendencia_txt):
+def _resumen_patrones_sin_ia(p, dias_txt, horas_txt, juntos_txt, ciclicos_txt, tendencia_txt):
     resp = f"Patrones de venta ({p['periodo_dias']} dias, {p['total_ventas_analizadas']} ventas):\n\n"
     resp += f"VENTAS POR DIA:\n{dias_txt}\n\n"
     resp += f"VENTAS POR HORA:\n{horas_txt}\n\n"
@@ -242,20 +243,12 @@ def _resumen_patrones_sin_gemini(p, dias_txt, horas_txt, juntos_txt, ciclicos_tx
 
 def patrones_ventas_tool(data):
     from database.nimbo_db import get_patrones_ventas
-    import os
 
     p = get_patrones_ventas()
     if p["total_ventas_analizadas"] == 0:
         return f"No hay suficientes ventas registradas (ultimos {p['periodo_dias']} dias) para analizar patrones."
 
     dias_txt, horas_txt, juntos_txt, ciclicos_txt, tendencia_txt = _texto_patrones(p)
-
-    gemini_key = os.environ.get("GEMINI_API_KEY", "")
-    if not gemini_key:
-        return _resumen_patrones_sin_gemini(p, dias_txt, horas_txt, juntos_txt, ciclicos_txt, tendencia_txt)
-
-    from google import genai
-    cliente = genai.Client(api_key=gemini_key)
 
     prompt = f"""Eres el analista de ventas de Mi Cocina Electrodomesticos, tienda de electrodomesticos y repuestos en Guatemala.
 Analiza estos datos REALES de los ultimos {p['periodo_dias']} dias ({p['total_ventas_analizadas']} ventas) y da recomendaciones practicas.
@@ -282,8 +275,8 @@ Responde en espanol, directo y practico, con:
 4. Que clientes ciclicos conviene contactar pronto por su proxima compra estimada
 No inventes numeros que no te di, y si algun apartado no tiene datos suficientes dilo claramente."""
 
-    r = cliente.models.generate_content(model="gemini-2.5-flash-lite", contents=prompt)
-    return r.text
+    texto = analizar_ollama(prompt)
+    return texto if texto else _resumen_patrones_sin_ia(p, dias_txt, horas_txt, juntos_txt, ciclicos_txt, tendencia_txt)
 
 register("reporte.patrones_ventas", patrones_ventas_tool)
 

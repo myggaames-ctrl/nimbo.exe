@@ -42,22 +42,3 @@ def resumen_texto(mensajes=None, max_chars=MAX_CHARS):
         lineas.append(linea)
         total += len(linea)
     return "\n".join(lineas)
-
-
-def resumen_para_gemini(mensajes=None, max_chars=MAX_CHARS):
-    """Historial reciente en formato multi-turno para la API de Gemini
-    (role 'user'/'model'), respetando el mismo presupuesto de caracteres."""
-    if mensajes is None:
-        mensajes = obtener_historial_reciente()
-    contents = []
-    total = 0
-    for m in mensajes:
-        texto = _recortar(m.get("Content", ""))
-        if not texto:
-            continue
-        if total + len(texto) > max_chars:
-            break
-        role = "model" if m.get("Role") == "assistant" else "user"
-        contents.append({"role": role, "parts": [{"text": texto}]})
-        total += len(texto)
-    return contents

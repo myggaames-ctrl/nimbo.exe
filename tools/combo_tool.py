@@ -2,12 +2,12 @@
 Herramienta de Combos/Kits de productos
 """
 import json
-import os
 import re
 from core.tool_registry import register
 from database.nimbo_db import (
     get_products, get_combos, buscar_combos, vender_combo, DESCUENTO_COMBO_SUGERIDO
 )
+from services.ollama_service import analizar_ollama, MENSAJE_TIMEOUT
 
 
 def crear_combo_tool(data):
@@ -52,7 +52,7 @@ def vender_combo_tool(data):
 register("combo.vender", vender_combo_tool)
 
 
-def _limpiar_json_gemini(texto):
+def _limpiar_bloque_json(texto):
     return re.sub(r"^```(?:json)?|```$", "", texto.strip(), flags=re.MULTILINE).strip()
 
 
@@ -60,13 +60,6 @@ def sugerir_combos_tool(data):
     productos = [p for p in get_products(limit=200) if p.get("Stock", 0) and p["Stock"] > 0]
     if not productos:
         return "No hay productos con stock disponible para sugerir combos."
-
-    gemini_key = os.environ.get("GEMINI_API_KEY", "")
-    if not gemini_key:
-        return "Gemini no esta configurado (falta GEMINI_API_KEY), no puedo generar sugerencias de combos."
-
-    from google import genai
-    cliente = genai.Client(api_key=gemini_key)
 
     catalogo = "\n".join(f"- {p['Name'].strip()} (Q{p['Price']:.2f}, stock {int(p['Stock'])})" for p in productos)
 
@@ -86,15 +79,19 @@ con este formato exacto:
   ...
 ]"""
 
-    r = cliente.models.generate_content(model="gemini-2.5-flash-lite", contents=prompt)
+    texto = analizar_ollama(prompt)
+    if not texto:
+        return "No pude generar sugerencias de combos: Ollama no esta disponible. Verifica que este corriendo."
+    if texto == MENSAJE_TIMEOUT:
+        return texto
 
     try:
-        sugerencias = json.loads(_limpiar_json_gemini(r.text))
+        sugerencias = json.loads(_limpiar_bloque_json(texto))
     except (json.JSONDecodeError, TypeError, AttributeError):
-        return "No pude interpretar la sugerencia de combos de Gemini. Intenta de nuevo."
+        return "No pude interpretar la sugerencia de combos. Intenta de nuevo."
 
     if not isinstance(sugerencias, list):
-        return "No pude interpretar la sugerencia de combos de Gemini. Intenta de nuevo."
+        return "No pude interpretar la sugerencia de combos. Intenta de nuevo."
 
     resp = f"Combos sugeridos (descuento del {int(DESCUENTO_COMBO_SUGERIDO * 100)}% sobre el precio normal):\n\n"
     encontrados = 0
@@ -119,7 +116,7 @@ con este formato exacto:
         resp += f"   Precio normal: Q{suma:.2f} | Descuento: -Q{descuento:.2f} | Precio combo: Q{precio_combo:.2f}\n\n"
 
     if encontrados == 0:
-        return "Gemini no logro sugerir combos con productos que coincidan con el inventario actual. Intenta de nuevo."
+        return "No se logro sugerir combos con productos que coincidan con el inventario actual. Intenta de nuevo."
 
     resp += "Para crear alguno, escribe: crear combo [nombre]"
     return resp

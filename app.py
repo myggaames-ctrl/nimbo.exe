@@ -1,6 +1,6 @@
 """
 Nimbo AI Dashboard - Backend Flask
-Conecta con OpenClaw, Aronium SQLite y Gemini API
+Conecta con OpenClaw, Aronium SQLite y Ollama local
 """
 import os
 import sqlite3
@@ -30,7 +30,6 @@ from flask_cors import CORS
 from flask_login import (
     LoginManager, login_user, logout_user, login_required, current_user
 )
-from google import genai
 from openclaw_bridge import send_to_openclaw, check_openclaw_status
 from core.nimbo import send as nimbo_send
 from services.inventory import InventoryService
@@ -38,6 +37,7 @@ from core.action_engine import ActionEngine
 from core.tool_registry import list_tools
 from services.skills_service import SkillsService
 from services.mail_service import mail, enviar_reset_password
+from services.ollama_service import llamar_ollama, analizar_ollama, ollama_disponible
 from core.auth import (
     get_usuario_by_id, verify_login, existe_admin,
     listar_usuarios, crear_usuario, set_usuario_activo, cambiar_password_usuario,
@@ -232,15 +232,10 @@ def admin_o_tecnico_required(f):
     return wrapper
 
 # ── Configuración ──────────────────────────────────────────
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 ARONIUM_DB = os.environ.get(
     "ARONIUM_DB_PATH",
     "/mnt/c/Users/Victor Paxtor/AppData/Local/Aronium/Data/pos.db"
 )
-
-gemini_client = None
-if GEMINI_API_KEY:
-    gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
 inventory = InventoryService()
 engine = ActionEngine()
@@ -891,7 +886,7 @@ def api_configuracion_negocio_update():
 
 
 # ══════════════════════════════════════════════════════════
-# CHAT CON GEMINI / OPENCLAW
+# CHAT CON NIMBO (OLLAMA) / OPENCLAW
 # ══════════════════════════════════════════════════════════
 
 @app.route("/api/chat", methods=["POST"])
@@ -905,88 +900,25 @@ def chat():
         return jsonify({"error": "Mensaje vacío"}), 400
 
     # ==================================================
-    # 1. Intentar resolver usando herramientas
+    # Resolver usando NimboCore (herramientas + fallback final a Ollama,
+    # ver core/nimbo.py send() - siempre devuelve una respuesta no vacia,
+    # asi que no hace falta un segundo intento con otro modelo aqui).
     # ==================================================
-
-    # ==================================================
-    # 1. Intentar resolver usando NimboCore
-    # ==================================================
-    from core.nimbo import send as nimbo_send_gemini
-    ctx_gemini = session.get("nimbo_ctx_gemini", {})
+    from core.nimbo import send as nimbo_send
+    ctx = session.get("nimbo_ctx", {})
     try:
-        respuesta_tool, ctx_gemini = nimbo_send_gemini(mensaje, context=ctx_gemini, role=current_user.rol)
+        respuesta_tool, ctx = nimbo_send(mensaje, context=ctx, role=current_user.rol)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-    session["nimbo_ctx_gemini"] = ctx_gemini
-    if respuesta_tool:
-        is_html = "<a " in str(respuesta_tool)
-        chat_history.append({"role": "user", "content": mensaje, "time": datetime.now().strftime("%H:%M")})
-        chat_history.append({"role": "assistant", "content": respuesta_tool, "time": datetime.now().strftime("%H:%M")})
-        from database.nimbo_db import guardar_mensaje_chat
-        guardar_mensaje_chat("user", mensaje)
-        guardar_mensaje_chat("assistant", str(respuesta_tool))
-        return jsonify({"response": respuesta_tool, "source": "tool", "html": is_html})
-    # 2. Si ninguna herramienta aplica, usar Gemini
-    # ==================================================
+    session["nimbo_ctx"] = ctx
 
-    if not gemini_client:
-        return jsonify({"error": "API key de Gemini no configurada"}), 500
-
-    if current_user.rol != "admin":
-        return jsonify({
-            "response": "No entendí esa instrucción. Si necesitas ayuda con algo fuera "
-                        "de inventario, ventas o clientes, contacta a un administrador.",
-            "source": "blocked"
-        })
-
-    try:
-
-        system_prompt = """
-Eres Nimbo AI.
-
-Si existe una herramienta para resolver una tarea debes utilizarla.
-
-Si no existe una herramienta disponible,
-responde normalmente como asistente inteligente.
-
-Siempre responde en español.
-"""
-
-        from core.chat_context import resumen_texto
-        contexto_reciente = resumen_texto()
-        if contexto_reciente:
-            system_prompt += (
-                "\n\nResumen de la conversacion reciente (puede ser de dias anteriores, "
-                "usalo para entender referencias como 'eso' o preguntas de seguimiento):\n"
-                f"{contexto_reciente}"
-            )
-
-        respuesta = gemini_client.models.generate_content(
-            model="gemini-2.5-flash-lite",
-            contents=f"{system_prompt}\n\nUsuario: {mensaje}"
-        )
-
-        texto = respuesta.text
-
-        chat_history.append({
-            "role": "user",
-            "content": mensaje,
-            "time": datetime.now().strftime("%H:%M")
-        })
-
-        chat_history.append({
-            "role": "assistant",
-            "content": texto,
-            "time": datetime.now().strftime("%H:%M")
-        })
-
-        return jsonify({
-            "response": texto,
-            "source": "gemini"
-        })
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    is_html = "<a " in str(respuesta_tool)
+    chat_history.append({"role": "user", "content": mensaje, "time": datetime.now().strftime("%H:%M")})
+    chat_history.append({"role": "assistant", "content": respuesta_tool, "time": datetime.now().strftime("%H:%M")})
+    from database.nimbo_db import guardar_mensaje_chat
+    guardar_mensaje_chat("user", mensaje)
+    guardar_mensaje_chat("assistant", str(respuesta_tool))
+    return jsonify({"response": respuesta_tool, "source": "tool", "html": is_html})
 
 
 @app.route("/api/chat/history", methods=["GET"])
@@ -1116,9 +1048,7 @@ def custom_query():
 @app.route("/api/inventory/analyze", methods=["POST"])
 @login_required
 def analyze_inventory():
-    """Análisis con Gemini sobre el inventario"""
-    if not gemini_client:
-        return jsonify({"error": "API key no configurada"}), 500
+    """Análisis con Ollama local sobre el inventario"""
     data = request.json
     context = data.get("context", "")
     question = data.get("question", "Dame un análisis del inventario")
@@ -1129,11 +1059,10 @@ Datos del inventario:
 
 Pregunta: {question}
 Responde en español con análisis claro y recomendaciones prácticas."""
-        resp = gemini_client.models.generate_content(
-            model="gemini-2.5-flash-lite",
-            contents=prompt
-        )
-        return jsonify({"analysis": resp.text})
+        texto = analizar_ollama(prompt)
+        if not texto:
+            return jsonify({"error": "Ollama no esta disponible. Verifica que este corriendo."}), 500
+        return jsonify({"analysis": texto})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -1145,8 +1074,6 @@ Responde en español con análisis claro y recomendaciones prácticas."""
 @app.route("/api/content/generate", methods=["POST"])
 @admin_required
 def generate_content():
-    if not gemini_client:
-        return jsonify({"error": "API key no configurada"}), 500
     data = request.json
     tipo = data.get("type", "post")
     producto = data.get("product", "")
@@ -1179,11 +1106,10 @@ Mix de: hashtags populares, nicho, y locales de Guatemala."""
     prompt = prompts.get(tipo, prompts["post"])
 
     try:
-        resp = gemini_client.models.generate_content(
-            model="gemini-2.5-flash-lite",
-            contents=prompt
-        )
-        return jsonify({"content": resp.text, "type": tipo})
+        texto = llamar_ollama(prompt)
+        if not texto:
+            return jsonify({"error": "Ollama no esta disponible. Verifica que este corriendo."}), 500
+        return jsonify({"content": texto, "type": tipo})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -1239,16 +1165,7 @@ def delete_task(task_id):
 @app.route("/api/status", methods=["GET"])
 @login_required
 def status():
-    gemini_ok = False
-    if gemini_client:
-        try:
-            gemini_client.models.generate_content(
-                model="gemini-2.5-flash-lite",
-                contents="ping"
-            )
-            gemini_ok = True
-        except Exception:
-            pass
+    ollama_ok = ollama_disponible()
 
     db_ok = False
     try:
@@ -1259,7 +1176,7 @@ def status():
         pass
 
     return jsonify({
-        "gemini": gemini_ok,
+        "ollama": ollama_ok,
         "aronium": db_ok,
         "time": datetime.now().strftime("%d/%m/%Y %H:%M")
     })

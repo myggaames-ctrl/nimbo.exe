@@ -3860,7 +3860,8 @@ def get_patrones_ventas(dias_historial=90):
       de Descripcion de forma best-effort - ver _extraer_items_venta)
     - tendencia: ultimas 4 semanas vs las 4 semanas anteriores
     - clientes que compran en ciclos regulares, con su proxima compra estimada
-    Retorna un dict listo para narrar con Gemini o mostrar directo en el chat."""
+    Retorna un dict listo para narrar con IA (Ollama, ver tools/reporte_tool.py) o
+    mostrar directo en el chat."""
     from datetime import timedelta
 
     conn = nimbo_connect()

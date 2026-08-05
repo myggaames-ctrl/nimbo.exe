@@ -685,8 +685,8 @@
 
   <div class="sidebar-status">
     <div class="status-row">
-      <span class="status-label">Gemini API</span>
-      <span><span class="status-dot" id="dot-gemini"></span><span id="txt-gemini" style="font-size:11px">—</span></span>
+      <span class="status-label">Ollama</span>
+      <span><span class="status-dot" id="dot-ollama"></span><span id="txt-ollama" style="font-size:11px">—</span></span>
     </div>
     <div class="status-row">
       <span class="status-label">Aronium DB</span>
@@ -730,8 +730,8 @@
           <div class="stat-sub">registradas</div>
         </div>
         <div class="stat-card">
-          <div class="stat-label">Estado Gemini</div>
-          <div class="stat-value" id="stat-gemini" style="font-size:16px;margin-top:4px">—</div>
+          <div class="stat-label">Estado Ollama</div>
+          <div class="stat-value" id="stat-ollama" style="font-size:16px;margin-top:4px">—</div>
         </div>
         <div class="stat-card">
           <div class="stat-label">Base de datos</div>
@@ -826,7 +826,7 @@
                   id="toggle-model"
                   onclick="toggleModel()"
                   title="Cambiar modelo">
-                  🤖 Gemini
+                  🤖 Ollama
               </button>
             <button class="btn btn-primary" onclick="sendChat()">→</button>
           </div>
@@ -861,7 +861,7 @@
           <label class="input-label">¿Qué quieres analizar?</label>
           <textarea class="input" id="analysis-q" rows="2" placeholder="Ej: Dame un análisis de los productos con menor rotación, proyecciones de ventas, stock crítico..."></textarea>
         </div>
-        <button class="btn btn-primary" onclick="runAnalysis()">Analizar con Gemini →</button>
+        <button class="btn btn-primary" onclick="runAnalysis()">Analizar con Ollama →</button>
         <div id="analysis-result" style="margin-top:16px;font-size:13.5px;line-height:1.7;white-space:pre-wrap;color:var(--text)"></div>
       </div>
 
@@ -1504,7 +1504,7 @@ const sinInventario = {{ 'true' if sin_inventario else 'false' }};
 let useOpenclaw = false;
 function toggleModel() {
   useOpenclaw = !useOpenclaw;
-  document.getElementById('toggle-model').textContent = useOpenclaw ? '⚡ OpenClaw' : '🤖 Gemini';
+  document.getElementById('toggle-model').textContent = useOpenclaw ? '⚡ OpenClaw' : '🤖 Ollama';
   document.getElementById('toggle-model').style.color = useOpenclaw ? 'var(--accent)' : '';
 }
 let currentContentType = 'post';
@@ -1514,7 +1514,7 @@ let inventoryColumns = [];
 // ── NAVIGATION ─────────────────────────────────────────
 const titles = {
   dashboard: ['Dashboard', 'Resumen general del negocio'],
-  chat: ['Chat IA', 'Asistente powered by Gemini'],
+  chat: ['Chat IA', 'Asistente powered by Ollama'],
   inventory: ['Inventario', 'Productos en Aronium'],
   analytics: ['Análisis', 'Proyecciones y métricas'],
   content: ['Generador de contenido', 'Posts, scripts y descripciones'],
@@ -1761,10 +1761,10 @@ async function refreshStatus() {
     const r = await fetch('/api/status');
     const d = await r.json();
 
-    const dg = document.getElementById('dot-gemini');
-    const tg = document.getElementById('txt-gemini');
-    dg.className = 'status-dot ' + (d.gemini ? 'green' : 'red');
-    tg.textContent = d.gemini ? 'Conectado' : 'Sin conexión';
+    const dg = document.getElementById('dot-ollama');
+    const tg = document.getElementById('txt-ollama');
+    dg.className = 'status-dot ' + (d.ollama ? 'green' : 'red');
+    tg.textContent = d.ollama ? 'Conectado' : 'Sin conexión';
 
     const da = document.getElementById('dot-aronium');
     const ta = document.getElementById('txt-aronium');
@@ -1793,7 +1793,7 @@ async function loadStats() {
   try {
     const r = await fetch('/api/status');
     const d = await r.json();
-    document.getElementById('stat-gemini').innerHTML = d.gemini
+    document.getElementById('stat-ollama').innerHTML = d.ollama
       ? '<span class="badge badge-green">✓ Online</span>'
       : '<span class="badge badge-red">✗ Offline</span>';
     document.getElementById('stat-db').innerHTML = d.aronium
@@ -2608,7 +2608,7 @@ async function runAnalysis(question) {
   const q = question || document.getElementById('analysis-q').value.trim();
   if (!q) return;
 
-  document.getElementById('analysis-result').innerHTML = '<span class="spinner"></span> Analizando con Gemini...';
+  document.getElementById('analysis-result').innerHTML = '<span class="spinner"></span> Analizando con Ollama...';
 
   // Obtener contexto del inventario
   let context = 'Sin datos de inventario disponibles.';

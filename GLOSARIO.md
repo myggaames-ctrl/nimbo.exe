@@ -186,7 +186,7 @@ texto, listas, y pares "clave: valor"), fácil de leer tanto para una persona co
 una computadora.
 
 **Para qué sirve en Nimbo:** cuando el dashboard le pide a `/api/status` cómo está el
-sistema, la respuesta es JSON: `{"gemini": false, "aronium": true, "time": "18/07/2026
+sistema, la respuesta es JSON: `{"ollama": false, "aronium": true, "time": "18/07/2026
 14:32"}` - `jsonify()` en `app.py` convierte un diccionario de Python a este formato.
 
 **Ejemplo de la vida real:** es como una ficha de datos llenada con etiquetas claras:

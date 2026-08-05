@@ -7,40 +7,41 @@ Chat en lenguaje natural en espanol que controla todo el negocio.
 ## Stack
 - Backend: Flask (Python 3.10) en WSL2, puerto 5000
 - IA Principal: Ollama local (http://localhost:11434) - un unico modelo, qwen2.5:7b, para
-  todo lo que pasa por el PIPELINE CONVERSACIONAL del chat (chat, traduccion, contenido Y
-  analisis financieros/estrategicos EN LAS TOOLS QUE ESE PIPELINE INVOCA - ver
+  todo (chat, traduccion, contenido y analisis financieros/estrategicos - ver
   services/ollama_service.py y seccion "Arquitectura del chat" mas abajo). Se probo primero
   con gemma2:9b aparte para los analisis, pero se descarto: alternar entre 2 modelos hacia
   que Ollama descargara uno para cargar el otro en cada llamada (penalidad de recarga que por
   si sola podia agotar el timeout) y arriesgaba quedarse sin RAM con ambos cargados a la vez
   (~11GB combinados, causo que el servidor de Nimbo se cayera por presion de memoria durante
-  las pruebas). Gemini API ya NO se usa en el pipeline conversacional del chat (core/nimbo.py)
-  ni en las tools de contabilidad/evento/contenido que ese pipeline invoca - fue reemplazado
-  por completo AHI (no en todo el proyecto - ver el punto siguiente, la version anterior de
-  esta nota decia "reemplazado por completo" sin esa aclaracion y era incorrecta). Sigue
-  quedando un bloque de codigo en app.py (ruta /api/chat, "Paso 2") que llama a Gemini como
-  segundo intento despues de core.nimbo.send(), pero es codigo muerto desde ese cambio:
-  send() ahora SIEMPRE devuelve una respuesta no vacia (el fallback final ya es Ollama, ver
-  mas abajo), asi que ese bloque nunca se alcanza en la practica. No se limpio porque no
-  formaba parte del pedido (solo se toco core/nimbo.py y las tools de contabilidad/evento/
-  contenido), queda pendiente para una limpieza futura.
-- Gemini API (GEMINI_API_KEY, libreria google-genai) - a diferencia del chat (punto anterior),
-  SIGUE en uso activo y alcanzable en 5 lugares fuera del pipeline conversacional (auditado
-  2026-08-05 con grep sobre todo el repo + confirmando que cada uno tiene un detector/boton
-  de UI real que lo dispara):
+  las pruebas). Gemini API (GEMINI_API_KEY, libreria google-genai) ya NO se usa en NINGUN
+  punto del proyecto - la migracion se hizo en 2 pasos: primero el pipeline conversacional
+  del chat (core/nimbo.py) y las tools de contabilidad/evento/contenido que ese pipeline
+  invoca; despues, el 2026-08-05, los 5 usos que quedaban fuera de ese pipeline (encontrados
+  con un escaneo completo del repo - un CLAUDE.md anterior a esa fecha decia
+  "reemplazado por completo" y esa afirmacion era incorrecta, no cubria estos 5):
   - /api/inventory/analyze (app.py) - panel "Analisis de Datos" del dashboard (acceso propio
-    en el sidebar, no pasa por el chat), responde preguntas libres sobre el inventario.
+    en el sidebar, no pasa por el chat) - ahora usa analizar_ollama().
   - /api/content/generate (app.py) - panel "Generar Contenido" del dashboard - genera posts,
-    scripts de video, descripciones y hashtags. Es DISTINTO de tools/contenido_tool.py (el
-    comando de chat "genera un post de X"), que si esta migrado a Ollama.
-  - /api/status (app.py) - health check del dashboard, hace un ping real
-    (generate_content(contents="ping")) a Gemini para reportar si GEMINI_API_KEY funciona.
-  - tools/combo_tool.py sugerir_combos_tool() - comando de chat "sugerir combos".
+    scripts de video, descripciones y hashtags con llamar_ollama(). Es DISTINTO de
+    tools/contenido_tool.py (el comando de chat "genera un post de X"), que ya estaba en
+    Ollama desde el primer paso de la migracion.
+  - /api/status (app.py) - health check del dashboard, ahora usa
+    services.ollama_service.ollama_disponible() (GET /api/tags) en vez de pingear Gemini.
+    La UI (templates/index.html) tambien se renombro de "Gemini API"/"Estado Gemini" a
+    "Ollama"/"Estado Ollama" (ids dot-ollama/txt-ollama/stat-ollama, antes -gemini).
+  - tools/combo_tool.py sugerir_combos_tool() - comando de chat "sugerir combos", ahora con
+    analizar_ollama() (sigue pidiendole un JSON estricto al modelo, igual que antes).
   - tools/reporte_tool.py patrones_ventas_tool() - comando de chat "analiza mis patrones de
-    venta" (el unico de los 5 con fallback: si GEMINI_API_KEY no esta configurada cae a un
-    resumen sin IA, _resumen_patrones_sin_gemini()).
-  services/video_gen.py (Veo 3) tambien usa la libreria google-genai, pero via Vertex AI
-  (vertexai=True, project/location - ver seccion Google Cloud), no via GEMINI_API_KEY.
+    venta", ahora con analizar_ollama() (el unico de los 5 con fallback: si Ollama no
+    responde cae a un resumen sin IA, _resumen_patrones_sin_ia(), renombrada de
+    _resumen_patrones_sin_gemini()).
+  De paso se borro codigo muerto que solo existia para la integracion vieja con Gemini: el
+  bloque "Paso 2" de la ruta /api/chat en app.py (fallback a Gemini que nunca se alcanzaba,
+  ver mas abajo por que) y core/chat_context.py.resumen_para_gemini() (formato "contents" de
+  la API de Gemini, sin ningun caller). GEMINI_API_KEY se removio de .env y del codigo. La
+  libreria google-genai se mantiene instalada solo porque services/video_gen.py (Veo 3) la
+  sigue usando, pero via Vertex AI (vertexai=True, project/location - ver seccion Google
+  Cloud), sin relacion con GEMINI_API_KEY ni con este cambio.
 - Agente PC: OpenClaw con Gemini (puerto 18789) - ya NO es el fallback automatico del chat
   (ver Arquitectura del chat), pero se mantiene como opcion manual: boton en el dashboard y
   la ruta /api/openclaw/chat en app.py siguen intactos, sin cambios.
@@ -248,7 +249,7 @@ identificacion de cobro).
 - app.py - Flask principal, rutas de auth/setup y todas las rutas API
 - core/nimbo.py - NimboCore con flujos conversacionales + clarificacion de intenciones vagas
 - core/chat_context.py - Carga y recorta el historial reciente de ChatHistorial (entre dias)
-  para pasarlo como contexto a Gemini y OpenClaw
+  para pasarlo como contexto a Ollama (ver "Arquitectura del chat" mas abajo)
 - core/intent_detector.py - Carga todos los detectores
 - core/command_normalizer.py - Corrige errores tipograficos comunes (ej. "cuchila"->"cuchilla")
   palabra por palabra (diccionario + difflib.get_close_matches contra un vocabulario de
@@ -726,11 +727,11 @@ identificacion de cobro).
     "ciclico" a un cliente con compras muy irregulares) - igual devuelve la prediccion aunque
     no sea regular, marcandola como menos confiable en la respuesta del chat.
     - "analiza mis patrones de venta" / "patrones de venta" (reporte.patrones_ventas,
-      tools/reporte_tool.py) le pasa los datos ya calculados a Gemini (gemini-2.5-flash-lite,
-      mismo patron que contabilidad.analisis_completo) para que narre recomendaciones sin
-      inventar numeros; si GEMINI_API_KEY no esta configurado cae a un resumen de texto plano
-      con los mismos datos (_resumen_patrones_sin_gemini). "cuando vendo mas" / "mejor hora
-      para vender" (reporte.cuando_vendo_mas) da solo el dia/hora pico sin pasar por Gemini.
+      tools/reporte_tool.py) le pasa los datos ya calculados a Ollama (analizar_ollama(),
+      mismo patron que contabilidad.sugerencias_precios) para que narre recomendaciones sin
+      inventar numeros; si Ollama no responde cae a un resumen de texto plano con los mismos
+      datos (_resumen_patrones_sin_ia()). "cuando vendo mas" / "mejor hora para vender"
+      (reporte.cuando_vendo_mas) da solo el dia/hora pico sin pasar por ningun modelo.
       "proxima compra de Juan Perez" / "cuando vuelve a comprar Juan Perez"
       (reporte.proxima_compra, core/detectors/reporte_detector.py) da la prediccion de un
       cliente especifico.
@@ -909,16 +910,16 @@ identificacion de cobro).
     cliente especifico o cobrar por caja, hay que vender los productos del combo por
     separado con descuento manual en vez de usar este comando.
   - "sugerir combos" (database.nimbo_db via tools/combo_tool.py sugerir_combos_tool):
-    manda el inventario actual con stock > 0 (nombre, precio, stock) a Gemini pidiendole
-    exactamente 3 combos logicos en JSON estricto (nombre/descripcion/productos, usando
-    los nombres exactos del inventario). Gemini solo decide QUE productos van juntos
-    (criterio de negocio); Python hace el match contra el inventario real (get_products,
-    mismo fuzzy fallback que el resto del sistema) y calcula el precio con el 8% de
-    descuento de forma determinista, sin confiar en la aritmetica de Gemini (mismo patron
-    que contabilidad.sugerencias_precios). Si un producto sugerido no matchea con nada
-    real se descarta esa entrada; si un combo se queda con menos de 2 productos reales se
-    omite. Requiere GEMINI_API_KEY; sin esa variable devuelve un mensaje explicando que
-    Gemini no esta configurado, sin crear nada.
+    manda el inventario actual con stock > 0 (nombre, precio, stock) a Ollama
+    (analizar_ollama()) pidiendole exactamente 3 combos logicos en JSON estricto
+    (nombre/descripcion/productos, usando los nombres exactos del inventario). El modelo
+    solo decide QUE productos van juntos (criterio de negocio); Python hace el match contra
+    el inventario real (get_products, mismo fuzzy fallback que el resto del sistema) y
+    calcula el precio con el 8% de descuento de forma determinista, sin confiar en la
+    aritmetica del modelo (mismo patron que contabilidad.sugerencias_precios). Si un
+    producto sugerido no matchea con nada real se descarta esa entrada; si un combo se
+    queda con menos de 2 productos reales se omite. Si Ollama no esta disponible o no
+    responde con un JSON valido, avisa sin crear nada.
   - Detector core/detectors/combo_detector.py + herramienta tools/combo_tool.py.
     Admin-only (categoria "combo" no esta en CATEGORIAS_EMPLEADO de core/action_engine.py).
 - Unidades de medida: tabla UnidadMedida en nimbo.db, 1 fila por (ProductoId de Aronium,
@@ -1342,8 +1343,8 @@ ProductoCombo, ItemCombo, UnidadMedida, PuntosCliente, MovimientoPuntos, CodigoB
 GrupoDescuento, CuentaCobrar, PagoCuenta, CuentaPagar, PagoPagar, DiagnosticoNegocio
 
 ## Variables de entorno (.env)
-GEMINI_API_KEY, FB_PAGE_TOKEN, FB_PAGE_ID, WA_TOKEN, WA_PHONE_ID, IG_ACCOUNT_ID,
-MAIL_SERVER, MAIL_PORT, MAIL_USERNAME, MAIL_PASSWORD, ADMIN_EMAIL
+FLASK_SECRET_KEY, OPENCLAW_TOKEN, FB_PAGE_TOKEN, FB_PAGE_ID, WA_TOKEN, WA_PHONE_ID,
+IG_ACCOUNT_ID, MAIL_SERVER, MAIL_PORT, MAIL_USERNAME, MAIL_PASSWORD, ADMIN_EMAIL
 
 ## Google Cloud
 - Proyecto: pivotal-mode-499817-t7

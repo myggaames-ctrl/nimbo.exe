@@ -1596,3 +1596,81 @@ GEMINI_API_KEY="...")` que el harness guardó tal cual al aprobarse una vez.
 **Archivos modificados:** `app.py`, `openclaw_bridge.py`, `.env` (no versionado),
 `.gitignore`; `.claude/settings.local.json` removido del tracking (`git rm --cached`,
 el archivo local no se tocó).
+
+---
+
+## [2026-08-05] Migrados a Ollama los 5 usos de Gemini que quedaban fuera del chat
+
+**Problema:** una auditoría anterior en el mismo día (ver la entrada previa sobre la
+corrección de `CLAUDE.md`) encontró que, a pesar de que el chat conversacional ya
+estaba migrado a Ollama, `GEMINI_API_KEY` y la librería `google-genai` seguían en
+uso real en 5 lugares fuera de ese pipeline: `/api/inventory/analyze` (panel
+"Análisis de Datos"), `/api/content/generate` (panel "Generar Contenido"),
+`/api/status` (health check), `tools/combo_tool.py` (`sugerir combos`) y
+`tools/reporte_tool.py` (`analiza mis patrones de venta`).
+
+**Causa:** esos 5 puntos nunca formaron parte de la migración original a Ollama -
+esa migración solo tocó `core/nimbo.py` (el pipeline conversacional) y las tools de
+contabilidad/evento/contenido que ese pipeline invoca. Los 5 puntos de esta entrada
+son rutas y comandos que no pasan por `core/nimbo.py` (paneles del dashboard fuera
+del chat, o tools que ya tenían su propia llamada directa a Gemini desde antes de
+esa migración), así que quedaron sin tocar.
+
+**Solución:** los 5 se migraron al mismo patrón que ya usa el resto del proyecto
+(`services/ollama_service.py`):
+- `app.py` `/api/inventory/analyze` y `/api/content/generate`: reemplazado
+  `gemini_client.models.generate_content(...)` por `analizar_ollama(prompt)` y
+  `llamar_ollama(prompt)` respectivamente (mismo criterio que el resto del código:
+  análisis de datos usa el timeout largo, contenido/posts usa el timeout normal,
+  igual que `tools/contenido_tool.py`).
+- `app.py` `/api/status`: el ping real a Gemini se reemplazó por
+  `services.ollama_service.ollama_disponible()` (`GET /api/tags`, ya existía en el
+  servicio pero ningún caller la usaba todavía). La clave del JSON de respuesta
+  pasó de `"gemini"` a `"ollama"`, y la UI (`templates/index.html`) se renombró de
+  "Gemini API"/"Estado Gemini" a "Ollama"/"Estado Ollama" (ids `dot-ollama`,
+  `txt-ollama`, `stat-ollama`, antes con sufijo `-gemini`) - dejar el label viejo
+  hubiera sido mentirle al usuario sobre qué se está chequeando en realidad.
+- `tools/combo_tool.py` `sugerir_combos_tool()`: mismo prompt (le sigue pidiendo un
+  JSON estricto al modelo), ahora vía `analizar_ollama()` en vez de
+  `genai.Client(...)`. Se probó en vivo con Ollama corriendo real (comando de chat
+  "sugerir combos") y devolvió 3 combos válidos con precios calculados en Python.
+- `tools/reporte_tool.py` `patrones_ventas_tool()`: mismo cambio, con
+  `analizar_ollama()`. El fallback sin IA (`_resumen_patrones_sin_gemini`, para
+  cuando el modelo no responde) se renombró a `_resumen_patrones_sin_ia` y ya no
+  depende de si `GEMINI_API_KEY` está seteada - ahora se usa cuando
+  `analizar_ollama()` devuelve `None` (Ollama no está corriendo). Probado en vivo
+  con el comando de chat "analiza mis patrones de venta".
+- Limpieza de código muerto encontrado de paso, ya sin ninguna razón para seguir
+  existiendo una vez removido `GEMINI_API_KEY`: el bloque "Paso 2" de la ruta
+  `/api/chat` en `app.py` (el fallback a Gemini que, según ya documentaba
+  `CLAUDE.md`, nunca se alcanzaba en la práctica porque `core.nimbo.send()` siempre
+  devuelve una respuesta no vacía) y `core/chat_context.py.resumen_para_gemini()`
+  (función sin ningún caller, generaba el formato "contents" específico de la API
+  de Gemini).
+- `GEMINI_API_KEY` se removió de `.env` y de todo el código (`app.py`:
+  `GEMINI_API_KEY`, `gemini_client`, `from google import genai`). La librería
+  `google-genai` se mantiene instalada porque `services/video_gen.py` (Veo 3) la
+  sigue usando, pero vía Vertex AI (`vertexai=True, project=..., location=...`),
+  sin relación con `GEMINI_API_KEY` - no se tocó ese archivo, como pidió el usuario.
+- Se actualizaron las menciones a Gemini en `CLAUDE.md` (sección Stack, y las
+  descripciones de "analiza mis patrones de venta" y "sugerir combos" en Módulos
+  completados, que también habían quedado desactualizadas desde la migración
+  original) y en `GLOSARIO.md` (ejemplo de JSON de `/api/status`).
+- Verificado arrancando el servidor real con Ollama corriendo: `/api/status`
+  reporta `{"ollama": true, ...}`, `/api/inventory/analyze` y
+  `/api/content/generate` devuelven texto real generado por Ollama, y los comandos
+  de chat "sugerir combos" y "analiza mis patrones de venta" funcionan de punta a
+  punta (incluyendo el parseo del JSON de combos). Sin errores ni warnings de
+  arranque.
+
+**Nota de seguridad relacionada:** esto no reemplaza la rotación pendiente de la
+`GEMINI_API_KEY` que quedó expuesta en el historial de git (ver la entrada anterior
+sobre los 3 secrets hardcodeados) - esa key sigue siendo válida hasta que se rote en
+Google AI Studio, aunque Nimbo ya no la use para nada. Sí reduce el impacto de esa
+exposición: aunque alguien use la key filtrada, ya no puede usarla para generar
+contenido o análisis a nombre de Mi Cocina a través de Nimbo, porque Nimbo ya no la
+lee de ningún lado.
+
+**Archivos modificados:** `app.py`, `tools/combo_tool.py`, `tools/reporte_tool.py`,
+`core/chat_context.py`, `database/nimbo_db.py` (un docstring), `templates/index.html`,
+`.env` (no versionado), `CLAUDE.md`, `GLOSARIO.md`.
