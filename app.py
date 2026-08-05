@@ -9,11 +9,21 @@ import json
 import csv
 import io
 import re
+import secrets
 import unicodedata
 import logging
 from functools import wraps
 from datetime import datetime
 from dotenv import load_dotenv
+
+# Se carga .env ANTES de importar cualquier modulo propio (openclaw_bridge,
+# services/*, etc.) - varios de esos modulos leen os.getenv/os.environ.get a
+# nivel de modulo (ej. openclaw_bridge.TOKEN), no dentro de una funcion, asi
+# que si load_dotenv() corriera despues de esos imports (como pasaba antes)
+# esas variables se resolverian vacias sin importar que .env las tuviera.
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(BASE_DIR, '.env'))
+
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for, g
 from werkzeug.exceptions import HTTPException
 from flask_cors import CORS
@@ -44,14 +54,11 @@ from database.nimbo_db import (
 )
 import tools
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-load_dotenv(os.path.join(BASE_DIR, '.env'))
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("nimbo.setup")
 
 app = Flask(__name__)
-app.secret_key = "nimbo-secret-key-2026"
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", secrets.token_hex(32))
 CORS(app)
 
 # ── Correo (recuperación de contraseña) ────────────────────

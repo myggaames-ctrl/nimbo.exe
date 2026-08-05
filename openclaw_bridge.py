@@ -1,6 +1,7 @@
+import os
 import requests
 
-TOKEN = "11ca93db97c684ee87b9df2f8e589e3be07e8878bc8da8f8"
+TOKEN = os.getenv("OPENCLAW_TOKEN", "")
 URL = "http://127.0.0.1:18789/v1/chat/completions"
 
 SYSTEM_PROMPT = """Eres Nimbo, el asistente inteligente de Mi Cocina Electrodomesticos en Guatemala.

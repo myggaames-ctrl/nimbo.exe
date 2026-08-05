@@ -1533,3 +1533,66 @@ pasó sin faltantes.
 `data/empresas/surti-la-union/nimbo.db`, `data/empresas/tienda-del-chino/nimbo.db`
 (las 3 con la tabla `DiagnosticoNegocio` agregada vía backfill - sin cambios de
 código, `core/empresa.py` ya estaba correcto).
+
+---
+
+## [2026-08-05] 3 secrets hardcodeados en código versionado por git
+
+**Problema:** un escaneo de secrets encontró 3 valores sensibles hardcodeados en
+archivos trackeados por git (`app.py`, `openclaw_bridge.py`,
+`.claude/settings.local.json`), expuestos en el historial completo del repo desde
+el primer commit (`.claude/settings.local.json` en particular ya traía la
+`GEMINI_API_KEY` real desde `074812b`, "Nimbo v0.8 inicial" - 32 de los 64 commits
+de `main` tocan ese archivo).
+
+**Causa:** `openclaw_bridge.py` tenía el bearer token de OpenClaw como literal de
+texto (`TOKEN = "11ca93db97c684ee87b9df2f8e589e3be07e8878bc8da8f8"`); `app.py` tenía
+`app.secret_key = "nimbo-secret-key-2026"` fijo (firma las cookies de sesión de
+Flask-Login - con este valor público, cualquiera puede falsificar una cookie de
+sesión válida); y `.claude/settings.local.json` (el allowlist de permisos de Claude
+Code, trackeado por error desde el inicio del proyecto) quedó con la
+`GEMINI_API_KEY` real en texto plano dentro de un comando `Bash(export
+GEMINI_API_KEY="...")` que el harness guardó tal cual al aprobarse una vez.
+
+**Solución:**
+- `openclaw_bridge.py`: `TOKEN` ahora se lee de `os.getenv("OPENCLAW_TOKEN", "")`.
+  Se agregó `OPENCLAW_TOKEN` a `.env` con el valor que ya estaba en uso.
+- `app.py`: `app.secret_key` ahora es
+  `os.environ.get("FLASK_SECRET_KEY", secrets.token_hex(32))` (el fallback con
+  `secrets.token_hex(32)` es solo una red de seguridad para que el server nunca
+  arranque sin firma - si `FLASK_SECRET_KEY` no está en `.env`, cada reinicio del
+  proceso generaría una firma distinta e invalidaría todas las sesiones activas).
+  Se agregó `FLASK_SECRET_KEY` a `.env` con un valor nuevo generado con
+  `secrets.token_hex(32)`.
+- Bug encontrado de paso al mover `OPENCLAW_TOKEN`: `openclaw_bridge` se importa a
+  nivel de módulo en `app.py` (`from openclaw_bridge import ...`), ANTES de donde
+  `load_dotenv()` corría en el archivo original (después de todos los imports) - así
+  que `os.getenv("OPENCLAW_TOKEN", "")` se resolvía siempre vacío. `WA_TOKEN` y
+  `FB_PAGE_TOKEN` no tenían este problema porque `services/whatsapp.py` y
+  `services/social_media.py` solo se importan de forma perezosa (dentro de
+  funciones, no al nivel superior de `app.py`), momento en el que `.env` ya está
+  cargado. Se movieron `BASE_DIR` y `load_dotenv(...)` al inicio de `app.py`, justo
+  después de los imports de la librería estándar y antes de cualquier import propio
+  del proyecto (Flask, `openclaw_bridge`, `core.*`, `services.*`, `tools`) - así
+  cualquier variable de entorno que un módulo lea a nivel de import ya está
+  disponible. Verificado arrancando el servidor real (`python3 app.py`) y con un
+  `import app` limpio: `openclaw_bridge.TOKEN` y `app.secret_key` ahora sí
+  resuelven al valor de `.env`, login (`admin`/`admin123`) funciona y no hay errores
+  ni warnings de arranque.
+- `.claude/settings.local.json`: agregado a `.gitignore` y sacado del tracking con
+  `git rm --cached` (deja de commitearse a partir de ahora; el archivo sigue
+  existiendo localmente). **Se decidió NO purgar el historial con `git filter-repo`/
+  BFG** (opción evaluada y descartada con el usuario): como el archivo está en 32 de
+  los 64 commits de `main` desde el commit inicial, la purga reescribiría el 100%
+  del historial de `main`, invalidaría las 17 referencias a hashes de commit que ya
+  existen en este mismo archivo (`BUGS_Y_FIXES.md`) y exigiría un force-push que
+  sobreescribe `origin/main` por completo - alto riesgo para un beneficio parcial,
+  ya que purgar el historial NO revoca la key expuesta (si el repo ya fue
+  fetch/clonado o GitHub llegó a indexar esos commits, la key sigue circulando
+  igual). La única mitigación real es **rotar la `GEMINI_API_KEY` expuesta en
+  Google AI Studio** - pendiente, queda a criterio del usuario decidir cuándo
+  hacerlo.
+
+**Archivos modificados:** `app.py`, `openclaw_bridge.py`, `.env` (no versionado),
+`.gitignore`; `.claude/settings.local.json` removido del tracking (`git rm --cached`,
+el archivo local no se tocó).
