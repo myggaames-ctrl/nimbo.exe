@@ -7,20 +7,40 @@ Chat en lenguaje natural en espanol que controla todo el negocio.
 ## Stack
 - Backend: Flask (Python 3.10) en WSL2, puerto 5000
 - IA Principal: Ollama local (http://localhost:11434) - un unico modelo, qwen2.5:7b, para
-  todo (chat, traduccion, contenido Y analisis financieros/estrategicos - ver
+  todo lo que pasa por el PIPELINE CONVERSACIONAL del chat (chat, traduccion, contenido Y
+  analisis financieros/estrategicos EN LAS TOOLS QUE ESE PIPELINE INVOCA - ver
   services/ollama_service.py y seccion "Arquitectura del chat" mas abajo). Se probo primero
   con gemma2:9b aparte para los analisis, pero se descarto: alternar entre 2 modelos hacia
   que Ollama descargara uno para cargar el otro en cada llamada (penalidad de recarga que por
   si sola podia agotar el timeout) y arriesgaba quedarse sin RAM con ambos cargados a la vez
   (~11GB combinados, causo que el servidor de Nimbo se cayera por presion de memoria durante
-  las pruebas). Gemini API ya NO se usa en ningun punto del
-  chat ni de las herramientas de analisis/contenido - fue reemplazado por completo. Sigue
+  las pruebas). Gemini API ya NO se usa en el pipeline conversacional del chat (core/nimbo.py)
+  ni en las tools de contabilidad/evento/contenido que ese pipeline invoca - fue reemplazado
+  por completo AHI (no en todo el proyecto - ver el punto siguiente, la version anterior de
+  esta nota decia "reemplazado por completo" sin esa aclaracion y era incorrecta). Sigue
   quedando un bloque de codigo en app.py (ruta /api/chat, "Paso 2") que llama a Gemini como
-  segundo intento despues de core.nimbo.send(), pero es codigo muerto desde este cambio:
+  segundo intento despues de core.nimbo.send(), pero es codigo muerto desde ese cambio:
   send() ahora SIEMPRE devuelve una respuesta no vacia (el fallback final ya es Ollama, ver
   mas abajo), asi que ese bloque nunca se alcanza en la practica. No se limpio porque no
   formaba parte del pedido (solo se toco core/nimbo.py y las tools de contabilidad/evento/
   contenido), queda pendiente para una limpieza futura.
+- Gemini API (GEMINI_API_KEY, libreria google-genai) - a diferencia del chat (punto anterior),
+  SIGUE en uso activo y alcanzable en 5 lugares fuera del pipeline conversacional (auditado
+  2026-08-05 con grep sobre todo el repo + confirmando que cada uno tiene un detector/boton
+  de UI real que lo dispara):
+  - /api/inventory/analyze (app.py) - panel "Analisis de Datos" del dashboard (acceso propio
+    en el sidebar, no pasa por el chat), responde preguntas libres sobre el inventario.
+  - /api/content/generate (app.py) - panel "Generar Contenido" del dashboard - genera posts,
+    scripts de video, descripciones y hashtags. Es DISTINTO de tools/contenido_tool.py (el
+    comando de chat "genera un post de X"), que si esta migrado a Ollama.
+  - /api/status (app.py) - health check del dashboard, hace un ping real
+    (generate_content(contents="ping")) a Gemini para reportar si GEMINI_API_KEY funciona.
+  - tools/combo_tool.py sugerir_combos_tool() - comando de chat "sugerir combos".
+  - tools/reporte_tool.py patrones_ventas_tool() - comando de chat "analiza mis patrones de
+    venta" (el unico de los 5 con fallback: si GEMINI_API_KEY no esta configurada cae a un
+    resumen sin IA, _resumen_patrones_sin_gemini()).
+  services/video_gen.py (Veo 3) tambien usa la libreria google-genai, pero via Vertex AI
+  (vertexai=True, project/location - ver seccion Google Cloud), no via GEMINI_API_KEY.
 - Agente PC: OpenClaw con Gemini (puerto 18789) - ya NO es el fallback automatico del chat
   (ver Arquitectura del chat), pero se mantiene como opcion manual: boton en el dashboard y
   la ruta /api/openclaw/chat en app.py siguen intactos, sin cambios.
