@@ -5843,3 +5843,36 @@ def resetear_diagnostico(db_path=None):
     cur.execute("UPDATE DiagnosticoNegocio SET Completado = 0")
     conn.commit()
     conn.close()
+
+
+def saltar_diagnostico(db_path=None):
+    """Marca el diagnostico como completado SIN guardar ninguna respuesta -
+    usado por el boton 'Saltar por ahora' en /diagnostico, que solo se
+    muestra si la empresa ya tiene productos cargados (ver contar_productos(),
+    la empresa ya esta usando Nimbo de verdad, no tiene sentido forzarla a
+    contestar el cuestionario de negocio nuevo). A diferencia de
+    guardar_diagnostico(), no toca ninguna columna de respuestas ni calcula
+    ResumenDiagnostico/AreasOportunidad/PrimerosTresPasos - no hay datos reales
+    sobre los que calcularlos, y dejarlos como estaban (None si nunca se
+    contesto nada) evita mostrar un resumen inventado en el panel
+    Configuracion (ver GET /api/diagnostico/resumen)."""
+    from datetime import datetime
+    ahora = datetime.now().isoformat(timespec="seconds")
+
+    conn = nimbo_connect(db_path)
+    cur = conn.cursor()
+    cur.execute("SELECT Id FROM DiagnosticoNegocio ORDER BY Id LIMIT 1")
+    existente = cur.fetchone()
+
+    if existente:
+        cur.execute(
+            "UPDATE DiagnosticoNegocio SET Completado = 1, FechaCompletado = ?, UltimaActualizacion = ? WHERE Id = ?",
+            (ahora, ahora, existente["Id"])
+        )
+    else:
+        cur.execute(
+            "INSERT INTO DiagnosticoNegocio (Completado, FechaCompletado, UltimaActualizacion) VALUES (1, ?, ?)",
+            (ahora, ahora)
+        )
+    conn.commit()
+    conn.close()

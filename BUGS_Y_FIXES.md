@@ -1674,3 +1674,47 @@ lee de ningún lado.
 **Archivos modificados:** `app.py`, `tools/combo_tool.py`, `tools/reporte_tool.py`,
 `core/chat_context.py`, `database/nimbo_db.py` (un docstring), `templates/index.html`,
 `.env` (no versionado), `CLAUDE.md`, `GLOSARIO.md`.
+
+---
+
+## [2026-08-05] Botón "Saltar por ahora" en el diagnóstico de negocio
+
+**Problema:** una empresa que ya tenía productos cargados (ej. un admin
+re-registrado, o el diagnóstico reseteado manualmente desde Configuración -
+"Repetir diagnóstico de negocio") quedaba igual obligada a contestar las 23
+preguntas del cuestionario de `/diagnostico` antes de poder volver a entrar al
+dashboard - no había forma de saltarlo.
+
+**Solución:** botón "Saltar por ahora →" en `templates/diagnostico.html`, visible
+solo cuando la empresa ya tiene productos cargados:
+- `app.py` `diagnostico()` (ruta `GET /diagnostico`) ahora pasa
+  `tiene_productos=contar_productos() > 0` al template; el botón está envuelto en
+  `{% if tiene_productos %}` - una empresa nueva sin nada cargado todavía no lo ve,
+  y sigue teniendo que completar el diagnóstico normal.
+- Nueva ruta `POST /api/diagnostico/saltar` (`@admin_required`) llama a
+  `database.nimbo_db.saltar_diagnostico()`: marca `Completado = 1` con
+  `FechaCompletado`/`UltimaActualizacion`, pero a diferencia de
+  `guardar_diagnostico()` NO toca ninguna columna de respuestas ni calcula
+  `ResumenDiagnostico`/`AreasOportunidad`/`PrimerosTresPasos` - se dejan en
+  `None`/`NULL` a propósito, porque no hay respuestas reales sobre las que
+  calcularlos (`_calcular_areas_y_pasos()` sobre un dict vacío mostraría un
+  "diagnóstico" inventado en el panel Configuración). El frontend
+  (`saltarDiagnostico()` en `templates/diagnostico.html`) llama a este endpoint y
+  redirige a `/` si responde OK.
+- El backend revalida `contar_productos() == 0` de nuevo dentro de la ruta (no
+  confía solo en que el botón estuvo oculto en el HTML) - mismo criterio de doble
+  gate que ya usa el resto del proyecto (ej. `INTENTS_SOLO_ADMIN` +
+  `current_user.is_admin`, `admin_o_tecnico_required`).
+- Probado en vivo contra `mi-cocina` (11 productos, sin fila en
+  `DiagnosticoNegocio` todavía - mismo escenario real que dispara el botón): el
+  botón aparece en el HTML, `POST /api/diagnostico/saltar` deja
+  `Completado=1, ResumenDiagnostico=NULL`, `GET /diagnostico` pasa a redirigir a
+  `/` en vez de mostrar el formulario, y `GET /` ya muestra el dashboard
+  directamente. El panel Configuración (`GET /api/diagnostico/resumen`) maneja
+  bien los campos `NULL` (ya tenía el fallback `(d.areas_oportunidad || '')` de
+  antes). La fila de prueba se borró de `data/empresas/mi-cocina/nimbo.db` después
+  de verificar, para no dejar el diagnóstico real de Mi Cocina marcado como
+  saltado sin que el dueño lo haya decidido.
+
+**Archivos modificados:** `app.py`, `database/nimbo_db.py`,
+`templates/diagnostico.html`, `CLAUDE.md`.

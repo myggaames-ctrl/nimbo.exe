@@ -50,7 +50,7 @@ from core.empresa import (
 )
 from database.nimbo_db import (
     get_diagnostico, diagnostico_completado, guardar_diagnostico, resetear_diagnostico,
-    contar_productos
+    saltar_diagnostico, contar_productos
 )
 import tools
 
@@ -616,7 +616,13 @@ def diagnostico():
     # no una ruta /api/*, asi que un redirect es lo esperado aca).
     if not current_user.is_admin or diagnostico_completado():
         return redirect(url_for("index"))
-    return render_template("diagnostico.html", nombre=current_user.nombre)
+    return render_template(
+        "diagnostico.html", nombre=current_user.nombre,
+        # Boton "Saltar por ahora": solo tiene sentido si la empresa ya esta
+        # usando Nimbo de verdad (productos cargados) - una empresa nueva sin
+        # nada cargado todavia no deberia poder saltarse el diagnostico.
+        tiene_productos=contar_productos() > 0,
+    )
 
 
 @app.route("/api/diagnostico/guardar", methods=["POST"])
@@ -642,6 +648,21 @@ def api_diagnostico_resumen():
         "areas_oportunidad": d.get("AreasOportunidad"),
         "primeros_tres_pasos": d.get("PrimerosTresPasos"),
     })
+
+
+@app.route("/api/diagnostico/saltar", methods=["POST"])
+@admin_required
+def api_diagnostico_saltar():
+    """Boton 'Saltar por ahora' de /diagnostico (solo visible si la empresa ya
+    tiene productos cargados, ver tiene_productos en diagnostico() arriba) -
+    marca el diagnostico como completado sin guardar ninguna respuesta.
+    Vuelve a validar la misma condicion en el backend (no solo confiar en que
+    el boton estuvo oculto en el HTML) por si alguien llama a este endpoint
+    directo sin pasar por el boton."""
+    if contar_productos() == 0:
+        return jsonify({"error": "Todavia no tienes productos cargados."}), 400
+    saltar_diagnostico()
+    return jsonify({"ok": True})
 
 
 @app.route("/api/diagnostico/repetir", methods=["POST"])

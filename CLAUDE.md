@@ -1306,6 +1306,19 @@ identificacion de cobro).
     Nimbo por cada una. GET /api/diagnostico/resumen y POST /api/diagnostico/repetir
     (database.nimbo_db.resetear_diagnostico(), solo pone Completado=0, no borra las
     respuestas anteriores) alimentan el panel Configuracion (ver mas abajo).
+  - Boton "Saltar por ahora" (2026-08-05): en /diagnostico, visible solo si la empresa
+    ya tiene productos cargados (contar_productos() > 0, pasado al template como
+    tiene_productos) - una empresa que ya esta usando Nimbo de verdad (caso tipico:
+    admin re-registrado, o diagnostico reseteado desde Configuracion) no deberia
+    quedar forzada a contestar el cuestionario de negocio nuevo para poder entrar.
+    POST /api/diagnostico/saltar (database.nimbo_db.saltar_diagnostico()) marca
+    Completado=1 con FechaCompletado/UltimaActualizacion, sin tocar ninguna columna
+    de respuestas ni calcular ResumenDiagnostico/AreasOportunidad/PrimerosTresPasos
+    (quedan en None/NULL - _calcular_areas_y_pasos() necesita respuestas reales, y
+    "inventar" un resumen a partir de un dict vacio mostraria datos enganosos en el
+    panel Configuracion). El backend revalida contar_productos() > 0 de nuevo (no
+    confia solo en que el boton estuvo oculto en el HTML), mismo criterio que el
+    resto del proyecto (ver INTENTS_SOLO_ADMIN + admin_o_tecnico_required).
   - index() en app.py redirige a /diagnostico si current_user.is_admin y
     database.nimbo_db.diagnostico_completado() es False - un empleado o tecnico nunca
     ve esta pantalla (las preguntas son sobre el negocio y el dueno).

@@ -201,6 +201,12 @@
   <div class="logo-name">Diagnóstico de tu negocio</div>
   <div class="logo-sub">Unas preguntas honestas para saber por dónde empezar. Toma unos 5 minutos.</div>
 
+  {% if tiene_productos %}
+  <div style="margin-bottom:18px">
+    <button type="button" class="btn-ghost" id="btn-saltar" onclick="saltarDiagnostico()" style="width:100%">Saltar por ahora →</button>
+  </div>
+  {% endif %}
+
   <div id="progreso-wrap">
     <div class="progress-track" id="progress-track"></div>
     <div class="progress-label">Bloque <b id="bloque-actual-num">1</b> de 6</div>
@@ -584,6 +590,22 @@ function recolectarRespuestas() {
   });
   datos.QueLesDueleMas = document.getElementById('QueLesDueleMas').value.trim();
   return datos;
+}
+
+async function saltarDiagnostico() {
+  ocultarError();
+  const btn = document.getElementById('btn-saltar');
+  btn.disabled = true;
+  btn.textContent = 'Guardando...';
+  try {
+    const resp = await fetch("{{ url_for('api_diagnostico_saltar') }}", { method: 'POST' });
+    if (!resp.ok) throw new Error();
+    window.location.href = "{{ url_for('index') }}";
+  } catch (e) {
+    mostrarError('No se pudo saltar el diagnóstico. Intenta de nuevo.');
+    btn.disabled = false;
+    btn.textContent = 'Saltar por ahora →';
+  }
 }
 
 async function terminarDiagnostico() {
