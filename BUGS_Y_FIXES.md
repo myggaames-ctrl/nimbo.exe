@@ -1490,3 +1490,46 @@ y contra `core.auth.verify_login()` (el mismo camino que usa `/login` de verdad)
 contraseña ya era `admin123`, no hizo falta actualizar nada.
 
 **Archivos modificados:** `app.py`.
+
+---
+
+## [2026-08-05] DiagnosticoNegocio faltante en empresas creadas antes del feature (crash al arrancar)
+
+**Problema:** `data/empresas/mi-cocina/nimbo.db` no tenía la tabla `DiagnosticoNegocio`
+y el servidor crasheaba (`sqlite3.OperationalError: no such table: DiagnosticoNegocio`)
+al arrancar / al entrar como admin (ver `index()` en `app.py`, que redirige a
+`/diagnostico` si `database.nimbo_db.diagnostico_completado()` es `False` - esa función
+ya asume que la tabla existe).
+
+**Causa:** `init_diagnostico_negocio()` se agregó a
+`core.empresa._inicializar_tablas_empresa()` en el commit `e644313` (feature
+"diagnóstico de negocio + tour dashboard + tutorial chat", 2026-07-19) - así que
+**toda empresa creada a partir de ese commit** (`tienda-del-chino-3`, confirmado con
+el skill `verificar-esquema-empresa`) ya recibe la tabla sola. El problema es que
+`_inicializar_tablas_empresa()` solo corre una vez, al momento de `crear_empresa()` -
+no hay ninguna migración automática que la vuelva a correr sobre empresas que ya
+existían de antes. `mi-cocina`, `surti-la-union` y `tienda-del-chino` se crearon
+antes de ese commit, así que se quedaron sin la tabla - mismo patrón exacto que el
+bug de las 19 tablas fundacionales del 2026-07-18 (`crear_empresa()` con 19 tablas
+faltantes), solo que esta vez con una sola tabla y ya con el fix de fondo (el
+`init_*` correcto) en su lugar desde el principio - lo único que faltaba era el
+backfill sobre las empresas viejas.
+
+**Solución:** se corrió `database.nimbo_db.init_diagnostico_negocio(db_path)` (es
+`CREATE TABLE IF NOT EXISTS`, seguro de correr sobre una base con datos existentes)
+contra las 4 empresas registradas en `nimbo_master.db` (`core.empresa.listar_empresas()`
++ `get_db_path()` para resolver cada `nimbo.db`) - `mi-cocina`, `surti-la-union` y
+`tienda-del-chino` no tenían la tabla y ahora sí; `tienda-del-chino-3` ya la tenía
+(no-op). `core/empresa.py` no necesitó ningún cambio de código - `init_diagnostico_negocio`
+ya estaba en la lista de `_inicializar_tablas_empresa()` desde el commit `e644313`,
+así que toda empresa nueva de acá en adelante sigue recibiendo la tabla automáticamente.
+Se verificó con el skill `verificar-esquema-empresa`
+(`.claude/skills/verificar-esquema-empresa/scripts/verificar_esquema.py`): las 4
+empresas quedaron con las mismas 51 tablas que `mi-cocina` (empresa de referencia), y
+el chequeo 1 (tablas usadas por el código vs tablas creadas por algún `init_*`) también
+pasó sin faltantes.
+
+**Archivos modificados:** `data/empresas/mi-cocina/nimbo.db`,
+`data/empresas/surti-la-union/nimbo.db`, `data/empresas/tienda-del-chino/nimbo.db`
+(las 3 con la tabla `DiagnosticoNegocio` agregada vía backfill - sin cambios de
+código, `core/empresa.py` ya estaba correcto).
