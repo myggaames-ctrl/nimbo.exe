@@ -724,6 +724,38 @@ def _finalizar_cambio(context: dict, metodo: str):
 # esto SI esta confirmado. Ver videofoto_waiting_duracion en send().
 DURACIONES_VEO3_VALIDAS = (4, 6, 8)
 
+# Numero que sigue explicitamente a la palabra "precio" (ej. "precio 168",
+# "precio: Q168", "precio de 168") - se busca ESTO primero, antes de caer a
+# "el ultimo numero del mensaje", porque el nombre del producto puede traer
+# numeros propios que no son el precio (ej. "sarten para 4 huevos, precio
+# 168" - el "4" es parte del nombre, no del precio).
+_PATRON_PRECIO_EXPLICITO = re.compile(r"precio\s*(?:es|de)?\s*:?\s*q?\s*(\d+(?:[.,]\d+)?)", re.IGNORECASE)
+
+# El mensaje ENTERO es solo un numero (con o sin "Q" adelante) - ej. "168",
+# "Q168.50" - usado en videofoto_waiting_oferta para reconocer una
+# correccion de precio de una sola palabra sin confundirla con una respuesta
+# de oferta que tambien traiga numeros (ej. "2x1", "10% de descuento"), que
+# NO son solo un numero.
+_PATRON_PRECIO_BARE = re.compile(r"^q?\s*(\d+(?:[.,]\d+)?)\.?$", re.IGNORECASE)
+
+
+def _extraer_precio_producto(mensaje: str):
+    """Busca un precio en el mensaje: primero el numero que sigue a la
+    palabra "precio" (ver _PATRON_PRECIO_EXPLICITO); si no aparece esa
+    palabra, cae al ULTIMO numero del mensaje (el precio normalmente se dice
+    al final, ej. "licuadora oster 350" - y asi tampoco se confunde con un
+    numero que sea parte del nombre, ej. "sarten para 4 huevos 168" -> toma
+    168, no el 4). Retorna (precio, indice donde empieza el match) o
+    (None, None) si no encontro ningun numero."""
+    m = _PATRON_PRECIO_EXPLICITO.search(mensaje)
+    if m:
+        return float(m.group(1).replace(",", ".")), m.start()
+    matches = list(re.finditer(r"(\d+(?:[.,]\d+)?)", mensaje))
+    if matches:
+        m = matches[-1]
+        return float(m.group(1).replace(",", ".")), m.start()
+    return None, None
+
 
 def _resolver_plataforma_video(texto_plataforma: str):
     """Convierte la respuesta libre del usuario a la pregunta de plataforma en
@@ -983,19 +1015,21 @@ def send(message: str, context: dict = None, role: str = "admin") -> tuple:
     if step == "videofoto_waiting_datos_nuevo":
         # "No reconoci el producto. Como se llama y cual es el precio?" -
         # se piden ambos datos en una sola respuesta (ej. "licuadora oster
-        # 350"): el ultimo numero del mensaje se toma como precio, el resto
-        # (sin palabras de relleno como "precio"/"cuesta") como nombre. A
-        # proposito NO se crea un Producto nuevo en la base de datos con estos
-        # datos - solo se usan para armar el prompt del video (ver nota en
-        # BUGS_Y_FIXES.md).
-        m = re.search(r"(\d+(?:[.,]\d+)?)", message)
-        if not m:
+        # 350", o "sarten para 4 huevos aldura, precio 168"). El precio se
+        # busca con _extraer_precio_producto() - prioriza el numero que sigue
+        # a la palabra "precio" para no confundirlo con un numero que sea
+        # parte del nombre (el "4" de "4 huevos" en el ejemplo de arriba); el
+        # resto del mensaje (sin palabras de relleno como "precio"/"cuesta")
+        # es el nombre. A proposito NO se crea un Producto nuevo en la base
+        # de datos con estos datos - solo se usan para armar el prompt del
+        # video (ver nota en BUGS_Y_FIXES.md).
+        precio, idx = _extraer_precio_producto(message)
+        if precio is None:
             return "No pude identificar el precio. Escribe el nombre del producto y el precio (ej: licuadora oster 350).", context
-        precio = float(m.group(1).replace(",", "."))
-        nombre = message[:m.start()].strip()
-        nombre = re.sub(r"\b(precio|cuesta|vale|a|q|quetzales|es|de|por)\b\s*$", "", nombre, flags=re.IGNORECASE).strip(" ,.-")
+        nombre = message[:idx].strip()
+        nombre = re.sub(r"\b(precio|cuesta|vale|a|q|quetzales|es|de|por)\b\s*:?\s*$", "", nombre, flags=re.IGNORECASE).strip(" ,.-")
         if not nombre:
-            nombre = message[m.end():].strip(" ,.-Q")
+            nombre = message[idx:].strip(" ,.-Q")
         if not nombre:
             return "No pude identificar el nombre del producto. Escribe el nombre y el precio (ej: licuadora oster 350).", context
         context["vf_nombre"] = nombre.title()
@@ -1005,6 +1039,22 @@ def send(message: str, context: dict = None, role: str = "admin") -> tuple:
 
     if step == "videofoto_waiting_oferta":
         texto = message.strip()
+        # Correccion de precio a mitad de flujo: si el usuario escribe
+        # "precio 168" o directamente "168" (mensaje entero = solo un
+        # numero) en vez de responder la pregunta de oferta, se interpreta
+        # como una correccion del precio detectado antes, no como respuesta
+        # de oferta - se actualiza y se vuelve a preguntar oferta (el step no
+        # cambia). Se exige la palabra "precio" O que el mensaje sea SOLO un
+        # numero (no "contiene un numero en cualquier lado") para no
+        # confundir una oferta real que tambien trae numeros (ej. "2x1",
+        # "10% de descuento") con una correccion de precio.
+        es_correccion_precio = bool(_PATRON_PRECIO_EXPLICITO.search(texto)) or bool(_PATRON_PRECIO_BARE.match(texto))
+        if es_correccion_precio:
+            precio_nuevo, _ = _extraer_precio_producto(texto)
+            if precio_nuevo is not None:
+                context["vf_precio"] = precio_nuevo
+                return (f"Precio actualizado a Q{precio_nuevo:g}.\n"
+                        f"¿Hay oferta o promoción? (precio especial, descuento, 2x1, etc. o escribe 'no')"), context
         context["vf_oferta"] = "" if texto.lower() in ("no", "no.", "ninguna", "no hay") else texto
         context["step"] = "videofoto_waiting_plataforma"
         return "¿Para qué plataforma? (TikTok / Instagram Reels / Facebook / General)", context
