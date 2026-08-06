@@ -162,6 +162,7 @@
 <body>
 
 <form class="login-card" method="POST" action="{{ url_for('login', next=request.args.get('next')) }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <div class="logo-mark">Mi Cocina</div>
   <div class="logo-name">Centro de Control</div>
 

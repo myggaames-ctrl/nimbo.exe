@@ -9,10 +9,12 @@ import csv
 import io
 import re
 import secrets
+import time
 import unicodedata
 import logging
+from logging.handlers import RotatingFileHandler
 from functools import wraps
-from datetime import datetime
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 # Se carga .env ANTES de importar cualquier modulo propio (openclaw_bridge,
@@ -29,6 +31,10 @@ from flask_cors import CORS
 from flask_login import (
     LoginManager, login_user, logout_user, login_required, current_user
 )
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from flask_talisman import Talisman
+from flask_wtf.csrf import CSRFProtect
 from openclaw_bridge import send_to_openclaw, check_openclaw_status
 from core.nimbo import send as nimbo_send
 from services.inventory import InventoryService
@@ -59,6 +65,99 @@ logger = logging.getLogger("nimbo.setup")
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", secrets.token_hex(32))
 CORS(app)
+
+# ══════════════════════════════════════════════════════════
+# SEGURIDAD (rate limiting, headers HTTP, CSRF, logs, timeout de sesion)
+# ver BUGS_Y_FIXES.md, feature "seguridad robusta" 2026-08-06
+# ══════════════════════════════════════════════════════════
+
+# Sesion: expira a las 8 horas de INACTIVIDAD (no de creacion - se renueva en
+# cada request autenticado, ver _verificar_timeout_sesion() mas abajo).
+SESSION_TIMEOUT_SEGUNDOS = 8 * 60 * 60
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(seconds=SESSION_TIMEOUT_SEGUNDOS)
+
+# Rate limiting (Flask-Limiter): 100 requests/minuto por IP en cualquier ruta
+# /api/*. El resto (paginas HTML normales) queda exento del limite por
+# defecto via default_limits_exempt_when - /login tiene ademas su propio
+# limite mas estricto (5 intentos FALLIDOS/15min), declarado directo en la
+# ruta mas abajo. storage_uri="memory://": un solo proceso Flask (ver
+# nimbo-start.sh), no hace falta Redis ni ningun servicio externo - el
+# contador se resetea si el proceso se reinicia, aceptable para este tamano
+# de negocio.
+limiter = Limiter(
+    key_func=get_remote_address,
+    app=app,
+    default_limits=["100 per minute"],
+    default_limits_exempt_when=lambda: not request.path.startswith("/api/"),
+    storage_uri="memory://",
+)
+
+# Headers de seguridad (Flask-Talisman). force_https / strict_transport_security
+# (HSTS) / session_cookie_secure quedan en False a proposito: este entorno
+# (WSL2, desarrollo) sirve por HTTP plano, sin TLS. Si session_cookie_secure
+# quedara en True (el default de Talisman) el cookie de sesion se marca
+# "Secure" y el navegador deja de mandarlo sobre HTTP - el login "funciona"
+# (el POST redirige bien) pero la sesion nunca queda guardada, un bucle de
+# login infinito dificil de diagnosticar. Activar los 3 el dia que Nimbo se
+# sirva con HTTPS real en produccion. El CSP permite 'unsafe-inline' en
+# script-src/style-src porque todo el dashboard (templates/index.html y el
+# resto) depende de scripts y estilos inline (onclick="...", <style> con
+# @import) - sacar eso de forma segura (nonces, JS externo) es una reescritura
+# grande del frontend, fuera del alcance de este cambio. Los dominios extra
+# son exactamente los CDNs que ya usaba el proyecto antes de este cambio:
+# fonts.googleapis.com/fonts.gstatic.com (Google Fonts, @import en todas las
+# paginas), cdn.jsdelivr.net (Shepherd.js, el tour del dashboard) y
+# cdnjs.cloudflare.com (Chart.js, los graficos del panel Analisis). Ollama
+# (services/ollama_service.py) se llama desde el backend con requests, nunca
+# desde el navegador - no necesita entrar en el CSP para nada.
+talisman = Talisman(
+    app,
+    force_https=False,
+    strict_transport_security=False,
+    session_cookie_secure=False,
+    frame_options="DENY",
+    x_content_type_options=True,
+    referrer_policy="strict-origin-when-cross-origin",
+    content_security_policy={
+        "default-src": "'self'",
+        "script-src": ["'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net", "https://cdnjs.cloudflare.com"],
+        "style-src": ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com", "https://cdn.jsdelivr.net"],
+        "font-src": ["'self'", "https://fonts.gstatic.com"],
+        "img-src": ["'self'", "data:"],
+        "connect-src": "'self'",
+        "object-src": "'none'",
+    },
+)
+
+# CSRF (Flask-WTF). WTF_CSRF_CHECK_DEFAULT=False apaga la proteccion
+# automatica que CSRFProtect aplicaria por defecto a TODAS las rutas
+# POST/PUT/PATCH/DELETE del proyecto (incluidas las /api/*, que reciben JSON
+# de fetch() con autenticacion por cookie de sesion, no de un <form> con
+# token) - en vez de eso se aplica a mano, exentando /api/*, en
+# _csrf_protect_no_api() mas abajo. El limite de tiempo del token se iguala
+# al timeout de sesion (arriba) para que un formulario abierto varias horas
+# (dentro de la sesion de 8hs) no falle con "token CSRF expirado" antes de
+# que la sesion misma expire.
+app.config["WTF_CSRF_CHECK_DEFAULT"] = False
+app.config["WTF_CSRF_TIME_LIMIT"] = SESSION_TIMEOUT_SEGUNDOS
+csrf = CSRFProtect(app)
+
+# Logs de seguridad: archivo propio (nimbo.security), separado del logging
+# general de la app (nimbo.setup, logger de mas abajo) para no mezclar ruido
+# operativo con eventos de seguridad. Rotacion automatica a los 10MB
+# (RotatingFileHandler, 5 backups = hasta 60MB totales). logs/ esta en
+# .gitignore - estos archivos nunca se commitean (pueden contener IPs y
+# nombres de usuario reales).
+LOGS_DIR = os.path.join(BASE_DIR, "logs")
+os.makedirs(LOGS_DIR, exist_ok=True)
+security_logger = logging.getLogger("nimbo.security")
+security_logger.setLevel(logging.INFO)
+_security_handler = RotatingFileHandler(
+    os.path.join(LOGS_DIR, "security.log"), maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8"
+)
+_security_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+security_logger.addHandler(_security_handler)
+security_logger.propagate = False  # no duplicar estas lineas en la consola/log general
 
 # ── Correo (recuperación de contraseña) ────────────────────
 app.config["MAIL_SERVER"] = os.environ.get("MAIL_SERVER", "smtp.gmail.com")
@@ -111,9 +210,56 @@ def unauthorized():
     terminaba siguiendo la cadena de redirects /login -> /select-empresa y
     devolviendo la pagina HTML de seleccion de empresa con status 200 - el
     frontend intentaba hacer JSON.parse() sobre ese HTML y tronaba."""
+    security_logger.warning(f"ACCESO_DENEGADO ip={request.remote_addr} ruta={request.path}")
     if _es_ruta_api():
         return jsonify({"error": "Tu sesión expiró. Vuelve a iniciar sesión."}), 401
     return redirect(url_for("login", next=request.path))
+
+
+@app.before_request
+def _verificar_timeout_sesion():
+    """Cierra la sesion despues de SESSION_TIMEOUT_SEGUNDOS (8 horas, ver
+    arriba) de INACTIVIDAD. No alcanza con dejarselo al Max-Age de la cookie
+    (PERMANENT_SESSION_LIFETIME + session.permanent=True, que ya hacen que el
+    navegador descarte el cookie solo a las 8hs): una vez que el cookie
+    expiro asi, el servidor no tiene forma de distinguir "la sesion expiro
+    por inactividad" de "esta visita nunca tuvo sesion", y el pedido explicito
+    era mostrar el mensaje "Tu sesión expiró" especificamente en el primer
+    caso. Por eso se guarda ademas un timestamp de la ultima actividad DENTRO
+    de la sesion (ultima_actividad) y se chequea a mano en cada request -
+    mientras siga activo el timestamp se renueva (session.permanent=True
+    hace que Flask reenvie la cookie con el Max-Age corrido en cada
+    response, vía SESSION_REFRESH_EACH_REQUEST, que es True por defecto)."""
+    if not current_user.is_authenticated:
+        return
+    ahora = time.time()
+    ultima_actividad = session.get("ultima_actividad")
+    if ultima_actividad and (ahora - ultima_actividad) > SESSION_TIMEOUT_SEGUNDOS:
+        username = current_user.username
+        security_logger.info(f"SESION_EXPIRADA usuario={username} ip={request.remote_addr}")
+        logout_user()
+        session.clear()
+        if _es_ruta_api():
+            return jsonify({"error": "Tu sesión expiró. Vuelve a iniciar sesión."}), 401
+        return redirect(url_for("select_empresa", motivo="expirada"))
+    session["ultima_actividad"] = ahora
+    session.permanent = True
+
+
+@app.before_request
+def _csrf_protect_no_api():
+    """CSRF manual (WTF_CSRF_CHECK_DEFAULT=False, ver arriba) - protege las
+    paginas normales con <form method="POST"> reales (login, forgot/reset
+    password, select-empresa, el wizard de /setup) pero NO las rutas /api/*:
+    esas reciben JSON (Content-Type: application/json, que un <form> nunca
+    puede generar sin JavaScript) y ya dependen de la cookie de sesion +
+    CORS sin credenciales (ver CORS(app) mas arriba, sin
+    supports_credentials=True) - un sitio externo no puede lograr que el
+    navegador mande esa cookie en una request cross-origin, asi que exigir
+    ademas un token CSRF ahi no suma proteccion real, y rompería cualquier
+    integracion legitima que llame a la API con su propia sesion."""
+    if not request.path.startswith("/api/"):
+        csrf.protect()
 
 
 # ── Onboarding (primera instalación) ───────────────────────
@@ -216,6 +362,10 @@ def admin_required(f):
     @login_required
     def wrapper(*args, **kwargs):
         if not current_user.is_admin:
+            security_logger.warning(
+                f"ACCESO_DENEGADO ip={request.remote_addr} ruta={request.path} "
+                f"usuario={current_user.username} motivo=requiere_admin"
+            )
             return jsonify({"error": "Acceso restringido a administrador"}), 403
         return f(*args, **kwargs)
     return wrapper
@@ -226,9 +376,31 @@ def admin_o_tecnico_required(f):
     @login_required
     def wrapper(*args, **kwargs):
         if not (current_user.is_admin or current_user.is_tecnico):
+            security_logger.warning(
+                f"ACCESO_DENEGADO ip={request.remote_addr} ruta={request.path} "
+                f"usuario={current_user.username} motivo=requiere_admin_o_tecnico"
+            )
             return jsonify({"error": "Acceso restringido a administrador o tecnico"}), 403
         return f(*args, **kwargs)
     return wrapper
+
+
+def _sanitizar_texto(valor, max_len=200):
+    """Primera linea de defensa para cualquier string que venga de un
+    formulario/JSON antes de guardarlo: recorta espacios y limita la
+    longitud (evita que un campo de texto libre - nombre, codigo, etc. -
+    acepte un valor absurdamente largo sin ningun limite)."""
+    return str(valor or "").strip()[:max_len]
+
+
+def _validar_numero(valor, minimo=0):
+    """Castea a float y valida que sea >= minimo. Lanza ValueError si no es
+    un numero valido o esta fuera de rango - el caller lo atrapa junto con
+    el resto de su validacion (ver db_add_product/db_edit_product)."""
+    numero = float(valor)
+    if numero < minimo:
+        raise ValueError(f"El valor no puede ser menor a {minimo}")
+    return numero
 
 inventory = InventoryService()
 engine = ActionEngine()
@@ -526,6 +698,15 @@ def setup_demo_paso(paso):
 
 
 @app.route("/login", methods=["GET", "POST"])
+@limiter.limit(
+    "5 per 15 minutes",
+    methods=["POST"],
+    # Solo cuenta contra el limite si el login termino en 401 (ver abajo,
+    # status explicito en la respuesta de error) - un usuario que se
+    # equivoca 4 veces y despues entra bien no queda bloqueado por eso.
+    deduct_when=lambda response: response.status_code == 401,
+    error_message="Demasiados intentos fallidos. Intenta de nuevo en 15 minutos.",
+)
 def login():
     if not session.get("empresa_slug"):
         return redirect(url_for("select_empresa"))
@@ -540,6 +721,8 @@ def login():
         user = verify_login(username, password)
         if user:
             login_user(user)
+            session.permanent = True
+            session["ultima_actividad"] = time.time()
             # Se re-guarda la empresa en session al loguear (ademas de ya
             # estar ahi desde /select-empresa) para dejar tambien empresa_db
             # cacheado en session, tal como pide el plan de migracion.
@@ -547,11 +730,15 @@ def login():
             if empresa:
                 session["empresa_slug"] = empresa["Slug"]
                 session["empresa_db"] = empresa["DbPath"]
+            security_logger.info(
+                f"LOGIN_OK usuario={username} empresa={session.get('empresa_slug')} ip={request.remote_addr}"
+            )
             next_page = request.args.get("next")
             return redirect(next_page or url_for("index"))
         error = "Usuario o contraseña incorrectos"
+        security_logger.warning(f"LOGIN_FAIL usuario_intentado={username} ip={request.remote_addr}")
 
-    return render_template("login.html", error=error)
+    return render_template("login.html", error=error), (401 if error else 200)
 
 
 @app.route("/select-empresa", methods=["GET", "POST"])
@@ -565,7 +752,10 @@ def select_empresa():
         session["empresa_slug"] = empresa["Slug"]
         session["empresa_db"] = empresa["DbPath"]
         return redirect(url_for("login"))
-    return render_template("select_empresa.html", empresas=listar_empresas(), error=None)
+    # ?motivo=expirada: lo agrega _verificar_timeout_sesion() al redirigir aca
+    # despues de cerrar una sesion por 8 horas de inactividad (ver mas arriba).
+    error = "Tu sesión expiró. Vuelve a iniciar sesión." if request.args.get("motivo") == "expirada" else None
+    return render_template("select_empresa.html", empresas=listar_empresas(), error=error)
 
 
 @app.route("/register-empresa")
@@ -1298,12 +1488,21 @@ def db_customers():
 @login_required
 def db_add_product():
     from database.nimbo_db import nimbo_connect
-    data = request.json
+    data = request.json or {}
+    nombre = _sanitizar_texto(data.get("Name"), 200)
+    if not nombre:
+        return jsonify({"error": "El nombre es obligatorio"}), 400
+    codigo = _sanitizar_texto(data.get("Code"), 50)
+    try:
+        precio = _validar_numero(data.get("Price"))
+        costo = _validar_numero(data.get("Cost"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Precio o costo invalido"}), 400
     try:
         conn = nimbo_connect()
         cur = conn.cursor()
         cur.execute("INSERT INTO Producto (Nombre, Codigo, Precio, Costo, Activo) VALUES (?, ?, ?, ?, 1)",
-            (data["Name"], data["Code"], data["Price"], data["Cost"]))
+            (nombre, codigo, precio, costo))
         conn.commit()
         conn.close()
         return jsonify({"ok": True, "id": cur.lastrowid})
@@ -1314,12 +1513,21 @@ def db_add_product():
 @login_required
 def db_edit_product(pid):
     from database.nimbo_db import nimbo_connect
-    data = request.json
+    data = request.json or {}
+    nombre = _sanitizar_texto(data.get("Name"), 200)
+    if not nombre:
+        return jsonify({"error": "El nombre es obligatorio"}), 400
+    codigo = _sanitizar_texto(data.get("Code"), 50)
+    try:
+        precio = _validar_numero(data.get("Price"))
+        costo = _validar_numero(data.get("Cost"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Precio o costo invalido"}), 400
     try:
         conn = nimbo_connect()
         cur = conn.cursor()
         cur.execute("UPDATE Producto SET Nombre=?, Codigo=?, Precio=?, Costo=? WHERE Id=?",
-            (data["Name"], data["Code"], data["Price"], data["Cost"], pid))
+            (nombre, codigo, precio, costo, pid))
         conn.commit()
         conn.close()
         return jsonify({"ok": True})
@@ -1730,7 +1938,18 @@ def db_set_stock_minimo():
 @login_required
 def download_file(filename):
     from flask import send_file
-    filepath = os.path.join(BASE_DIR, filename)
+    # Validacion de path traversal (bug real encontrado en la auditoria de
+    # seguridad, ver BUGS_Y_FIXES.md): sin esto, cualquier usuario logueado
+    # (no hace falta ser admin) podia pedir /api/download/../../../.env o
+    # /api/download//etc/passwd - os.path.join() deja pasar un ".." o una
+    # ruta absoluta en filename tal cual (incluso descarta BASE_DIR por
+    # completo si filename empieza con "/", comportamiento documentado de
+    # os.path.join), asi que nada evitaba servir cualquier archivo legible
+    # por el proceso de Flask. Se normaliza la ruta resuelta y se verifica
+    # que siga estando DENTRO de BASE_DIR antes de servir nada.
+    filepath = os.path.normpath(os.path.join(BASE_DIR, filename))
+    if not filepath.startswith(BASE_DIR + os.sep):
+        return jsonify({"error": "Archivo no encontrado"}), 404
     if os.path.exists(filepath):
         return send_file(filepath, as_attachment=True)
     return jsonify({"error": "Archivo no encontrado"}), 404

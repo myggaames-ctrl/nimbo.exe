@@ -146,6 +146,7 @@
 
   {% if empresas %}
   <form method="POST" action="{{ url_for('select_empresa') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="empresa-list">
       {% for empresa in empresas %}
       <div class="empresa-item">

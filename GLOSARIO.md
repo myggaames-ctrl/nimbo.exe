@@ -914,3 +914,102 @@ Nimbo entienda el formato esperado sin tener que adivinarlo.
 **Ejemplo de la vida real:** es como el formulario de muestra "ya lleno" que te dan de
 ejemplo antes de entregarte el formulario en blanco - ver un caso resuelto ayuda a
 entender qué se espera en cada casilla.
+
+---
+
+### rate limiting (límite de solicitudes)
+**Qué es:** una regla que limita cuántas veces se puede llamar a una misma ruta (URL)
+en un período de tiempo, contando por dirección IP (la "dirección" de internet desde
+donde llega cada visitante). Pasado el límite, el servidor responde con el código
+`429 Too Many Requests` en vez de procesar la solicitud.
+
+**Para qué sirve en Nimbo:** `/login` acepta como máximo 5 intentos fallidos por IP
+cada 15 minutos (Flask-Limiter, `app.py`) - así alguien no puede probar miles de
+contraseñas seguidas contra la cuenta de un usuario real ("fuerza bruta"). Todas las
+rutas `/api/*` además tienen un límite general de 100 solicitudes por minuto por IP,
+para que un script que llame a la API sin parar no sature el servidor.
+
+**Ejemplo de la vida real:** es como un guardia de seguridad que deja pasar a alguien
+que se equivocó de PIN un par de veces, pero le pide esperar si sigue intentando una y
+otra vez sin parar - una persona normal nunca llega a ese límite, solo alguien
+probando contraseñas al voleo.
+
+---
+
+### CSRF (Cross-Site Request Forgery, falsificación de solicitud entre sitios)
+**Qué es:** un ataque donde una página web MALICIOSA hace que tu navegador mande, sin
+que te des cuenta, una solicitud a OTRO sitio donde ya tenés sesión iniciada (por
+ejemplo Nimbo) - el navegador manda tu cookie de sesión automáticamente, así que el
+sitio de destino no puede distinguir esa solicitud de una que hiciste vos a propósito.
+La defensa es un "token CSRF": un código secreto que solo el formulario legítimo de
+Nimbo conoce: si la solicitud no lo trae, se rechaza.
+
+**Para qué sirve en Nimbo:** cada formulario que realmente se envía como el navegador
+manda un `<form>` normal (login, seleccionar empresa, recuperar/cambiar contraseña, el
+asistente de instalación `/setup`) incluye un campo oculto
+`<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">` (Flask-WTF). Las
+rutas `/api/*` que reciben JSON desde el propio dashboard (fetch()) quedan exentas -
+un sitio externo no puede lograr que el navegador mande la cookie de sesión en ese
+tipo de solicitud (Nimbo usa `CORS(app)` en `app.py` sin habilitar credenciales
+cross-origin), así que ahí un token adicional no suma protección real.
+
+**Ejemplo de la vida real:** es como si alguien te hiciera firmar un cheque en blanco
+sin que te dieras cuenta de qué estabas firmando, aprovechando que ya tenías la
+chequera abierta - el token CSRF es como un sello único que solo el banco (Nimbo)
+conoce, así un cheque fotocopiado desde otro lado nunca pasa.
+
+---
+
+### XSS (Cross-Site Scripting)
+**Qué es:** un ataque donde alguien logra que su propio código JavaScript se ejecute
+dentro de la página de OTRA persona - por ejemplo, guardando un `<script>` malicioso
+en un campo de texto que después se muestra sin filtrar en el navegador de otro
+usuario.
+
+**Para qué sirve en Nimbo:** es la razón por la que se corrigió un bug real de esta
+naturaleza en la importación de Excel (escapar HTML en el preview/resultado, ver
+`BUGS_Y_FIXES.md`, 2026-08-05) y una de las cosas que el CSP (ver ese término más
+abajo) ayuda a contener, aunque no reemplaza escapar bien cada dato antes de mostrarlo.
+
+**Ejemplo de la vida real:** es como si alguien pudiera escribir en el cartel de
+"próximos turnos" de una clínica un mensaje que en realidad ejecuta una orden para
+todos los que lo lean, en vez de solo mostrar texto - el cartel debería mostrar
+cualquier texto tal cual, nunca "obedecerlo".
+
+---
+
+### CSP (Content Security Policy, política de seguridad de contenido)
+**Qué es:** un header HTTP que le dice al navegador de qué orígenes (dominios) tiene
+permitido cargar scripts, estilos, fuentes e imágenes para una página - cualquier cosa
+fuera de esa lista se bloquea, aunque un atacante lograra inyectarla (ver XSS arriba).
+
+**Para qué sirve en Nimbo:** Flask-Talisman (`app.py`) manda un CSP en cada respuesta
+que permite `'self'` (el propio Nimbo) más los CDNs que el dashboard ya usaba antes de
+este cambio: `fonts.googleapis.com`/`fonts.gstatic.com` (Google Fonts),
+`cdn.jsdelivr.net` (Shepherd.js, el tour del dashboard) y `cdnjs.cloudflare.com`
+(Chart.js, los gráficos de Análisis) - cualquier otro origen queda bloqueado por el
+navegador. Incluye `'unsafe-inline'` en scripts/estilos porque el dashboard usa mucho
+`onclick="..."` y `<style>` inline en el HTML - una limitación conocida, ver
+`BUGS_Y_FIXES.md`.
+
+**Ejemplo de la vida real:** es como una lista de proveedores autorizados para una
+obra - aunque alguien intente colar materiales de otro lado, el control de acceso los
+rechaza en la puerta, vengan de quien vengan.
+
+---
+
+### HSTS (HTTP Strict Transport Security)
+**Qué es:** un header HTTP que le dice al navegador "de ahora en adelante, conectate a
+este sitio SIEMPRE por HTTPS (la versión cifrada), nunca por HTTP plano, aunque
+alguien te pase un link http://" - solo tiene sentido si el sitio de verdad se sirve
+por HTTPS.
+
+**Para qué sirve en Nimbo:** por ahora está DESACTIVADO (`strict_transport_security=False`
+en la configuración de Flask-Talisman, `app.py`) porque este entorno (WSL2, desarrollo)
+todavía sirve por HTTP plano, sin certificado TLS - activarlo ahora rompería el acceso
+normal. Queda documentado para activarlo el día que Nimbo se sirva con HTTPS real en
+producción.
+
+**Ejemplo de la vida real:** es como decirle a alguien "de ahora en más, entrá siempre
+por la puerta con guardia de seguridad, nunca por la de atrás" - no tiene sentido dar
+esa instrucción si todavía no existe la puerta con guardia.

@@ -377,6 +377,7 @@
     <div class="subtitle">Es la primera vez que se ejecuta el sistema. Empecemos configurando los datos basicos de tu negocio.</div>
 
     <form method="{{ 'GET' if demo else 'POST' }}" action="{{ next_action(1) }}">
+      {% if not demo %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
       <div class="input-group">
         <label class="input-label">Nombre del negocio</label>
         <input class="input" type="text" name="negocio_nombre" placeholder="Ej: Mi Cocina Electrodomésticos" required autofocus>
@@ -453,6 +454,7 @@
     <div class="subtitle">Esta cuenta tiene acceso total al sistema. Guarda bien la contraseña.</div>
 
     <form method="{{ 'GET' if demo else 'POST' }}" action="{{ next_action(2) }}">
+      {% if not demo %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
       <div class="input-group">
         <label class="input-label">Nombre del dueño</label>
         <input class="input" type="text" name="dueno_nombre" placeholder="Ej: Victor Paxtor" required autofocus>
@@ -487,6 +489,7 @@
     <div class="subtitle">Estos datos los usa Nimbo para calcular impuestos, comisiones y margenes.</div>
 
     <form method="{{ 'GET' if demo else 'POST' }}" action="{{ next_action(3) }}">
+      {% if not demo %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
       <div class="input-group">
         <label class="input-label">Moneda</label>
         <input class="input" type="text" name="moneda" value="Q" maxlength="4" required autofocus>
@@ -552,6 +555,7 @@
     <div class="subtitle">Nimbo usa estos datos para los recordatorios y reportes del dia.</div>
 
     <form method="{{ 'GET' if demo else 'POST' }}" action="{{ next_action(4) }}">
+      {% if not demo %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
       <div class="input-group">
         <label class="input-label">Días laborales</label>
         <div class="dias-grid">
@@ -592,6 +596,7 @@
     <div class="subtitle">Opcional. Define el fondo inicial de efectivo para dar cambio, o sáltate este paso.</div>
 
     <form method="{{ 'GET' if demo else 'POST' }}" action="{{ next_action(5) }}">
+      {% if not demo %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
       <div class="input-group">
         <div class="label-with-tip">
           <label class="input-label">Fondo de caja</label>
@@ -612,6 +617,7 @@
     <div class="subtitle">Opcional. Crea una cuenta de empleado o tecnico, o sáltate este paso.</div>
 
     <form method="{{ 'GET' if demo else 'POST' }}" action="{{ next_action(6) }}" onsubmit="return validarEmpleadoPaso6(event)">
+      {% if not demo %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
       <div class="input-group">
         <label class="input-label">Nombre completo</label>
         <input class="input" type="text" name="empleado_nombre" id="empleado_nombre" placeholder="Ej: Ana Gómez" autofocus>
@@ -773,6 +779,7 @@
     <button class="btn-primary" type="button" onclick="window.location='{{ url_for('login') }}'">Volver al login →</button>
     {% else %}
     <form method="POST" action="{{ url_for('setup_paso', paso=7) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button class="btn-primary" type="submit">Comenzar a usar Nimbo →</button>
     </form>
     {% endif %}

@@ -221,8 +221,16 @@ def listar_tecnicos():
 def crear_usuario(username, password, nombre, rol, telefono="", permisos=None, db_path=None):
     if rol not in ROLES:
         raise ValueError("Rol invalido")
+    username = (username or "").strip()[:80]
+    nombre = (nombre or "").strip()[:120]
+    telefono = (telefono or "").strip()[:30]
     if not username or not password:
         raise ValueError("Usuario y contrasena son obligatorios")
+    if len(password) > 200:
+        # Limite generoso (nadie escribe una contrasena de 200 caracteres a
+        # mano) solo para no mandarle un string arbitrariamente largo al
+        # hashing de werkzeug - no es una restriccion real de uso normal.
+        raise ValueError("La contraseña es demasiado larga")
     if permisos is None:
         permisos = PERMISOS_DEFAULT_POR_ROL.get(rol, [])
     permisos = normalizar_permisos(permisos)
@@ -230,7 +238,7 @@ def crear_usuario(username, password, nombre, rol, telefono="", permisos=None, d
     cur = conn.cursor()
     cur.execute(
         "INSERT INTO Usuario (Username, PasswordHash, Nombre, Rol, Activo, Telefono, Permisos) VALUES (?,?,?,?,1,?,?)",
-        (username.strip(), generate_password_hash(password), nombre, rol, telefono.strip(), json.dumps(permisos))
+        (username, generate_password_hash(password), nombre, rol, telefono, json.dumps(permisos))
     )
     conn.commit()
     conn.close()

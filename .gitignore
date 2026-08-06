@@ -7,3 +7,4 @@ static/fotos/
 static/fotos_servicio/
 .claude/settings.local.json.tmp.*
 .claude/settings.local.json
+logs/

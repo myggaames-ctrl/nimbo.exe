@@ -1894,3 +1894,151 @@ pedido, es un archivo de datos, no código.
 `.claude/skills/verificar-esquema-empresa/scripts/verificar_esquema.py`,
 `.claude/skills/verificar-esquema-empresa/SKILL.md`,
 `.claude/agents/schema-consistency-reviewer.md`.
+
+---
+
+## [2026-08-06] Seguridad robusta: rate limiting, headers, CSRF, logs, timeout de sesión, validación de inputs
+
+**Contexto:** implementación de las 6 capas de seguridad pedidas (Flask-Limiter,
+Flask-Talisman, Flask-WTF, logging propio, timeout de sesión, validación de inputs),
+en ese orden. De paso, la auditoría de validación de inputs encontró y corrigió una
+**vulnerabilidad real de path traversal** en `/api/download/<path:filename>`.
+
+**1. Rate limiting (Flask-Limiter, instalado con `pip3 install --break-system-packages`
+- mismo criterio que el resto de dependencias del proyecto, no hay `venv`):**
+- `/login`: máximo 5 intentos **fallidos** por IP cada 15 minutos
+  (`@limiter.limit("5 per 15 minutes", methods=["POST"], deduct_when=lambda response:
+  response.status_code == 401, ...)`). Solo cuenta si la respuesta es 401 - un usuario
+  que se equivoca varias veces y después entra bien no queda bloqueado. Requirió que
+  `login()` devuelva explícitamente status `401` en el caso de error (antes devolvía
+  `200` tanto en éxito de renderizado como en fallo de credenciales, sin forma de
+  distinguirlos por status code).
+- Cualquier ruta `/api/*`: máximo 100 requests/minuto por IP
+  (`default_limits=["100 per minute"]` + `default_limits_exempt_when=lambda: not
+  request.path.startswith("/api/")` - el resto de rutas, páginas HTML normales, queda
+  exento del límite general; `/login` tiene el suyo propio, declarado aparte).
+- Al superarse cualquier límite, Flask-Limiter lanza `RateLimitExceeded`, que **ya es**
+  una `HTTPException` (subclase de `TooManyRequests`) - el `@app.errorhandler(HTTPException)`
+  que ya existía en el proyecto (`error_json_para_api`) la maneja automáticamente:
+  JSON en `/api/*`, HTML en el resto. No hizo falta un error handler nuevo.
+- Almacenamiento `memory://` (un solo proceso Flask, sin Redis).
+
+**2. Headers de seguridad (Flask-Talisman):** CSP, `X-Frame-Options: DENY`,
+`X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`.
+`force_https`/`strict_transport_security`/`session_cookie_secure` en `False` a
+propósito - este entorno (WSL2, desarrollo) sirve por HTTP plano; si
+`session_cookie_secure` hubiera quedado en `True` (el default de Talisman), el cookie
+de sesión se marca `Secure` y el navegador deja de mandarlo sobre HTTP - el login
+"funciona" (el POST redirige bien) pero la sesión nunca queda guardada, un bucle de
+login infinito difícil de diagnosticar. El CSP permite `'unsafe-inline'` en
+script-src/style-src (el dashboard usa `onclick="..."` y `<style>` inline en toda la
+UI - sacarlo es una reescritura grande del frontend, fuera de alcance) más los CDNs
+que el proyecto ya usaba: `fonts.googleapis.com`/`fonts.gstatic.com` (Google Fonts),
+`cdn.jsdelivr.net` (Shepherd.js) y `cdnjs.cloudflare.com` (Chart.js). Ollama
+(`services/ollama_service.py`) se llama desde el backend con `requests`, nunca desde
+el navegador - no necesitaba entrar en el CSP.
+
+**3. CSRF (Flask-WTF):** `WTF_CSRF_CHECK_DEFAULT=False` (apaga la protección
+automática de CSRFProtect sobre TODAS las rutas POST/PUT/PATCH/DELETE, incluidas
+`/api/*`) + un `before_request` propio (`_csrf_protect_no_api`) que llama a
+`csrf.protect()` a mano, exceptuando `/api/*`. `/api/*` recibe JSON (que un `<form>`
+nunca puede generar sin JavaScript) y ya depende de la cookie de sesión + `CORS(app)`
+sin credenciales habilitadas - un sitio externo no puede lograr que el navegador mande
+esa cookie en una request cross-origin, así que un token adicional ahí no suma
+protección real. Se auditaron los 5 nombres del pedido original (login,
+register_empresa, diagnostico, configuracion, cambiar_password) contra el código real:
+**solo `/login` es un `<form method="POST">` clásico** - register_empresa, diagnostico,
+configuracion y cambiar_password ya son fetch()+JSON contra `/api/*` (correctamente
+exentos, no necesitan token). En cambio se encontraron 4 formularios clásicos reales
+que el pedido original NO nombraba - `forgot_password.html`, `reset_password.html`,
+`select_empresa.html` y las 7 vistas de `setup.html` (el wizard de onboarding, 6 de
+ellas condicionales a `{% if not demo %}` porque en modo demo pasan a GET) - se les
+agregó token a los 5 nombrados y a estos 4 también, porque dejarlos sin proteger
+hubiera sido un hueco real de seguridad contradiciendo "seguridad robusta". `WTF_CSRF_TIME_LIMIT`
+se igualó al timeout de sesión (8h) para que un formulario abierto varias horas no
+falle con "token expirado" antes de que la sesión misma expire.
+
+**4. Logs de seguridad:** logger `nimbo.security` propio (separado del logging general
+de la app), `RotatingFileHandler` a `logs/security.log` (10MB, 5 backups). Eventos:
+`LOGIN_OK` (usuario, empresa, IP), `LOGIN_FAIL` (usuario intentado, IP), `ACCESO_DENEGADO`
+(IP, ruta - desde `unauthorized_handler`, `admin_required` y `admin_o_tecnico_required`)
+y `SESION_EXPIRADA` (usuario, IP). `logs/` se agregó a `.gitignore` - nunca se commitea
+(los logs tienen IPs y usernames reales).
+
+**5. Timeout de sesión (8 horas de inactividad):** en vez de confiar solo en el
+`Max-Age` de la cookie (`PERMANENT_SESSION_LIFETIME` + `session.permanent=True`), se
+guarda un timestamp `ultima_actividad` DENTRO de la sesión y se valida a mano en cada
+request (`_verificar_timeout_sesion`, `before_request`) - así el servidor puede
+distinguir "la sesión expiró por inactividad" de "esta visita nunca tuvo sesión" y
+mostrar el mensaje correcto solo en el primer caso (el `Max-Age` de la cookie por sí
+solo no permite esa distinción: una vez vencida, el navegador simplemente deja de
+mandarla, sin rastro de que alguna vez existió). Al expirar: `logout_user()` +
+`session.clear()` + redirect a `/select-empresa?motivo=expirada` (HTML) o `401` JSON
+(`/api/*`). `select_empresa()` ahora muestra "Tu sesión expiró. Vuelve a iniciar
+sesión." cuando `motivo=expirada` está en la query string, reusando el mismo bloque
+`error` que ya existía en la plantilla.
+
+**6. Validación de inputs:**
+- **Auditoría de SQL injection:** se revisó cada `cur.execute(f"...")` del proyecto
+  (7 en `database/nimbo_db.py`, ninguno en `app.py`/`core/`/`tools/`/`services/` después
+  de la limpieza de Aronium del día anterior). Los 7 son seguros: en todos los casos el
+  f-string solo interpola nombres de columna/fragmentos SQL de un **set fijo y
+  hardcodeado en Python** (listas/dicts literales, nunca texto de request), y los
+  VALORES reales siempre van por parámetros `?`. No se encontró concatenación real de
+  input de usuario en ninguna query. La consola SQL admin-only
+  (`/api/inventory/query`) sigue siendo una excepción intencional (todo el punto de la
+  ruta es ejecutar SQL arbitrario) - ya restringida a `SELECT` y a `@admin_required`
+  desde antes.
+- **Vulnerabilidad real encontrada y corregida - path traversal en
+  `/api/download/<path:filename>`:** la ruta hacía `os.path.join(BASE_DIR, filename)` y
+  servía el archivo si existía, sin validar que la ruta resultante siguiera dentro de
+  `BASE_DIR`. Cualquier usuario logueado (no hacía falta ser admin, solo
+  `@login_required`) podía pedir `/api/download/../../../../.env` o
+  `/api/download//etc/passwd` (`os.path.join` descarta el primer argumento por
+  completo si el segundo es una ruta absoluta - ambos vectores quedaban abiertos) y
+  leer cualquier archivo legible por el proceso de Flask: `.env` (secrets), cualquier
+  `nimbo.db` de cualquier empresa, `nimbo_master.db`, etc. Se corrigió normalizando la
+  ruta resuelta (`os.path.normpath`) y verificando que siga empezando con
+  `BASE_DIR + os.sep` antes de servir nada - probado en vivo: `../.env` y
+  `../../../../etc/passwd` ahora dan 404, un archivo legítimo inexistente sigue dando
+  el mismo 404 de siempre (mismo comportamiento observable, sin romper nada real).
+- **Validación de tipos/longitud:** se agregaron helpers genéricos `_sanitizar_texto()`
+  (strip + longitud máxima) y `_validar_numero()` (cast a float + mínimo) en `app.py`,
+  aplicados a `/api/db/products/add` y `/api/db/products/edit` (antes insertaban
+  `Name`/`Code`/`Price`/`Cost` del JSON tal cual, sin `strip()`, sin límite de longitud
+  y sin validar que Price/Cost fueran números reales - probado en vivo: precio no
+  numérico, nombre vacío/solo espacios y precio negativo ahora se rechazan con 400;
+  un producto válido con espacios de sobra se crea con el nombre ya recortado).
+  `core/auth.py crear_usuario()` se reforzó con límites de longitud
+  (username 80, nombre 120, teléfono 30, contraseña 200) y `.strip()` completo (antes
+  solo recortaba username/telefono, no nombre). El resto de endpoints de dinero
+  revisados (`/api/reportes/meta-semanal`, `/api/caja/carrito/agregar`,
+  `/api/caja/retirar`) ya validaban tipo con `try/except float(...)` desde antes - no
+  se tocaron. Dado el tamaño del proyecto (150+ rutas), esta no fue una auditoría
+  exhaustiva de cada endpoint uno por uno - se priorizaron los de mayor riesgo (datos
+  financieros, creación de usuarios, la ruta de descarga de archivos) más los que el
+  propio pedido citó como ejemplo (IDs enteros, precios numéricos).
+
+**Verificación:** todo se probó en vivo contra el servidor real (que ya tenía el
+código nuevo cargado vía el auto-reload de Werkzeug en modo debug, sin reiniciar el
+proceso) con un flujo completo `/select-empresa` → `/login` (con token CSRF real,
+extraído del HTML) → dashboard, todos con status esperado. Se verificaron por
+separado: los 3 escenarios de rate limiting (5 fallos → 429 HTML con mensaje en
+español; 100 requests/min a `/api/status` → 429 JSON en el request 101; login
+exitoso después de fallos no cuenta contra el límite), los headers de Talisman
+(`X-Frame-Options`, `X-Content-Type-Options`, CSP, `Referrer-Policy` presentes;
+`Strict-Transport-Security` correctamente ausente), el timeout de sesión con
+`app.test_client()` y `session_transaction()` (sesión de 9hs → expira y limpia;
+sesión de 2hs → sigue viva y renueva el timestamp; caso `/api/*` → 401 JSON), y la
+corrección del path traversal. `python3 -m py_compile` limpio en los 2 archivos
+Python tocados. El producto de prueba creado durante la verificación se borró de la
+base real de Mi Cocina al terminar. `verificar_esquema.py` reportó "Todo consistente."
+después de todos los cambios - ninguno tocó el esquema de tablas.
+
+**Archivos modificados:** `app.py`, `core/auth.py`, `.gitignore`, `GLOSARIO.md`
+(5 términos nuevos: rate limiting, CSRF, XSS, CSP, HSTS),
+`templates/login.html`, `templates/forgot_password.html`, `templates/reset_password.html`,
+`templates/select_empresa.html`, `templates/setup.html`, `mapa_nimbo.html` (regenerado
+con `actualizar_mapa.sh`). Dependencias nuevas (pip, sin `requirements.txt` en el
+proyecto - mismo criterio que el resto de dependencias): `flask-limiter`,
+`flask-talisman`, `flask-wtf`.
