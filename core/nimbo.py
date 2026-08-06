@@ -265,14 +265,20 @@ def _intentar_detectar(message: str, role: str, context: dict, contexto_historia
             # VIDEO_INICIO: arriba (ese es "video de [producto ya escrito]" por
             # texto; este es "aqui esta la foto de un producto" - preguntas y
             # steps distintos, ver videofoto_waiting_* mas abajo en send()).
-            partes = str(result).replace("VIDEOFOTO_ENCONTRADO_INICIO:", "").split("|")
-            producto_id, nombre, precio, foto = partes[0], partes[1], partes[2], partes[3] if len(partes) > 3 else ""
+            # split("|", 4): el 5to campo (descripcion_visual, texto libre
+            # armado por un modelo de IA) puede traer sus propios "|" - se le
+            # deja el resto del string entero sin volver a partirlo.
+            partes = str(result).replace("VIDEOFOTO_ENCONTRADO_INICIO:", "").split("|", 4)
+            producto_id, nombre, precio = partes[0], partes[1], partes[2]
+            foto = partes[3] if len(partes) > 3 else ""
+            descripcion_visual = partes[4] if len(partes) > 4 else ""
             context = {
                 "step": "videofoto_waiting_confirmar",
                 "vf_producto_id": producto_id,
                 "vf_nombre": nombre,
                 "vf_precio": precio,
                 "vf_foto": foto,
+                "vf_descripcion_visual": descripcion_visual,
             }
             return f"Encontré {nombre}, precio Q{precio}. ¿Quieres que genere un video? (si/no)", context
 
@@ -282,8 +288,12 @@ def _intentar_detectar(message: str, role: str, context: dict, contexto_historia
             # vez de crear el producto solo (ver nota de diseno en BUGS_Y_FIXES.md:
             # a proposito NO se crea un Producto nuevo en la base de datos como
             # efecto secundario de este flujo, solo se usan para armar el video).
-            foto = str(result).replace("VIDEOFOTO_NUEVO_INICIO:", "").strip()
-            context = {"step": "videofoto_waiting_datos_nuevo", "vf_foto": foto}
+            # split("|", 1): igual que arriba, descripcion_visual puede traer
+            # sus propios "|".
+            partes = str(result).replace("VIDEOFOTO_NUEVO_INICIO:", "").split("|", 1)
+            foto = partes[0].strip()
+            descripcion_visual = partes[1].strip() if len(partes) > 1 else ""
+            context = {"step": "videofoto_waiting_datos_nuevo", "vf_foto": foto, "vf_descripcion_visual": descripcion_visual}
             return "No reconocí el producto. ¿Cómo se llama y cuál es el precio? (ej: licuadora oster 350)", context
 
         if str(result).startswith("SET_DESC_INICIO:"):
@@ -757,6 +767,26 @@ def _extraer_precio_producto(mensaje: str):
     return None, None
 
 
+def _preguntar_descripcion_visual_o_oferta(context: dict, prefijo: str = ""):
+    """Se llama justo despues de confirmar el producto (tanto si ya existia
+    en el inventario como si se acaba de describir a mano). Si
+    tools/contenido_tool.py video_desde_foto_tool logro un analisis visual de
+    la foto (vf_descripcion_visual, con llava), se lo muestra al usuario para
+    que lo confirme o corrija ANTES de seguir (step
+    videofoto_waiting_descripcion_visual) - asi un color/material mal
+    identificado no llega arrastrado hasta el prompt final de Veo 3. Si no
+    hay descripcion visual (llava no esta pulled, o no se pudo analizar), se
+    salta esa pregunta de una vez y sigue directo con oferta, igual que
+    antes de este cambio."""
+    descripcion_visual = context.get("vf_descripcion_visual", "")
+    if descripcion_visual:
+        context["step"] = "videofoto_waiting_descripcion_visual"
+        return (f"{prefijo}Vi en la foto: {descripcion_visual}\n"
+                f"¿Es correcto o quieres corregir algo? (si, o escribe la corrección)"), context
+    context["step"] = "videofoto_waiting_oferta"
+    return f"{prefijo}¿Hay oferta o promoción? (precio especial, descuento, 2x1, etc. o escribe 'no')", context
+
+
 def _resolver_plataforma_video(texto_plataforma: str):
     """Convierte la respuesta libre del usuario a la pregunta de plataforma en
     (texto legible para el prompt, aspect_ratio para Veo 3). Vertical (9:16)
@@ -789,14 +819,24 @@ def _resolver_tono_video(texto_tono: str):
     return texto_tono.strip() if texto_tono else ""
 
 
-def _prompt_basico_video(nombre, precio, oferta, plataforma_texto, tono_texto, mostrar, texto_pantalla, duracion):
+def _prompt_basico_video(nombre, precio, oferta, plataforma_texto, tono_texto, mostrar, texto_pantalla, duracion, descripcion_visual="", uso_correcto=""):
     """Prompt determinista armado directo con las respuestas del usuario, sin
     pasar por Ollama - es el que se usa si el usuario dijo 'no' a la
     optimizacion con IA (videofoto_waiting_optimizar), y tambien el respaldo
-    si dijo 'si' pero Ollama no respondio."""
+    si dijo 'si' pero Ollama no respondio. descripcion_visual (el analisis
+    real de la foto, ver video_desde_foto_tool) y uso_correcto (ver
+    _inferir_uso_correcto_producto) son opcionales - vacios si no estan
+    disponibles (llava no pulled, o Ollama no respondio)."""
     prompt = f"Video publicitario de {nombre} para Mi Cocina Electrodomesticos Guatemala, para {plataforma_texto}. Precio Q{precio}."
     if oferta:
         prompt += f" Oferta especial: {oferta}."
+    if descripcion_visual:
+        prompt += (f" El producto se ve exactamente asi en la foto real: {descripcion_visual}. "
+                   f"Usar ese mismo color, material y forma reales en el video, con un fondo NUEVO "
+                   f"apropiado para publicidad (cocina moderna o fondo blanco limpio), no el fondo "
+                   f"de la foto original.")
+    if uso_correcto:
+        prompt += f" Mostrar el producto en su uso correcto: {uso_correcto}."
     if mostrar:
         prompt += f" Mostrando: {mostrar}."
     if texto_pantalla:
@@ -804,7 +844,41 @@ def _prompt_basico_video(nombre, precio, oferta, plataforma_texto, tono_texto, m
     prompt += f" Duracion aproximada: {duracion} segundos."
     prompt += f" Tono {tono_texto}."
     prompt += " En espanol guatemalteco, colores llamativos, texto grande y legible en pantalla, estilo comercial profesional."
+    if descripcion_visual:
+        prompt += " No inventar caracteristicas del producto que no se vean en la foto real."
     return prompt
+
+
+# Meta-prompt que le pide a Ollama que infiera el uso correcto y logico de un
+# producto a partir de su NOMBRE (no de la foto - esto es razonamiento sobre
+# que hace el producto, no sobre como se ve). Necesario porque un prompt de
+# video generado sin esto puede mostrar una accion equivocada (ej. una
+# licuadora "batiendo" en vez de "licuando", un sarten para huevos mostrando
+# huevos revueltos en vez de estrellados).
+PROMPT_USO_CORRECTO = """Eres un experto en electrodomesticos y utensilios de cocina. Para este producto de una tienda en Guatemala, describe en UNA frase corta y concreta cual es el uso correcto y logico que deberia mostrarse en un video publicitario (que accion especifica hace o para que se usa, con que resultado).
+
+Ejemplos: "sarten para 4 huevos" -> "friendo huevos estrellados, no revueltos"; "licuadora" -> "licuando fruta fresca hasta quedar liquida, no batiendo masa"; "arrocera" -> "arroz cocinandose al vapor con la tapadera cerrada".
+
+Producto: {nombre}
+
+Responde SOLO con la frase del uso correcto, en espanol, sin explicaciones ni comillas."""
+
+
+def _inferir_uso_correcto_producto(nombre: str) -> str:
+    """Le pregunta a Ollama (el modelo de chat normal, no vision - esto es
+    razonamiento sobre el NOMBRE del producto, no sobre la foto) cual es el
+    uso logico y correcto de este producto especifico. Se llama siempre que
+    hay un nombre de producto (no solo cuando el usuario pide optimizar con
+    IA - ver videofoto_waiting_optimizar), porque tambien alimenta el prompt
+    basico. Si Ollama no responde, devuelve "" (el prompt sigue sin esta
+    frase, no bloquea nada)."""
+    if not nombre:
+        return ""
+    from services.ollama_service import llamar_ollama, MENSAJE_TIMEOUT
+    resp = llamar_ollama(PROMPT_USO_CORRECTO.format(nombre=nombre))
+    if resp and resp != MENSAJE_TIMEOUT:
+        return resp.strip()
+    return ""
 
 
 # Meta-prompt que le pide a Ollama que arme un prompt profesional de
@@ -814,14 +888,20 @@ def _prompt_basico_video(nombre, precio, oferta, plataforma_texto, tono_texto, m
 # Mismo modelo/funcion (llamar_ollama) que el resto de generacion de
 # contenido de este archivo (post/script), no analizar_ollama - esto no es un
 # analisis financiero/estrategico largo, es generacion de contenido corta,
-# mismo criterio que tools/contenido_tool.py.
+# mismo criterio que tools/contenido_tool.py. descripcion_visual y
+# uso_correcto vienen del analisis real de la foto y del nombre del producto
+# (ver _inferir_uso_correcto_producto) - se le pide EXPLICITAMENTE a Ollama
+# que use esos datos tal cual, sin inventar, para que el video muestre el
+# producto real y no una version generica.
 PROMPT_OPTIMIZAR_VIDEO = """Eres un director de videografia publicitaria experto en escribir prompts profesionales para Veo 3, el generador de video de Google.
 
-Con estos datos de un producto de una tienda de electrodomesticos y repuestos en Guatemala, escribe UN SOLO prompt en espanol guatemalteco para Veo 3 - un parrafo fluido, sin encabezados ni listas, que cubra en este orden: escena principal, sujeto, accion, ambiente, iluminacion (elige la que mejor calce: golden hour, luz de estudio, luz natural), movimiento de camara (elige el que mejor calce con el tono pedido: camara lenta/slow motion, zoom in, tracking shot, u otro), composicion visual, paleta de colores, estilo cinematografico, y el texto en pantalla si se pidio uno.
+Con estos datos REALES de un producto de una tienda de electrodomesticos y repuestos en Guatemala (la descripcion visual viene de un analisis real de una foto del producto - USALA TAL CUAL, no inventes ni cambies colores/materiales/formas que no esten ahi), escribe UN SOLO prompt en espanol guatemalteco para Veo 3 - un parrafo fluido, sin encabezados ni listas, que cubra en este orden: escena principal, sujeto (el producto EXACTAMENTE como se describe en "Descripcion visual real" - mismo color, material y forma, en un fondo NUEVO apropiado para publicidad como una cocina moderna o un fondo blanco limpio, nunca el fondo original de la foto), accion (mostrando el producto en su uso correcto y logico segun "Uso correcto del producto", no uno inventado), ambiente, iluminacion (elige la que mejor calce: golden hour, luz de estudio, luz natural), movimiento de camara (elige el que mejor calce con el tono pedido: camara lenta/slow motion, zoom in, tracking shot, u otro), composicion visual, paleta de colores, estilo cinematografico, y el texto en pantalla si se pidio uno. NUNCA inventes caracteristicas del producto que no esten en la descripcion visual real.
 
 Producto: {nombre}
 Precio: Q{precio}
 Oferta: {oferta}
+Descripcion visual real (de la foto): {descripcion_visual}
+Uso correcto del producto: {uso_correcto}
 Plataforma: {plataforma}
 Tono deseado: {tono}
 Que mostrar: {mostrar}
@@ -1051,8 +1131,7 @@ def send(message: str, context: dict = None, role: str = "admin") -> tuple:
         resp = message.strip().lower()
         if resp not in ["si", "si.", "sí", "s", "ok", "dale", "yes", "de una"]:
             return "Entendido, no genero el video.", {}
-        context["step"] = "videofoto_waiting_oferta"
-        return "¿Hay oferta o promoción? (precio especial, descuento, 2x1, etc. o escribe 'no')", context
+        return _preguntar_descripcion_visual_o_oferta(context)
 
     if step == "videofoto_waiting_datos_nuevo":
         # "No reconoci el producto. Como se llama y cual es el precio?" -
@@ -1076,8 +1155,31 @@ def send(message: str, context: dict = None, role: str = "admin") -> tuple:
             return "No pude identificar el nombre del producto. Escribe el nombre y el precio (ej: licuadora oster 350).", context
         context["vf_nombre"] = nombre.title()
         context["vf_precio"] = precio
+        return _preguntar_descripcion_visual_o_oferta(context, prefijo=f"Producto: {nombre.title()}, precio Q{precio:g}.\n")
+
+    if step == "videofoto_waiting_descripcion_visual":
+        # Confirmacion/correccion del analisis visual de llava (ver
+        # tools/contenido_tool.py video_desde_foto_tool) antes de seguir con
+        # el resto de preguntas - permite corregir un color/material mal
+        # identificado en vez de arrastrarlo hasta el prompt final de Veo 3.
+        resp_norm = unicodedata.normalize("NFD", message.strip()).encode("ascii", "ignore").decode("utf-8").lower().rstrip(".!?")
+        if resp_norm in ("si", "s", "ok", "correcto", "esta bien", "de una", "dale", "yes"):
+            pass  # descripcion se queda igual, sigue con oferta mas abajo
+        elif resp_norm in ("no", "no gracias", "nel", "para nada"):
+            # Un "no" a secas dice que la descripcion NO es correcta pero
+            # todavia no trae la correccion en si - hay que pedirla, no
+            # guardar el literal "no" como si fuera la descripcion nueva
+            # (bug encontrado al probar este mismo step: un "no" bare se
+            # colaba al else de abajo y pisaba la descripcion real).
+            return "¿Cuál es la corrección? Escribe cómo se ve realmente el producto.", context
+        else:
+            # Cualquier otro texto (incluyendo la respuesta al "cual es la
+            # correccion?" de arriba) se toma como la correccion en si -
+            # reemplaza la descripcion, no la combina, mas simple y
+            # predecible que tratar de fusionar texto libre.
+            context["vf_descripcion_visual"] = message.strip()
         context["step"] = "videofoto_waiting_oferta"
-        return f"Producto: {nombre.title()}, precio Q{precio:g}.\n¿Hay oferta o promoción? (precio especial, descuento, 2x1, etc. o escribe 'no')", context
+        return "¿Hay oferta o promoción? (precio especial, descuento, 2x1, etc. o escribe 'no')", context
 
     if step == "videofoto_waiting_oferta":
         texto = message.strip()
@@ -1159,16 +1261,22 @@ def send(message: str, context: dict = None, role: str = "admin") -> tuple:
         mostrar = context.get("vf_mostrar", "")
         texto_pantalla = context.get("vf_texto_pantalla", "")
         duracion = context.get("vf_duracion", 8)
+        descripcion_visual = context.get("vf_descripcion_visual", "")
         plataforma_texto, aspect_ratio = _resolver_plataforma_video(context.get("vf_plataforma", ""))
         tono_texto = _resolver_tono_video(context.get("vf_tono", ""))
+        # Se infiere siempre (no solo si se pide optimizar con IA) porque
+        # tambien alimenta el prompt basico, no solo el optimizado con IA.
+        uso_correcto = _inferir_uso_correcto_producto(nombre)
 
-        prompt_basico = _prompt_basico_video(nombre, precio, oferta, plataforma_texto, tono_texto, mostrar, texto_pantalla, duracion)
+        prompt_basico = _prompt_basico_video(nombre, precio, oferta, plataforma_texto, tono_texto, mostrar, texto_pantalla, duracion, descripcion_visual, uso_correcto)
 
         aviso = ""
         if optimizar:
             from services.ollama_service import llamar_ollama, MENSAJE_TIMEOUT
             meta_prompt = PROMPT_OPTIMIZAR_VIDEO.format(
                 nombre=nombre, precio=precio, oferta=oferta or "ninguna",
+                descripcion_visual=descripcion_visual or "no disponible - usa una descripcion generica coherente con el nombre del producto",
+                uso_correcto=uso_correcto or "el uso tipico de este producto",
                 plataforma=plataforma_texto, tono=tono_texto,
                 mostrar=mostrar or "no especificado", texto_pantalla=texto_pantalla or "ninguno",
                 duracion=duracion,

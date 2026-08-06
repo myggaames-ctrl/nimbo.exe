@@ -2558,3 +2558,109 @@ misma estructura de tag `<video><source></video>` que Chrome/Firefox reproducen 
 forma nativa).
 
 **Archivos modificados:** `core/nimbo.py`.
+
+---
+
+## [2026-08-06] Análisis visual real de la foto (llava) para el prompt de Veo 3
+
+**Problema:** el prompt que se le mandaba a Veo 3 en el flujo de video desde foto
+(`videofoto_*`) no tenía ninguna relación real con lo que se veía en la foto subida -
+el color, material, forma y uso del producto quedaban librados a lo que Veo 3
+"imaginara" a partir del nombre y las respuestas del usuario, sin ningún dato real
+extraído de la imagen. Un "sartén para 4 huevos" podía terminar en un video mostrando
+huevos revueltos (uso incorrecto), o un producto de un color completamente distinto
+al real.
+
+**Causa:** no es un bug, es una funcionalidad nueva pedida explícitamente. Se
+documenta acá (además de en `CLAUDE.md`) porque así se pidió para esta instalación.
+
+**Solución:**
+- `tools/contenido_tool.py.video_desde_foto_tool()`: se agregó `llava` como modelo de
+  visión específico para este análisis (`PROMPT_ANALISIS_VISUAL_LLAVA`, un solo
+  llamado con JSON estricto - mismo patrón que `tools/combo_tool.py`
+  sugerir_combos_tool) que cubre DOS cosas de una vez: identificar el producto (para
+  la búsqueda en el inventario, reemplazando el llamado de identificación liviano que
+  ya existía) Y extraer una descripción visual real - color y material exactos (ej.
+  "teflón amarillo dorado", no "teflón" genérico), forma y características físicas
+  visibles (ej. "tapadera de vidrio, mango negro, 4 cavidades para huevo"), condición
+  (nuevo/empacado/en exhibición) y contexto del fondo actual (tienda/bodega/casa). Si
+  `llava` no está pulled pero el modelo de chat por defecto sí soporta visión (hoy
+  ninguno de los dos, `qwen2.5:7b`/`gemma2:9b`, la tiene), se usa solo para
+  identificar el producto - sin el análisis detallado, que se pidió específicamente
+  con `llava`. Se manejó explícitamente el caso de que `llava` envuelva el JSON en
+  fences de markdown (\`\`\`json ... \`\`\`) a pesar de que el prompt pide que no lo
+  haga - un simple `.strip("\`")` no alcanza (deja un `json\n` colgando al inicio que
+  rompe `json.loads()`), se necesitó una limpieza con regex.
+- **Nota de arquitectura, documentada explícitamente en el código:** usar `llava`
+  reintroduce, a propósito de este pedido, el escenario de "2 modelos" que el resto
+  del proyecto evita deliberadamente (ver `CLAUDE.md`, sección Stack, sobre la
+  penalidad de recarga y el riesgo de RAM real que ya causó una caída del servidor).
+  En la práctica, hoy esto NO dispara ese riesgo: como ningún modelo de chat pulled
+  soporta visión, la única llamada de visión que de verdad sale hacia Ollama en este
+  flujo es la de `llava` (o ninguna, si tampoco está pulled) - nunca se alternan dos
+  modelos distintos dentro de la misma conversación. Ese riesgo sí se reactivaría si
+  en el futuro se instala un modelo de CHAT con visión además de `llava`.
+- El marcador `VIDEOFOTO_ENCONTRADO_INICIO:`/`VIDEOFOTO_NUEVO_INICIO:` (ver
+  `core/detectors/contenido_foto_detector.py`, `core/nimbo.py`) ahora lleva un campo
+  extra, `descripcion_visual` - texto libre armado por un modelo de IA, que puede
+  traer sus propios `|`, así que el parseo en `core/nimbo.py` se cambió a
+  `split("|", N)` (en vez de `split("|")` sin límite) para que ese último campo se
+  quede con el resto del string completo sin partirlo de más.
+- Nuevo step `core/nimbo.py.videofoto_waiting_descripcion_visual` (arrancado por el
+  helper `_preguntar_descripcion_visual_o_oferta()`, llamado justo después de
+  confirmar el producto): si hubo análisis visual, se lo muestra al usuario ("Vi en
+  la foto: ... ¿Es correcto o quieres corregir algo?") antes de seguir con el resto
+  de preguntas - "sí" lo deja igual, cualquier otro texto lo reemplaza directamente.
+  Si no hubo análisis visual (sin `llava` pulled), se salta esta pregunta y sigue
+  directo a oferta, igual que antes de este cambio (sin ninguna regresión para el
+  entorno actual, que hoy no tiene ningún modelo con visión).
+  - **Bug real encontrado al probar este mismo step:** un "no" a secas (el usuario
+    diciendo que la descripción NO es correcta, sin dar todavía la corrección) se
+    colaba al mismo branch que "cualquier otro texto es la corrección", guardando el
+    string literal `"no"` como si fuera la descripción visual nueva - corrompiendo el
+    dato en vez de preguntar cuál es la corrección real. Se corrigió agregando un
+    branch explícito para un "no" a secas ("no", "no gracias", "nel", "para nada") que
+    pide la corrección y se queda en el mismo step, sin avanzar ni guardar nada
+    todavía.
+- `core/nimbo.py._inferir_uso_correcto_producto()` (nuevo, meta-prompt
+  `PROMPT_USO_CORRECTO`): le pregunta a Ollama, a partir del NOMBRE del producto (no
+  de la foto - esto es razonamiento sobre qué hace el producto, no sobre cómo se ve),
+  cuál es el uso lógico y correcto que debería mostrarse (ej. "licuadora" ->
+  "licuando fruta fresca hasta quedar líquida, no batiendo masa"). Se calcula siempre
+  que hay un nombre de producto, no solo si el usuario pide optimizar con IA, porque
+  también alimenta el prompt básico.
+- `_prompt_basico_video()` y `PROMPT_OPTIMIZAR_VIDEO` (el meta-prompt de la
+  optimización con IA) se actualizaron para usar `descripcion_visual` y
+  `uso_correcto` cuando están disponibles: instruyen explícitamente mostrar el
+  producto con el color/material/forma reales, en un fondo NUEVO apropiado para
+  publicidad (cocina moderna o fondo blanco limpio, nunca el fondo original de la
+  foto), haciendo la acción correcta según el uso inferido, y NUNCA inventar
+  características que no estén en la descripción visual real.
+
+**Verificación:** con una empresa de prueba desechable y
+`services.ollama_service.modelo_soporta_vision`/`analizar_imagen_ollama`/
+`llamar_ollama` mockeados con `unittest.mock.patch`:
+1. Flujo completo con `llava` disponible: JSON con descripción visual real → se
+   muestra para confirmar → "sí" la deja igual → se completan las preguntas → el
+   meta-prompt que recibe Ollama para la optimización contiene tanto la descripción
+   visual real como el uso correcto inferido (verificado con asserts sobre el texto
+   exacto del prompt, no solo sobre el resultado).
+2. Corrección en dos pasos: "no" a secas → pide la corrección sin avanzar ni
+   corromper el dato (el bug encontrado) → el texto de corrección real reemplaza la
+   descripción y recién ahí avanza a oferta.
+3. Sin ningún modelo con visión disponible (el entorno real actual): la pregunta de
+   descripción visual se salta por completo, el flujo sigue exactamente igual que
+   antes de este cambio - sin regresión.
+4. `llava` responde el JSON envuelto en fences de markdown (\`\`\`json ... \`\`\`) y
+   también sin fences - ambos casos se parsean correctamente después del fix del
+   `.strip("\`")` insuficiente.
+5. `llava` responde algo que no es JSON válido en absoluto - cae al texto crudo como
+   búsqueda (mejor que nada) sin guardar un JSON roto en el contexto ni reventar.
+
+No se pudo probar con una instalación real de `llava` (`ollama pull llava`) ni con
+una llamada real a Veo 3/Vertex AI - toda la verificación usó mocks de
+`unittest.mock.patch` sobre los mismos puntos de entrada (`analizar_imagen_ollama`,
+`llamar_ollama`, `generar_video_producto`) que el código real usa, no una simulación
+aparte.
+
+**Archivos modificados:** `tools/contenido_tool.py`, `core/nimbo.py`, `CLAUDE.md`.

@@ -1169,3 +1169,44 @@ que convierta tu idea suelta ("quiero un anuncio de la licuadora, que se vea bie
 un guion detallado y técnico, en vez de dárselo tú mismo al camarógrafo sin pulir -
 el redactor no filma nada, solo mejora las instrucciones que después usa otra persona
 (o, en este caso, otro sistema de IA) para hacer el trabajo final.
+
+---
+
+### llava (modelo de IA con visión, "Large Language and Vision Assistant")
+**Qué es:** un modelo de IA de código abierto entrenado específicamente para
+entender imágenes además de texto (a diferencia de `qwen2.5:7b`, el modelo de chat
+que usa Nimbo para todo lo demás, que NO tiene esa capacidad).
+
+**Para qué sirve en Nimbo:** el análisis visual real de la foto de un producto (ver
+`tools/contenido_tool.py.video_desde_foto_tool()`, flujo de video desde foto en el
+chat) le pide específicamente a `llava` - no al modelo de chat por defecto - que
+describa el color, material, forma y condición reales del producto en la foto, para
+que el video generado por Veo 3 muestre el producto tal como es, no una versión
+inventada. Esto es una excepción deliberada a la política de "un solo modelo para
+todo" que documenta `CLAUDE.md` (ver esa sección para el porqué de esa política) -
+`llava` solo se usa si está `ollama pull`eado, se detecta en el momento (ver
+`modelo_soporta_vision()`) y nunca se alterna con el modelo de chat dentro de la
+misma llamada, así que no reintroduce el problema de recarga que esa política evita.
+
+**Ejemplo de la vida real:** es como llamar a un fotógrafo especializado para que
+describa en detalle una pieza (color exacto, textura, desperfectos) en vez de
+pedírselo a un asistente general que nunca ha visto una foto en su vida - cada uno
+tiene su especialidad.
+
+---
+
+### code fences (bloques de código delimitados con \`\`\`)
+**Qué es:** la forma en que Markdown (y muchos modelos de IA al responder) marcan un
+bloque de texto como "código" o "datos", envolviéndolo entre tres comillas invertidas
+(\`\`\`), a veces con el nombre del lenguaje después de las primeras (ej. \`\`\`json).
+
+**Para qué sirve en Nimbo:** cuando se le pide a `llava` que responda con JSON
+estricto (ver `tools/contenido_tool.py.video_desde_foto_tool()`), el modelo a veces
+envuelve la respuesta en fences (\`\`\`json ... \`\`\`) a pesar de que el prompt le
+pide explícitamente que no lo haga - hay que quitarlos antes de poder leer el JSON
+con `json.loads()`, o la llamada falla porque `\`\`\`json` no es JSON válido.
+
+**Ejemplo de la vida real:** es como si alguien te dictara un número de teléfono pero
+lo metiera entre paréntesis ("el número es (555-1234)") - en el fondo el dato real
+sigue siendo "555-1234", pero primero hay que quitarle los paréntesis antes de
+poder marcarlo en el teléfono.

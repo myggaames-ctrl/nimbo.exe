@@ -169,18 +169,64 @@ def video_producto_tool(data):
 register("contenido.video", video_producto_tool)
 
 
+# Prompt para llava (o cualquier modelo con vision, ver mas abajo): un solo
+# llamado que cubre DOS cosas de una vez - identificar el producto (para
+# buscarlo en el inventario) y el analisis visual detallado pedido para el
+# prompt de Veo 3 (color/material reales, forma/caracteristicas fisicas,
+# condicion, fondo actual) - en JSON estricto, mismo patron que
+# tools/combo_tool.py sugerir_combos_tool. Un solo llamado en vez de dos
+# ahorra un roundtrip completo a Ollama sin perder nada, ya que ambos datos
+# salen de la misma foto.
+PROMPT_ANALISIS_VISUAL_LLAVA = (
+    "Analiza esta foto de un producto de una tienda de electrodomesticos y "
+    "repuestos en Guatemala. Responde SOLO con un JSON valido (sin texto "
+    "adicional, sin markdown, sin explicaciones) con esta forma exacta:\n"
+    '{"producto": "nombre corto del producto, ej: licuadora, sarten para huevos, plancha", '
+    '"descripcion_visual": "un parrafo corto en espanol que cubra especificamente: '
+    '1) color y material EXACTOS del producto tal como se ven (ej: teflon amarillo '
+    'dorado, acero inoxidable, marmol negro), 2) forma y caracteristicas fisicas '
+    'visibles (ej: tapadera de vidrio, mango negro, 4 cavidades para huevo), '
+    '3) condicion (nuevo, empacado, en exhibicion), 4) contexto del fondo actual '
+    '(tienda, bodega, casa). Describe SOLO lo que se ve REALMENTE en la foto, '
+    'nunca inventes caracteristicas que no esten visibles."}'
+)
+
+
 def video_desde_foto_tool(data):
     """Punto de entrada del flujo de "video de producto desde una foto subida
     al chat" (ver core/detectors/contenido_foto_detector.py, app.py
     /api/chat/foto, core/nimbo.py steps videofoto_*). Intenta identificar el
-    producto en la foto con Ollama vision si el modelo pulled lo soporta (ver
-    services/ollama_service.modelo_soporta_vision) - si no lo soporta, o si no
-    logra identificar nada util, cae al texto que el usuario escribio junto a
-    la foto (data['texto']) como busqueda; si esa busqueda tampoco encuentra
-    nada (o no hay texto), arranca el flujo de "no reconoci el producto" para
-    pedirlo a mano en vez de fallar. La busqueda en si (con vision o con
-    texto) usa get_products(), el mismo fuzzy match que el resto del
-    inventario - no es una busqueda nueva ni distinta."""
+    producto en la foto Y extraer una descripcion visual detallada (color/
+    material reales, forma, condicion, fondo - para que el prompt de Veo 3
+    muestre el producto tal como es, no algo inventado). Prioriza llava para
+    esto (PROMPT_ANALISIS_VISUAL_LLAVA, un solo llamado con JSON estricto);
+    si llava no esta pulled pero el modelo de chat por defecto SI soporta
+    vision (hoy ninguno de los dos lo hace, ver
+    services/ollama_service.modelo_soporta_vision - esto queda listo por si
+    cambia en el futuro), se usa solo para identificar el producto, sin el
+    analisis visual detallado (ese se pidio especificamente con llava). Si no
+    hay ningun modelo con vision disponible, o si no logra identificar nada
+    util, cae al texto que el usuario escribio junto a la foto (data['texto'])
+    como busqueda; si esa busqueda tampoco encuentra nada (o no hay texto),
+    arranca el flujo de "no reconoci el producto" para pedirlo a mano en vez
+    de fallar. La busqueda en si (con vision o con texto) usa get_products(),
+    el mismo fuzzy match que el resto del inventario - no es una busqueda
+    nueva ni distinta.
+
+    NOTA DE ARQUITECTURA: usar llava especificamente (en vez del unico modelo
+    de chat que documenta CLAUDE.md, qwen2.5:7b) reintroduce, a proposito de
+    este pedido, el escenario de "2 modelos" que el resto del proyecto evita
+    deliberadamente (ver CLAUDE.md, seccion Stack, sobre la penalidad de
+    recarga y el riesgo de RAM de tener 2 modelos cargados a la vez). En la
+    practica hoy esto no dispara ese riesgo: como NINGUNO de los modelos ya
+    pulled (qwen2.5:7b, gemma2:9b) soporta vision, la unica llamada de vision
+    que de verdad sale hacia Ollama en este flujo es la de llava (o ninguna,
+    si tampoco esta pulled) - nunca se alternan dos modelos distintos dentro
+    de la misma conversacion. Ese riesgo si se reactivaria si en el futuro se
+    hace pull de un modelo de CHAT con vision ademas de llava (ver el branch
+    "elif modelo_soporta_vision()" mas abajo, que si podria alternar contra
+    llava en llamadas separadas de un mismo flujo) - se documenta aca en vez
+    de asumir que no aplica."""
     from database.nimbo_db import get_products
     from services.ollama_service import modelo_soporta_vision, analizar_imagen_ollama, MENSAJE_TIMEOUT
 
@@ -204,7 +250,32 @@ def video_desde_foto_tool(data):
         return "Foto inválida."
 
     query_busqueda = ""
-    if modelo_soporta_vision():
+    descripcion_visual = ""
+
+    if modelo_soporta_vision(modelo="llava"):
+        respuesta_llava = analizar_imagen_ollama(ruta_disco, PROMPT_ANALISIS_VISUAL_LLAVA, modelo="llava")
+        if respuesta_llava and respuesta_llava != MENSAJE_TIMEOUT:
+            import json
+            import re as _re
+            # Los modelos de vision suelen envolver el JSON en fences de
+            # markdown (```json ... ```) a pesar de que el prompt pide
+            # explicitamente que no lo hagan - se le quitan antes de parsear
+            # (un simple .strip("`") deja un "json\n" colgando al principio,
+            # que rompe json.loads igual).
+            texto_llava = respuesta_llava.strip()
+            if texto_llava.startswith("```"):
+                texto_llava = _re.sub(r"^```[a-zA-Z]*\n?", "", texto_llava)
+                texto_llava = _re.sub(r"\n?```$", "", texto_llava).strip()
+            try:
+                datos = json.loads(texto_llava)
+                query_busqueda = str(datos.get("producto", "")).strip()
+                descripcion_visual = str(datos.get("descripcion_visual", "")).strip().replace("\n", " ")
+            except (ValueError, TypeError, AttributeError):
+                # llava no devolvio JSON valido - se usa el texto crudo como
+                # busqueda (mejor que nada) y se deja la descripcion visual
+                # vacia en vez de guardar un JSON roto en el contexto.
+                query_busqueda = respuesta_llava.strip()
+    elif modelo_soporta_vision():
         prompt_vision = (
             "Identifica en pocas palabras que producto de una tienda de "
             "electrodomesticos y repuestos aparece en esta foto (ej: "
@@ -221,9 +292,9 @@ def video_desde_foto_tool(data):
     productos = get_products(search=query_busqueda) if query_busqueda else []
     if productos:
         p = productos[0]
-        return f"VIDEOFOTO_ENCONTRADO_INICIO:{p['Id']}|{p['Name'].strip()}|{p['Price']}|{foto}"
+        return f"VIDEOFOTO_ENCONTRADO_INICIO:{p['Id']}|{p['Name'].strip()}|{p['Price']}|{foto}|{descripcion_visual}"
 
-    return f"VIDEOFOTO_NUEVO_INICIO:{foto}"
+    return f"VIDEOFOTO_NUEVO_INICIO:{foto}|{descripcion_visual}"
 
 register("contenido.video_desde_foto", video_desde_foto_tool)
 

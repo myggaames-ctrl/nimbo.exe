@@ -777,34 +777,54 @@ identificacion de cobro).
     `os.path.realpath()` antes de tocar el disco, como defensa en profundidad.
     `tools/contenido_tool.py.video_desde_foto_tool()` (intent
     `contenido.video_desde_foto`, admin-only como el resto de "contenido") intenta
-    identificar el producto con Ollama vision si el modelo pulled lo soporta (ver
-    `services/ollama_service.modelo_soporta_vision()` - hoy da `False`, ni
-    `qwen2.5:7b` ni `gemma2:9b` tienen vision, pero se detecta solo si en el futuro se
-    hace `ollama pull` de un modelo que si la tenga); si no hay vision o no devuelve
-    nada util, cae al texto que el usuario escribio junto a la foto como busqueda
-    (`get_products()`, mismo fuzzy match del resto del inventario). Si encuentra el
-    producto, `core/nimbo.py` (steps `videofoto_waiting_*`, flujo separado del ya
-    existente `VIDEO_INICIO:` de "video de [producto] por texto") confirma
-    ("Encontre X, precio QY. Quieres que genere un video?"); si no, pide nombre y
-    precio en un solo mensaje (ej. "licuadora oster 350") sin crear un `Producto`
-    nuevo en la base de datos (a proposito, para no mutar el inventario como efecto
-    secundario de este flujo). Despues pregunta, una por una: oferta/promocion,
-    plataforma (TikTok/Instagram Reels/Facebook/General - mapea a `aspect_ratio` 9:16
-    o 1:1 para Facebook, ver `_resolver_plataforma_video()` en `services/video_gen.py`
-    y `core/nimbo.py`), tono (urgente y llamativo/informativo/divertido y casual/
-    elegante, `_resolver_tono_video()`), que mostrar en el video (uso del producto/
+    identificar el producto Y extraer un analisis visual real de la foto (color/
+    material exactos, forma/caracteristicas fisicas, condicion, fondo actual) con un
+    solo llamado a `llava` (JSON estricto, `PROMPT_ANALISIS_VISUAL_LLAVA` - mismo
+    patron que `tools/combo_tool.py` sugerir_combos_tool) si esta pulled (ver
+    `services/ollama_service.modelo_soporta_vision(modelo="llava")`); si llava no esta
+    pero el modelo de chat por defecto si soporta vision (hoy ninguno de los dos,
+    `qwen2.5:7b`/`gemma2:9b`, la tiene, pero se detecta solo si cambia en el futuro),
+    se usa solo para identificar el producto, sin el analisis detallado (ese se pidio
+    especificamente con llava - ver nota de arquitectura en el docstring de la funcion
+    sobre por que esto reintroduce, a proposito, el escenario de "2 modelos" que el
+    resto del proyecto evita). Si no hay ningun modelo con vision, cae al texto que el
+    usuario escribio junto a la foto como busqueda (`get_products()`, mismo fuzzy
+    match del resto del inventario). Si encuentra el producto, `core/nimbo.py` (steps
+    `videofoto_waiting_*`, flujo separado del ya existente `VIDEO_INICIO:` de "video de
+    [producto] por texto") confirma ("Encontre X, precio QY. Quieres que genere un
+    video?"); si no, pide nombre y precio en un solo mensaje (ej. "licuadora oster
+    350") sin crear un `Producto` nuevo en la base de datos (a proposito, para no
+    mutar el inventario como efecto secundario de este flujo). Si hubo analisis visual
+    (`vf_descripcion_visual`), antes de seguir Nimbo lo muestra ("Vi en la foto: ...
+    ¿Es correcto o quieres corregir algo?", step `videofoto_waiting_descripcion_visual`
+    via el helper `_preguntar_descripcion_visual_o_oferta()`) - un "si" lo deja igual,
+    un "no" a secas pide la correccion en vez de guardarlo como si fuera la
+    descripcion (bug real encontrado al construir esto), y cualquier otro texto
+    reemplaza la descripcion directamente. Si no hubo analisis visual, se salta esta
+    pregunta. Despues pregunta, una por una: oferta/promocion, plataforma (TikTok/
+    Instagram Reels/Facebook/General - mapea a `aspect_ratio` 9:16 o 1:1 para Facebook,
+    ver `_resolver_plataforma_video()` en `services/video_gen.py` y `core/nimbo.py`),
+    tono (urgente y llamativo/informativo/divertido y casual/elegante,
+    `_resolver_tono_video()`), que mostrar en el video (uso del producto/
     caracteristicas/demostracion/unboxing - texto libre, no se valida contra una
     lista), texto en pantalla (libre, o "no"), duracion aproximada (4/6/8 segundos -
     los unicos que soporta Veo 3 image_to_video, confirmado; cualquier otro numero que
     el usuario escriba se ajusta al valor valido mas cercano en vez de pasarlo tal
     cual, `DURACIONES_VEO3_VALIDAS` en `core/nimbo.py`) y si quiere que Nimbo optimice
-    el prompt con IA.
-    Con "no" arma un prompt basico deterministico
-    (`_prompt_basico_video()`) directo con las respuestas; con "si" le pide a Ollama
-    (`llamar_ollama()`, no `analizar_ollama()` - mismo criterio que el resto de
-    generacion de contenido de este archivo, no es un analisis largo) que redacte un
-    prompt profesional de videografia siguiendo la estructura de Veo 3 (escena
-    principal, sujeto, accion, ambiente, iluminacion, camara, composicion, paleta de
+    el prompt con IA. Antes de armar el prompt, `_inferir_uso_correcto_producto()`
+    le pregunta a Ollama (sobre el NOMBRE del producto, no la foto) cual es el uso
+    logico que deberia mostrarse (ej. "sarten para 4 huevos" -> "friendo huevos
+    estrellados, no revueltos") - se calcula siempre, no solo si se pide optimizar con
+    IA, porque tambien alimenta el prompt basico.
+    Con "no" arma un prompt basico deterministico (`_prompt_basico_video()`, incluye
+    `vf_descripcion_visual`/uso correcto si estan disponibles, con instrucciones de
+    fondo NUEVO para el video y de no inventar caracteristicas) directo con las
+    respuestas; con "si" le pide a Ollama (`llamar_ollama()`, no `analizar_ollama()` -
+    mismo criterio que el resto de generacion de contenido de este archivo, no es un
+    analisis largo) que redacte un prompt profesional de videografia siguiendo la
+    estructura de Veo 3 (escena principal, sujeto - usando la descripcion visual real
+    y un fondo nuevo apropiado para publicidad, no el de la foto original -, accion
+    segun el uso correcto, ambiente, iluminacion, camara, composicion, paleta de
     colores, estilo, texto en pantalla - ver el meta-prompt `PROMPT_OPTIMIZAR_VIDEO`),
     con fallback silencioso (con aviso en la respuesta) al prompt basico si Ollama no
     responde. En cualquiera de los dos casos, el prompt final se muestra completo en
@@ -814,8 +834,19 @@ identificacion de cobro).
     el "editar" en este contexto es "mandame el texto completo que quieras usar en su
     lugar" como el siguiente mensaje del chat). `_generar_video_final()` es el unico
     punto que llama a `generar_video_producto()` en este flujo (desde "confirmar" o
-    desde el prompt editado), mostrando el video con boton de descarga igual que el
-    flujo de texto existente.
+    desde el prompt editado); la respuesta incluye el video reproducible inline
+    (`<video controls preload="metadata" playsinline>`, no solo un link) y un boton de
+    descarga con estilo debajo. Al terminar, en vez de vaciar el contexto, deja el
+    flujo en el step `videofoto_waiting_ajuste` (con el prompt usado guardado) y
+    cierra la respuesta con "¡Listo! ¿Quieres generar otro video o necesitas algo
+    más?" - un pedido de ajuste ahi ("cambia la iluminacion") le pide a Ollama que
+    reescriba el prompt ANTERIOR aplicando ese cambio puntual (`PROMPT_AJUSTAR_VIDEO`)
+    y vuelve a mostrarlo para confirmar/editar (reutiliza el mismo step de
+    confirmacion, sin duplicar esa logica); una frase de cierre reconocida ("no",
+    "gracias", "listo", etc.) termina el flujo limpio - esto evita que una respuesta
+    ambigua despues del video se cuele al detector de clarificacion de intenciones
+    vagas y deje al usuario en un loop sin salida (bug real corregido, ver
+    BUGS_Y_FIXES.md).
 - Recordatorios: pagos fijos, follow ups, cumpleanos, contenido
 - Backup: automatico 8pm, manual, 7 backups maximos
 - Login y roles: admin/empleado, onboarding /setup, gestion de usuarios, cambio y
