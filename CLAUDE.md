@@ -794,10 +794,11 @@ identificacion de cobro).
     y `core/nimbo.py`), tono (urgente y llamativo/informativo/divertido y casual/
     elegante, `_resolver_tono_video()`), que mostrar en el video (uso del producto/
     caracteristicas/demostracion/unboxing - texto libre, no se valida contra una
-    lista), texto en pantalla (libre, o "no"), duracion aproximada (6/15/30 segundos u
-    otro numero que el usuario escriba - no se pudo verificar si Veo 3 acepta
-    cualquier duracion o solo valores especificos, mismo tipo de limitacion ya
-    documentada para `aspect_ratio`) y si quiere que Nimbo optimice el prompt con IA.
+    lista), texto en pantalla (libre, o "no"), duracion aproximada (4/6/8 segundos -
+    los unicos que soporta Veo 3 image_to_video, confirmado; cualquier otro numero que
+    el usuario escriba se ajusta al valor valido mas cercano en vez de pasarlo tal
+    cual, `DURACIONES_VEO3_VALIDAS` en `core/nimbo.py`) y si quiere que Nimbo optimice
+    el prompt con IA.
     Con "no" arma un prompt basico deterministico
     (`_prompt_basico_video()`) directo con las respuestas; con "si" le pide a Ollama
     (`llamar_ollama()`, no `analizar_ollama()` - mismo criterio que el resto de

@@ -718,6 +718,13 @@ def _finalizar_cambio(context: dict, metodo: str):
 # ── Helpers del flujo de video desde foto (ver steps videofoto_waiting_* en
 # send() mas abajo) ──
 
+# Veo 3 image_to_video (el modo que se usa cuando hay foto de referencia, ver
+# services/video_gen.py) solo soporta estas 3 duraciones - a diferencia de
+# aspect_ratio (que se documenta como no verificado en services/video_gen.py),
+# esto SI esta confirmado. Ver videofoto_waiting_duracion en send().
+DURACIONES_VEO3_VALIDAS = (4, 6, 8)
+
+
 def _resolver_plataforma_video(texto_plataforma: str):
     """Convierte la respuesta libre del usuario a la pregunta de plataforma en
     (texto legible para el prompt, aspect_ratio para Veo 3). Vertical (9:16)
@@ -1021,11 +1028,22 @@ def send(message: str, context: dict = None, role: str = "admin") -> tuple:
         texto = message.strip()
         context["vf_texto_pantalla"] = "" if texto.lower() in ("no", "no.", "ninguno", "ninguna") else texto
         context["step"] = "videofoto_waiting_duracion"
-        return "¿Duración aproximada? (6 segundos / 15 segundos / 30 segundos)", context
+        return "¿Duración aproximada? (4 segundos / 6 segundos / 8 segundos)", context
 
     if step == "videofoto_waiting_duracion":
+        # Veo 3 image_to_video (el modo que usa este flujo cuando hay foto de
+        # referencia, ver services/video_gen.py) solo soporta 4, 6 u 8 segundos
+        # - a diferencia de aspect_ratio/duracion en otros lugares de este
+        # archivo, esto SI esta confirmado (no es una suposicion sin
+        # verificar), asi que ademas de ofrecer solo esas 3 opciones en la
+        # pregunta, cualquier numero que el usuario escriba se ajusta al valor
+        # valido mas cercano en vez de pasarlo tal cual - para no mandarle a
+        # Veo 3 un duration_seconds que sabemos que va a rechazar.
         m = re.search(r"(\d+)", message)
-        context["vf_duracion"] = int(m.group(1)) if m else 8
+        if m:
+            context["vf_duracion"] = min(DURACIONES_VEO3_VALIDAS, key=lambda d: abs(d - int(m.group(1))))
+        else:
+            context["vf_duracion"] = 8
         context["step"] = "videofoto_waiting_optimizar"
         return "¿Quieres que Nimbo optimice el prompt automáticamente con IA para mejor calidad visual? (si/no)", context
 
