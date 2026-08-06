@@ -715,6 +715,97 @@ def _finalizar_cambio(context: dict, metodo: str):
     return resp, {}
 
 
+# ── Helpers del flujo de video desde foto (ver steps videofoto_waiting_* en
+# send() mas abajo) ──
+
+def _resolver_plataforma_video(texto_plataforma: str):
+    """Convierte la respuesta libre del usuario a la pregunta de plataforma en
+    (texto legible para el prompt, aspect_ratio para Veo 3). Vertical (9:16)
+    para TikTok/Reels/General, cuadrado (1:1) para Facebook - ver
+    services/video_gen.py."""
+    plataforma_raw = unicodedata.normalize("NFD", texto_plataforma or "").encode("ascii", "ignore").decode("utf-8").lower()
+    if "tiktok" in plataforma_raw:
+        return "TikTok", "9:16"
+    if "reel" in plataforma_raw or "instagram" in plataforma_raw:
+        return "Instagram Reels", "9:16"
+    if "facebook" in plataforma_raw:
+        return "Facebook", "1:1"
+    return "redes sociales en general", "9:16"
+
+
+def _resolver_tono_video(texto_tono: str):
+    """Convierte la respuesta libre del usuario a la pregunta de tono en una
+    frase descriptiva lista para meter en el prompt. Si no matchea ninguno de
+    los 4 tonos sugeridos, usa el texto tal cual lo escribio el usuario (puede
+    haber escrito un tono propio, no listado en la pregunta)."""
+    tono_raw = unicodedata.normalize("NFD", texto_tono or "").encode("ascii", "ignore").decode("utf-8").lower()
+    if "urgente" in tono_raw or "llamativo" in tono_raw:
+        return "urgente y llamativo, con sensacion de oferta por tiempo limitado, texto grande en pantalla y colores vibrantes"
+    if "informativo" in tono_raw:
+        return "informativo y claro, resaltando las caracteristicas y beneficios del producto"
+    if "divertido" in tono_raw or "casual" in tono_raw:
+        return "divertido, casual y energico, cercano al cliente"
+    if "elegante" in tono_raw:
+        return "elegante y sofisticado, con iluminacion premium y ritmo pausado"
+    return texto_tono.strip() if texto_tono else ""
+
+
+def _prompt_basico_video(nombre, precio, oferta, plataforma_texto, tono_texto, mostrar, texto_pantalla, duracion):
+    """Prompt determinista armado directo con las respuestas del usuario, sin
+    pasar por Ollama - es el que se usa si el usuario dijo 'no' a la
+    optimizacion con IA (videofoto_waiting_optimizar), y tambien el respaldo
+    si dijo 'si' pero Ollama no respondio."""
+    prompt = f"Video publicitario de {nombre} para Mi Cocina Electrodomesticos Guatemala, para {plataforma_texto}. Precio Q{precio}."
+    if oferta:
+        prompt += f" Oferta especial: {oferta}."
+    if mostrar:
+        prompt += f" Mostrando: {mostrar}."
+    if texto_pantalla:
+        prompt += f' Texto en pantalla: "{texto_pantalla}".'
+    prompt += f" Duracion aproximada: {duracion} segundos."
+    prompt += f" Tono {tono_texto}."
+    prompt += " En espanol guatemalteco, colores llamativos, texto grande y legible en pantalla, estilo comercial profesional."
+    return prompt
+
+
+# Meta-prompt que le pide a Ollama que arme un prompt profesional de
+# videografia para Veo 3 (estructura pedida explicitamente: escena principal,
+# sujeto, accion, ambiente, iluminacion, camara, estilo, texto en pantalla) a
+# partir de las respuestas ya recolectadas - ver videofoto_waiting_optimizar.
+# Mismo modelo/funcion (llamar_ollama) que el resto de generacion de
+# contenido de este archivo (post/script), no analizar_ollama - esto no es un
+# analisis financiero/estrategico largo, es generacion de contenido corta,
+# mismo criterio que tools/contenido_tool.py.
+PROMPT_OPTIMIZAR_VIDEO = """Eres un director de videografia publicitaria experto en escribir prompts profesionales para Veo 3, el generador de video de Google.
+
+Con estos datos de un producto de una tienda de electrodomesticos y repuestos en Guatemala, escribe UN SOLO prompt en espanol guatemalteco para Veo 3 - un parrafo fluido, sin encabezados ni listas, que cubra en este orden: escena principal, sujeto, accion, ambiente, iluminacion (elige la que mejor calce: golden hour, luz de estudio, luz natural), movimiento de camara (elige el que mejor calce con el tono pedido: camara lenta/slow motion, zoom in, tracking shot, u otro), composicion visual, paleta de colores, estilo cinematografico, y el texto en pantalla si se pidio uno.
+
+Producto: {nombre}
+Precio: Q{precio}
+Oferta: {oferta}
+Plataforma: {plataforma}
+Tono deseado: {tono}
+Que mostrar: {mostrar}
+Texto en pantalla: {texto_pantalla}
+Duracion: {duracion} segundos
+
+Responde SOLO con el prompt final para Veo 3, sin explicaciones, sin comillas, sin encabezados."""
+
+
+def _generar_video_final(nombre, prompt, foto, aspect_ratio, duracion):
+    """Ultimo paso del flujo de videofoto_*: llama a Veo 3 con el prompt ya
+    decidido (basico, optimizado por Ollama, o editado a mano por el usuario -
+    a esta altura da igual cual de los tres, ya es texto plano) y arma la
+    misma respuesta HTML (video + boton de descarga) que el resto de flujos
+    de video de este archivo."""
+    from services.video_gen import generar_video_producto
+    ruta, error = generar_video_producto(nombre, prompt, foto if foto else None, duracion=duracion, aspect_ratio=aspect_ratio)
+    if error:
+        return f"Error generando el video: {error}", {}
+    return (f'<video controls style="max-width:300px;border-radius:8px"><source src="{ruta}" type="video/mp4"></video><br>'
+            f'Video de {nombre} generado. <a href="{ruta}" download style="color:var(--accent)">⬇️ Descargar</a>'), {}
+
+
 def send(message: str, context: dict = None, role: str = "admin") -> tuple:
     """
     Retorna (respuesta, context_actualizado)
@@ -869,6 +960,12 @@ def send(message: str, context: dict = None, role: str = "admin") -> tuple:
     # video_waiting_texto de arriba (ese arranca escribiendo "video de X" por
     # texto; este arranca subiendo una foto) - preguntas y datos distintos,
     # aunque ambos terminan llamando a generar_video_producto().
+    #
+    # Despues de tono, el flujo sigue con mostrar/texto en pantalla/duracion/
+    # optimizar-con-IA (ver videofoto_waiting_mostrar en adelante) y termina
+    # SIEMPRE con una previsualizacion del prompt final (basico o el que arme
+    # Ollama) antes de generar el video - "confirmar" genera de una vez,
+    # "editar" pide un prompt de reemplazo completo y genera con ese.
     if step == "videofoto_waiting_confirmar":
         resp = message.strip().lower()
         if resp not in ["si", "si.", "sí", "s", "ok", "dale", "yes", "de una"]:
@@ -911,53 +1008,103 @@ def send(message: str, context: dict = None, role: str = "admin") -> tuple:
         return "¿Qué tono quieres? (Urgente y llamativo / Informativo / Divertido y casual / Elegante)", context
 
     if step == "videofoto_waiting_tono":
-        # Ultimo paso: ya con oferta/plataforma/tono se arma el prompt dinamico
-        # y se genera el video de una sola vez (a diferencia del flujo de
-        # video_waiting_texto/video_generando de arriba, que separa "avisar que
-        # esta generando" y "generar" en dos mensajes distintos del usuario -
-        # aqui se genera en la misma respuesta para no depender de que el
-        # usuario mande un mensaje extra que dispare el paso real).
-        from services.video_gen import generar_video_producto
+        context["vf_tono"] = message.strip()
+        context["step"] = "videofoto_waiting_mostrar"
+        return "¿Qué quieres mostrar en el video? (uso del producto / características / demostración / unboxing)", context
+
+    if step == "videofoto_waiting_mostrar":
+        context["vf_mostrar"] = message.strip()
+        context["step"] = "videofoto_waiting_texto_pantalla"
+        return "¿Algún texto o frase que quieras que aparezca en el video? (escríbelo, o 'no')", context
+
+    if step == "videofoto_waiting_texto_pantalla":
+        texto = message.strip()
+        context["vf_texto_pantalla"] = "" if texto.lower() in ("no", "no.", "ninguno", "ninguna") else texto
+        context["step"] = "videofoto_waiting_duracion"
+        return "¿Duración aproximada? (6 segundos / 15 segundos / 30 segundos)", context
+
+    if step == "videofoto_waiting_duracion":
+        m = re.search(r"(\d+)", message)
+        context["vf_duracion"] = int(m.group(1)) if m else 8
+        context["step"] = "videofoto_waiting_optimizar"
+        return "¿Quieres que Nimbo optimice el prompt automáticamente con IA para mejor calidad visual? (si/no)", context
+
+    if step == "videofoto_waiting_optimizar":
+        # Ultimo paso de preguntas: con todo lo recolectado se arma el prompt
+        # basico (siempre - sirve de prompt final si el usuario dijo "no", y de
+        # respaldo si dijo "si" pero Ollama no responde) y, si pidio
+        # optimizacion con IA, se le pide a Ollama un prompt profesional de
+        # videografia siguiendo la estructura de Veo 3 (ver
+        # PROMPT_OPTIMIZAR_VIDEO mas abajo). En cualquier caso el resultado se
+        # muestra ANTES de generar nada (videofoto_waiting_prompt_decision) -
+        # a diferencia del flujo anterior a este cambio, que generaba el video
+        # apenas terminaban las preguntas.
+        resp = unicodedata.normalize("NFD", message.strip()).encode("ascii", "ignore").decode("utf-8").lower()
+        optimizar = resp in ["si", "si.", "sí", "s", "ok", "dale", "yes", "de una"]
 
         nombre = context.get("vf_nombre", "")
         precio = context.get("vf_precio", "")
         foto = context.get("vf_foto", "")
         oferta = context.get("vf_oferta", "")
-        plataforma_raw = unicodedata.normalize("NFD", context.get("vf_plataforma", "")).encode("ascii", "ignore").decode("utf-8").lower()
-        tono_raw = unicodedata.normalize("NFD", message.strip()).encode("ascii", "ignore").decode("utf-8").lower()
-        context = {}
+        mostrar = context.get("vf_mostrar", "")
+        texto_pantalla = context.get("vf_texto_pantalla", "")
+        duracion = context.get("vf_duracion", 8)
+        plataforma_texto, aspect_ratio = _resolver_plataforma_video(context.get("vf_plataforma", ""))
+        tono_texto = _resolver_tono_video(context.get("vf_tono", ""))
 
-        if "tiktok" in plataforma_raw:
-            plataforma_texto, aspect_ratio = "TikTok", "9:16"
-        elif "reel" in plataforma_raw or "instagram" in plataforma_raw:
-            plataforma_texto, aspect_ratio = "Instagram Reels", "9:16"
-        elif "facebook" in plataforma_raw:
-            plataforma_texto, aspect_ratio = "Facebook", "1:1"
+        prompt_basico = _prompt_basico_video(nombre, precio, oferta, plataforma_texto, tono_texto, mostrar, texto_pantalla, duracion)
+
+        aviso = ""
+        if optimizar:
+            from services.ollama_service import llamar_ollama, MENSAJE_TIMEOUT
+            meta_prompt = PROMPT_OPTIMIZAR_VIDEO.format(
+                nombre=nombre, precio=precio, oferta=oferta or "ninguna",
+                plataforma=plataforma_texto, tono=tono_texto,
+                mostrar=mostrar or "no especificado", texto_pantalla=texto_pantalla or "ninguno",
+                duracion=duracion,
+            )
+            prompt_ia = llamar_ollama(meta_prompt)
+            if prompt_ia and prompt_ia != MENSAJE_TIMEOUT:
+                prompt_final = prompt_ia.strip()
+            else:
+                prompt_final = prompt_basico
+                aviso = "\n\n(No pude optimizar el prompt con IA en este momento - uso la versión básica.)"
         else:
-            plataforma_texto, aspect_ratio = "redes sociales en general", "9:16"
+            prompt_final = prompt_basico
 
-        if "urgente" in tono_raw or "llamativo" in tono_raw:
-            tono_texto = "urgente y llamativo, con sensacion de oferta por tiempo limitado, texto grande en pantalla y colores vibrantes"
-        elif "informativo" in tono_raw:
-            tono_texto = "informativo y claro, resaltando las caracteristicas y beneficios del producto"
-        elif "divertido" in tono_raw or "casual" in tono_raw:
-            tono_texto = "divertido, casual y energico, cercano al cliente"
-        elif "elegante" in tono_raw:
-            tono_texto = "elegante y sofisticado, con iluminacion premium y ritmo pausado"
-        else:
-            tono_texto = message.strip()
+        context = {
+            "step": "videofoto_waiting_prompt_decision",
+            "vf_nombre": nombre,
+            "vf_foto": foto,
+            "vf_aspect_ratio": aspect_ratio,
+            "vf_duracion": duracion,
+            "vf_prompt_final": prompt_final,
+        }
+        return (f"Este es el prompt final que se usará para generar el video:\n\n{prompt_final}{aviso}\n\n"
+                f"¿Confirmar y generar video, o prefieres editarlo? (escribe 'confirmar' o 'editar')"), context
 
-        prompt = f"Video publicitario de {nombre} para Mi Cocina Electrodomesticos Guatemala, para {plataforma_texto}. Precio Q{precio}."
-        if oferta:
-            prompt += f" Oferta especial: {oferta}."
-        prompt += f" Tono {tono_texto}."
-        prompt += " En espanol guatemalteco, colores llamativos, texto grande y legible en pantalla, estilo comercial profesional."
+    if step == "videofoto_waiting_prompt_decision":
+        resp = unicodedata.normalize("NFD", message.strip()).encode("ascii", "ignore").decode("utf-8").lower()
+        if resp in ("editar", "edita", "editar prompt", "cambiar", "modificar"):
+            context["step"] = "videofoto_waiting_prompt_editado"
+            return "Escribe el prompt que quieras usar en su lugar (reemplaza el anterior por completo):", context
+        if resp in ("confirmar", "confirma", "confirmar y generar video", "si", "si.", "sí", "s", "ok", "dale", "generar", "genera", "de una"):
+            return _generar_video_final(
+                context.get("vf_nombre", ""), context.get("vf_prompt_final", ""),
+                context.get("vf_foto", ""), context.get("vf_aspect_ratio", "9:16"),
+                context.get("vf_duracion", 8),
+            )
+        return "No entendí. Escribe 'confirmar' para generar el video con este prompt, o 'editar' para cambiarlo.", context
 
-        ruta, error = generar_video_producto(nombre, prompt, foto if foto else None, aspect_ratio=aspect_ratio)
-        if error:
-            return f"Error generando el video: {error}", context
-        return (f'<video controls style="max-width:300px;border-radius:8px"><source src="{ruta}" type="video/mp4"></video><br>'
-                f'Video de {nombre} generado. <a href="{ruta}" download style="color:var(--accent)">⬇️ Descargar</a>'), context
+    if step == "videofoto_waiting_prompt_editado":
+        prompt_editado = message.strip()
+        if not prompt_editado:
+            return "El prompt no puede quedar vacío. Escribe el prompt que quieras usar:", context
+        return _generar_video_final(
+            context.get("vf_nombre", ""), prompt_editado,
+            context.get("vf_foto", ""), context.get("vf_aspect_ratio", "9:16"),
+            context.get("vf_duracion", 8),
+        )
 
     # Flujo de descripcion de producto
     if step == "desc_waiting_descripcion":

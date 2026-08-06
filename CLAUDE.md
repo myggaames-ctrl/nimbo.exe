@@ -767,7 +767,14 @@ identificacion de cobro).
     `core/detectors/contenido_foto_detector.py` reconoce ese marcador (ya en
     minuscula, el texto pasa antes por `CommandNormalizer.normalize()`) solo si
     ademas trae una palabra clave (video/promocion/contenido/publicar) - una foto sin
-    esas palabras no dispara el flujo, sigue de largo por el resto del pipeline.
+    esas palabras no dispara el flujo, sigue de largo por el resto del pipeline. El
+    valor de `ruta` dentro del marcador tambien se valida contra
+    `PATRON_RUTA_FOTO_VALIDA` (exige la forma exacta `/static/fotos/chat_temp/
+    <uuid>.<ext>` que genera `/api/chat/foto`) antes de aceptar el match - sin esto,
+    un mensaje escrito directo a `/api/chat` con un `[foto:ruta]` armado a mano
+    hubiera permitido path traversal (ver BUGS_Y_FIXES.md, fix del 2026-08-06);
+    `tools/contenido_tool.py.video_desde_foto_tool()` revalida la misma ruta con
+    `os.path.realpath()` antes de tocar el disco, como defensa en profundidad.
     `tools/contenido_tool.py.video_desde_foto_tool()` (intent
     `contenido.video_desde_foto`, admin-only como el resto de "contenido") intenta
     identificar el producto con Ollama vision si el modelo pulled lo soporta (ver
@@ -781,12 +788,33 @@ identificacion de cobro).
     ("Encontre X, precio QY. Quieres que genere un video?"); si no, pide nombre y
     precio en un solo mensaje (ej. "licuadora oster 350") sin crear un `Producto`
     nuevo en la base de datos (a proposito, para no mutar el inventario como efecto
-    secundario de este flujo). Despues pregunta oferta/promocion, plataforma (TikTok/
-    Instagram Reels/Facebook/General - mapea a `aspect_ratio` 9:16 o 1:1 para
-    Facebook, ver `services/video_gen.py`) y tono (urgente y llamativo/informativo/
-    divertido y casual/elegante), arma el prompt dinamico y llama a
-    `generar_video_producto()` en la misma respuesta, mostrando el video con boton de
-    descarga igual que el flujo de texto existente.
+    secundario de este flujo). Despues pregunta, una por una: oferta/promocion,
+    plataforma (TikTok/Instagram Reels/Facebook/General - mapea a `aspect_ratio` 9:16
+    o 1:1 para Facebook, ver `_resolver_plataforma_video()` en `services/video_gen.py`
+    y `core/nimbo.py`), tono (urgente y llamativo/informativo/divertido y casual/
+    elegante, `_resolver_tono_video()`), que mostrar en el video (uso del producto/
+    caracteristicas/demostracion/unboxing - texto libre, no se valida contra una
+    lista), texto en pantalla (libre, o "no"), duracion aproximada (6/15/30 segundos u
+    otro numero que el usuario escriba - no se pudo verificar si Veo 3 acepta
+    cualquier duracion o solo valores especificos, mismo tipo de limitacion ya
+    documentada para `aspect_ratio`) y si quiere que Nimbo optimice el prompt con IA.
+    Con "no" arma un prompt basico deterministico
+    (`_prompt_basico_video()`) directo con las respuestas; con "si" le pide a Ollama
+    (`llamar_ollama()`, no `analizar_ollama()` - mismo criterio que el resto de
+    generacion de contenido de este archivo, no es un analisis largo) que redacte un
+    prompt profesional de videografia siguiendo la estructura de Veo 3 (escena
+    principal, sujeto, accion, ambiente, iluminacion, camara, composicion, paleta de
+    colores, estilo, texto en pantalla - ver el meta-prompt `PROMPT_OPTIMIZAR_VIDEO`),
+    con fallback silencioso (con aviso en la respuesta) al prompt basico si Ollama no
+    responde. En cualquiera de los dos casos, el prompt final se muestra completo en
+    el chat ANTES de generar nada, con dos opciones: "confirmar" (genera el video de
+    una vez con ese prompt) o "editar" (pide que el usuario escriba un prompt de
+    reemplazo completo - el chat no tiene un campo de texto editable real como tal,
+    el "editar" en este contexto es "mandame el texto completo que quieras usar en su
+    lugar" como el siguiente mensaje del chat). `_generar_video_final()` es el unico
+    punto que llama a `generar_video_producto()` en este flujo (desde "confirmar" o
+    desde el prompt editado), mostrando el video con boton de descarga igual que el
+    flujo de texto existente.
 - Recordatorios: pagos fijos, follow ups, cumpleanos, contenido
 - Backup: automatico 8pm, manual, 7 backups maximos
 - Login y roles: admin/empleado, onboarding /setup, gestion de usuarios, cambio y

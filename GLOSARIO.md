@@ -1148,3 +1148,24 @@ flujo de varios pasos" (ej. `VIDEOFOTO_ENCONTRADO_INICIO:id|nombre|precio|foto`)
 para que quien lo reciba sepa, con solo ver esa palabra, que tiene que tratarlo
 distinto al resto de correos normales - sin necesidad de un sistema de correo
 completamente distinto solo para los urgentes.
+
+---
+
+### meta-prompt (un prompt que le pide a la IA que escriba otro prompt)
+**Qué es:** un prompt (la instrucción que se le manda a un modelo de IA) cuyo trabajo
+no es responder la pregunta final del usuario, sino generar OTRO prompt más elaborado
+que después se usa para la tarea real.
+
+**Para qué sirve en Nimbo:** en el flujo de "video desde foto" (ver
+`core/nimbo.py.PROMPT_OPTIMIZAR_VIDEO`), cuando el usuario pide que Nimbo optimice el
+video con IA, no se le manda a Veo 3 directamente lo que el usuario escribió - primero
+se le pide a Ollama (con `PROMPT_OPTIMIZAR_VIDEO`, el meta-prompt) que, a partir de los
+datos recolectados (producto, precio, tono, plataforma, etc.), redacte un prompt
+profesional de videografía (con iluminación, movimiento de cámara, composición, etc.)
+- y ES ESE prompt, el que devuelve Ollama, el que finalmente se le manda a Veo 3.
+
+**Ejemplo de la vida real:** es como pedirle a un redactor publicitario profesional
+que convierta tu idea suelta ("quiero un anuncio de la licuadora, que se vea bien") en
+un guion detallado y técnico, en vez de dárselo tú mismo al camarógrafo sin pulir -
+el redactor no filma nada, solo mejora las instrucciones que después usa otra persona
+(o, en este caso, otro sistema de IA) para hacer el trabajo final.

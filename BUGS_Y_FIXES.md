@@ -2359,3 +2359,97 @@ permitida como `.php`, byte NUL) - todas rechazadas.
 
 **Archivos modificados:** `core/detectors/contenido_foto_detector.py`,
 `tools/contenido_tool.py`.
+
+---
+
+## [2026-08-06] Flujo de video desde foto enriquecido: más preguntas, prompt profesional con IA opcional, y previsualización antes de generar
+
+**Problema:** el flujo de "video de producto desde una foto subida al chat" (entrada
+anterior de esta misma fecha) preguntaba solo oferta/plataforma/tono y generaba el
+video de inmediato con un prompt básico armado directo con esas respuestas - sin
+posibilidad de pedir más control creativo (qué mostrar, texto en pantalla, duración),
+sin aprovechar IA para mejorar la calidad del prompt, y sin que el usuario pudiera ver
+ni ajustar el prompt final antes de gastar una generación real de Veo 3.
+
+**Causa:** no es un bug, es una funcionalidad nueva pedida explícitamente. Se
+documenta acá (además de en `CLAUDE.md`) porque así se pidió para esta instalación.
+
+**Solución:**
+- `core/nimbo.py`: el step `videofoto_waiting_tono` ya no genera el video de una vez
+  - ahora encadena 4 preguntas nuevas: `videofoto_waiting_mostrar` ("¿Qué quieres
+  mostrar en el video?" - uso del producto/características/demostración/unboxing, se
+  guarda tal cual, sin validar contra esa lista), `videofoto_waiting_texto_pantalla`
+  (texto libre o "no"), `videofoto_waiting_duracion` (6/15/30 segundos, o cualquier
+  número que el usuario escriba - se toma el primer número del mensaje, default 8 si
+  no hay ninguno) y `videofoto_waiting_optimizar` (sí/no a la optimización con IA).
+- `_prompt_basico_video()` (nuevo, helper de módulo en `core/nimbo.py`) arma el mismo
+  tipo de prompt determinista de antes, ahora incluyendo también qué mostrar, texto en
+  pantalla y duración. Se usa siempre que el usuario dice "no" a la optimización, y
+  también como respaldo si dijo "sí" pero Ollama no responde.
+- Si el usuario pide optimización con IA, `videofoto_waiting_optimizar` le manda a
+  Ollama (`llamar_ollama()`, mismo criterio que el resto de generación de contenido de
+  este archivo - no es un análisis largo como para justificar `analizar_ollama()`) un
+  meta-prompt nuevo (`PROMPT_OPTIMIZAR_VIDEO`) pidiéndole que redacte un prompt
+  profesional de videografía para Veo 3, cubriendo en orden: escena principal, sujeto,
+  acción, ambiente, iluminación (eligiendo entre golden hour/luz de estudio/luz
+  natural), movimiento de cámara (cámara lenta/zoom in/tracking shot u otro que calce
+  con el tono pedido), composición visual, paleta de colores, estilo cinematográfico y
+  el texto en pantalla si se pidió uno - a partir de todos los datos ya recolectados
+  (producto, precio, oferta, plataforma, tono, qué mostrar, texto en pantalla,
+  duración). Si Ollama no responde (`None` o `MENSAJE_TIMEOUT`), cae al prompt básico
+  con un aviso explícito en la respuesta ("No pude optimizar el prompt con IA en este
+  momento").
+- En cualquiera de los dos casos (básico u optimizado), el prompt final se muestra
+  COMPLETO en el chat antes de generar nada, con dos opciones en texto: "confirmar" o
+  "editar" (step `videofoto_waiting_prompt_decision`). "confirmar" genera el video de
+  una vez con ese prompt. "editar" pasa al step `videofoto_waiting_prompt_editado`,
+  que pide que el usuario mande el prompt completo de reemplazo como su próximo
+  mensaje - el chat no tiene un campo de texto editable real (eso requeriría UI nueva,
+  fuera de lo pedido para este cambio, que solo tocó `tools/contenido_tool.py` y
+  `core/nimbo.py`), así que "editar" en este contexto significa "escribime el texto
+  completo que quieras usar en su lugar". Cualquier respuesta no reconocida en
+  `videofoto_waiting_prompt_decision` vuelve a preguntar sin avanzar, en vez de
+  interpretar cualquier cosa como confirmación.
+- `_resolver_plataforma_video()` y `_resolver_tono_video()` (nuevos helpers,
+  extraídos del código que antes vivía inline dentro de `videofoto_waiting_tono`) se
+  reutilizan ahora en `videofoto_waiting_optimizar` para construir tanto el prompt
+  básico como los datos que se le mandan a Ollama.
+- `_generar_video_final()` (nuevo helper) es el único punto que llama a
+  `generar_video_producto()` en este flujo completo - lo usan tanto "confirmar" como
+  el prompt editado, evitando duplicar la construcción de la respuesta HTML
+  (`<video>` + botón de descarga). Ahora también pasa `duracion` (antes el flujo
+  siempre usaba el default de 8 segundos de `generar_video_producto()`, sin exponer
+  ese parámetro al usuario).
+- No se pudo verificar contra documentación real de Vertex AI si Veo 3 acepta
+  cualquier valor de `duration_seconds` o solo un set fijo (misma limitación ya
+  documentada para `aspect_ratio` en la entrada anterior) - si la API rechaza el
+  valor, `operation.error` lo reporta igual que cualquier otro error, no revienta en
+  silencio.
+
+**Verificación:** con una empresa de prueba desechable (mismo mecanismo que la
+entrada anterior) se probó, llamando a `core.nimbo.send()` directo con
+`services.video_gen.generar_video_producto` y `services.ollama_service.llamar_ollama`
+mockeados con `unittest.mock.patch`:
+1. Camino completo con optimización con IA: las 4 preguntas nuevas + "sí" a
+   optimizar → el meta-prompt le llega a Ollama con todos los datos correctos → el
+   prompt que devuelve el mock se muestra completo en el chat → "confirmar" genera el
+   video con ese prompt exacto, la duración (15) y el `aspect_ratio` (9:16 para
+   TikTok) correctos.
+2. Camino completo sin IA + "editar": "no" a optimizar → se arma y muestra el prompt
+   básico (con mostrar/texto en pantalla/duración incluidos) → "editar" pide el
+   reemplazo → el prompt editado a mano se usa tal cual para generar el video, con la
+   duración (6) y `aspect_ratio` (1:1 para Facebook) correctos.
+3. Ollama no responde (`None`) durante la optimización → cae al prompt básico con el
+   aviso correspondiente en la respuesta, sin romper el flujo.
+4. Respuesta no reconocida en `videofoto_waiting_prompt_decision` → vuelve a
+   preguntar sin avanzar ni perder el contexto.
+5. Cancelación (`"cancelar"`) a mitad del tramo nuevo de preguntas corta el flujo
+   limpiamente, igual que en el resto del sistema.
+
+No se pudo probar una llamada real a Ollama ni a Veo 3/Vertex AI (mockeados a
+propósito - una llamada real a Veo 3 requeriría billing real de GCP, fuera de alcance
+disparar eso unilateralmente) ni en un navegador real (sin la extensión Claude in
+Chrome instalada) - ambas limitaciones se comunican acá en vez de asumir que
+funcionan sin haberlo verificado.
+
+**Archivos modificados:** `core/nimbo.py`, `CLAUDE.md`.
