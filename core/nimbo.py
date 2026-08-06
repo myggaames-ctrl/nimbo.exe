@@ -787,128 +787,42 @@ def _preguntar_descripcion_visual_o_oferta(context: dict, prefijo: str = ""):
     return f"{prefijo}¿Hay oferta o promoción? (precio especial, descuento, 2x1, etc. o escribe 'no')", context
 
 
-def _resolver_plataforma_video(texto_plataforma: str):
-    """Convierte la respuesta libre del usuario a la pregunta de plataforma en
-    (texto legible para el prompt, aspect_ratio para Veo 3). Vertical (9:16)
-    para TikTok/Reels/General, cuadrado (1:1) para Facebook - ver
-    services/video_gen.py."""
-    plataforma_raw = unicodedata.normalize("NFD", texto_plataforma or "").encode("ascii", "ignore").decode("utf-8").lower()
-    if "tiktok" in plataforma_raw:
-        return "TikTok", "9:16"
-    if "reel" in plataforma_raw or "instagram" in plataforma_raw:
-        return "Instagram Reels", "9:16"
-    if "facebook" in plataforma_raw:
-        return "Facebook", "1:1"
-    return "redes sociales en general", "9:16"
+NOMBRE_PLATAFORMA = {"tiktok": "TikTok", "instagram": "Instagram", "facebook": "Facebook"}
 
 
-def _resolver_tono_video(texto_tono: str):
-    """Convierte la respuesta libre del usuario a la pregunta de tono en una
-    frase descriptiva lista para meter en el prompt. Si no matchea ninguno de
-    los 4 tonos sugeridos, usa el texto tal cual lo escribio el usuario (puede
-    haber escrito un tono propio, no listado en la pregunta)."""
-    tono_raw = unicodedata.normalize("NFD", texto_tono or "").encode("ascii", "ignore").decode("utf-8").lower()
-    if "urgente" in tono_raw or "llamativo" in tono_raw:
-        return "urgente y llamativo, con sensacion de oferta por tiempo limitado, texto grande en pantalla y colores vibrantes"
-    if "informativo" in tono_raw:
-        return "informativo y claro, resaltando las caracteristicas y beneficios del producto"
-    if "divertido" in tono_raw or "casual" in tono_raw:
-        return "divertido, casual y energico, cercano al cliente"
-    if "elegante" in tono_raw:
-        return "elegante y sofisticado, con iluminacion premium y ritmo pausado"
-    return texto_tono.strip() if texto_tono else ""
+def _resolver_plataforma_motor(texto_plataforma: str) -> str:
+    """Interpreta la respuesta libre del usuario en
+    videofoto_waiting_plataforma_unica a una de las 3 claves que espera el
+    motor determinista (core/video_prompt_engine.py): 'tiktok', 'instagram'
+    o 'facebook'. Default 'tiktok' si no reconoce nada."""
+    texto_norm = unicodedata.normalize("NFD", texto_plataforma or "").encode("ascii", "ignore").decode("utf-8").lower()
+    if "tiktok" in texto_norm:
+        return "tiktok"
+    if "insta" in texto_norm or "reel" in texto_norm:
+        return "instagram"
+    if "facebook" in texto_norm or texto_norm.strip() == "fb":
+        return "facebook"
+    return "tiktok"
 
 
-def _prompt_basico_video(nombre, precio, oferta, plataforma_texto, tono_texto, mostrar, texto_pantalla, duracion, descripcion_visual="", uso_correcto=""):
-    """Prompt determinista armado directo con las respuestas del usuario, sin
-    pasar por Ollama - es el que se usa si el usuario dijo 'no' a la
-    optimizacion con IA (videofoto_waiting_optimizar), y tambien el respaldo
-    si dijo 'si' pero Ollama no respondio. descripcion_visual (el analisis
-    real de la foto, ver video_desde_foto_tool) y uso_correcto (ver
-    _inferir_uso_correcto_producto) son opcionales - vacios si no estan
-    disponibles (llava no pulled, o Ollama no respondio)."""
-    prompt = f"Video publicitario de {nombre} para Mi Cocina Electrodomesticos Guatemala, para {plataforma_texto}. Precio Q{precio}."
-    if oferta:
-        prompt += f" Oferta especial: {oferta}."
-    if descripcion_visual:
-        prompt += (f" El producto se ve exactamente asi en la foto real: {descripcion_visual}. "
-                   f"Usar ese mismo color, material y forma reales en el video, con un fondo NUEVO "
-                   f"apropiado para publicidad (cocina moderna o fondo blanco limpio), no el fondo "
-                   f"de la foto original.")
-    if uso_correcto:
-        prompt += f" Mostrar el producto en su uso correcto: {uso_correcto}."
-    if mostrar:
-        prompt += f" Mostrando: {mostrar}."
-    if texto_pantalla:
-        prompt += f' Texto en pantalla: "{texto_pantalla}".'
-    prompt += f" Duracion aproximada: {duracion} segundos."
-    prompt += f" Tono {tono_texto}."
-    prompt += " En espanol guatemalteco, colores llamativos, texto grande y legible en pantalla, estilo comercial profesional."
-    if descripcion_visual:
-        prompt += " No inventar caracteristicas del producto que no se vean en la foto real."
-    return prompt
-
-
-# Meta-prompt que le pide a Ollama que infiera el uso correcto y logico de un
-# producto a partir de su NOMBRE (no de la foto - esto es razonamiento sobre
-# que hace el producto, no sobre como se ve). Necesario porque un prompt de
-# video generado sin esto puede mostrar una accion equivocada (ej. una
-# licuadora "batiendo" en vez de "licuando", un sarten para huevos mostrando
-# huevos revueltos en vez de estrellados).
-PROMPT_USO_CORRECTO = """Eres un experto en electrodomesticos y utensilios de cocina. Para este producto de una tienda en Guatemala, describe en UNA frase corta y concreta cual es el uso correcto y logico que deberia mostrarse en un video publicitario (que accion especifica hace o para que se usa, con que resultado).
-
-Ejemplos: "sarten para 4 huevos" -> "friendo huevos estrellados, no revueltos"; "licuadora" -> "licuando fruta fresca hasta quedar liquida, no batiendo masa"; "arrocera" -> "arroz cocinandose al vapor con la tapadera cerrada".
-
-Producto: {nombre}
-
-Responde SOLO con la frase del uso correcto, en espanol, sin explicaciones ni comillas."""
-
-
-def _inferir_uso_correcto_producto(nombre: str) -> str:
-    """Le pregunta a Ollama (el modelo de chat normal, no vision - esto es
-    razonamiento sobre el NOMBRE del producto, no sobre la foto) cual es el
-    uso logico y correcto de este producto especifico. Se llama siempre que
-    hay un nombre de producto (no solo cuando el usuario pide optimizar con
-    IA - ver videofoto_waiting_optimizar), porque tambien alimenta el prompt
-    basico. Si Ollama no responde, devuelve "" (el prompt sigue sin esta
-    frase, no bloquea nada)."""
-    if not nombre:
-        return ""
-    from services.ollama_service import llamar_ollama, MENSAJE_TIMEOUT
-    resp = llamar_ollama(PROMPT_USO_CORRECTO.format(nombre=nombre))
-    if resp and resp != MENSAJE_TIMEOUT:
-        return resp.strip()
-    return ""
-
-
-# Meta-prompt que le pide a Ollama que arme un prompt profesional de
-# videografia para Veo 3 (estructura pedida explicitamente: escena principal,
-# sujeto, accion, ambiente, iluminacion, camara, estilo, texto en pantalla) a
-# partir de las respuestas ya recolectadas - ver videofoto_waiting_optimizar.
-# Mismo modelo/funcion (llamar_ollama) que el resto de generacion de
-# contenido de este archivo (post/script), no analizar_ollama - esto no es un
-# analisis financiero/estrategico largo, es generacion de contenido corta,
-# mismo criterio que tools/contenido_tool.py. descripcion_visual y
-# uso_correcto vienen del analisis real de la foto y del nombre del producto
-# (ver _inferir_uso_correcto_producto) - se le pide EXPLICITAMENTE a Ollama
-# que use esos datos tal cual, sin inventar, para que el video muestre el
-# producto real y no una version generica.
-PROMPT_OPTIMIZAR_VIDEO = """Eres un director de videografia publicitaria experto en escribir prompts profesionales para Veo 3, el generador de video de Google.
-
-Con estos datos REALES de un producto de una tienda de electrodomesticos y repuestos en Guatemala (la descripcion visual viene de un analisis real de una foto del producto - USALA TAL CUAL, no inventes ni cambies colores/materiales/formas que no esten ahi), escribe UN SOLO prompt en espanol guatemalteco para Veo 3 - un parrafo fluido, sin encabezados ni listas, que cubra en este orden: escena principal, sujeto (el producto EXACTAMENTE como se describe en "Descripcion visual real" - mismo color, material y forma, en un fondo NUEVO apropiado para publicidad como una cocina moderna o un fondo blanco limpio, nunca el fondo original de la foto), accion (mostrando el producto en su uso correcto y logico segun "Uso correcto del producto", no uno inventado), ambiente, iluminacion (elige la que mejor calce: golden hour, luz de estudio, luz natural), movimiento de camara (elige el que mejor calce con el tono pedido: camara lenta/slow motion, zoom in, tracking shot, u otro), composicion visual, paleta de colores, estilo cinematografico, y el texto en pantalla si se pidio uno. NUNCA inventes caracteristicas del producto que no esten en la descripcion visual real.
-
-Producto: {nombre}
-Precio: Q{precio}
-Oferta: {oferta}
-Descripcion visual real (de la foto): {descripcion_visual}
-Uso correcto del producto: {uso_correcto}
-Plataforma: {plataforma}
-Tono deseado: {tono}
-Que mostrar: {mostrar}
-Texto en pantalla: {texto_pantalla}
-Duracion: {duracion} segundos
-
-Responde SOLO con el prompt final para Veo 3, sin explicaciones, sin comillas, sin encabezados."""
+def _armar_datos_motor(context: dict) -> dict:
+    """Junta los datos ya recolectados en el context (nombre/precio/
+    descripcion visual/oferta/mostrar/texto en pantalla) en los kwargs que
+    espera core.video_prompt_engine.construir_prompts_video(). vf_plataforma
+    y vf_tono NO se incluyen a proposito: el motor determinista asigna un
+    tono y estilo fijo y curado por plataforma (ver
+    core/video_prompt_engine.py) que reemplaza la seleccion de tono libre
+    del usuario - esas 2 preguntas siguen en el flujo (no se removieron, no
+    era parte de este pedido) pero su respuesta ya no se usa para armar el
+    prompt."""
+    return {
+        "nombre": context.get("vf_nombre", ""),
+        "precio": context.get("vf_precio", ""),
+        "descripcion_visual": context.get("vf_descripcion_visual", ""),
+        "oferta": context.get("vf_oferta", ""),
+        "mostrar": context.get("vf_mostrar", ""),
+        "texto_pantalla": context.get("vf_texto_pantalla", ""),
+    }
 
 
 # Meta-prompt para videofoto_waiting_ajuste: le pide a Ollama que reescriba el
@@ -1238,68 +1152,77 @@ def send(message: str, context: dict = None, role: str = "admin") -> tuple:
             context["vf_duracion"] = min(DURACIONES_VEO3_VALIDAS, key=lambda d: abs(d - int(m.group(1))))
         else:
             context["vf_duracion"] = 8
-        context["step"] = "videofoto_waiting_optimizar"
-        return "¿Quieres que Nimbo optimice el prompt automáticamente con IA para mejor calidad visual? (si/no)", context
+        context["step"] = "videofoto_waiting_cuantos_prompts"
+        return "¿Quieres los 3 prompts (TikTok/Instagram/Facebook) o solo uno? (3 / uno)", context
 
-    if step == "videofoto_waiting_optimizar":
-        # Ultimo paso de preguntas: con todo lo recolectado se arma el prompt
-        # basico (siempre - sirve de prompt final si el usuario dijo "no", y de
-        # respaldo si dijo "si" pero Ollama no responde) y, si pidio
-        # optimizacion con IA, se le pide a Ollama un prompt profesional de
-        # videografia siguiendo la estructura de Veo 3 (ver
-        # PROMPT_OPTIMIZAR_VIDEO mas abajo). En cualquier caso el resultado se
-        # muestra ANTES de generar nada (videofoto_waiting_prompt_decision) -
-        # a diferencia del flujo anterior a este cambio, que generaba el video
-        # apenas terminaban las preguntas.
+    if step == "videofoto_waiting_cuantos_prompts":
+        # Ultimo paso de preguntas: con todo lo recolectado, el motor
+        # determinista (core/video_prompt_engine.py - sin Ollama, ver ese
+        # archivo) arma los 3 prompts listos para Veo 3. "3" los muestra
+        # todos numerados para elegir uno (videofoto_waiting_elegir_prompt_
+        # multiple); "uno" pregunta la plataforma primero
+        # (videofoto_waiting_plataforma_unica) y muestra solo ese.
+        from core.video_prompt_engine import construir_prompts_video
+
         resp = unicodedata.normalize("NFD", message.strip()).encode("ascii", "ignore").decode("utf-8").lower()
-        optimizar = resp in ["si", "si.", "sí", "s", "ok", "dale", "yes", "de una"]
+        quiere_los_3 = resp in ("3", "los 3", "las 3", "tres", "todos", "todas", "los tres")
 
-        nombre = context.get("vf_nombre", "")
-        precio = context.get("vf_precio", "")
-        foto = context.get("vf_foto", "")
-        oferta = context.get("vf_oferta", "")
-        mostrar = context.get("vf_mostrar", "")
-        texto_pantalla = context.get("vf_texto_pantalla", "")
-        duracion = context.get("vf_duracion", 8)
-        descripcion_visual = context.get("vf_descripcion_visual", "")
-        plataforma_texto, aspect_ratio = _resolver_plataforma_video(context.get("vf_plataforma", ""))
-        tono_texto = _resolver_tono_video(context.get("vf_tono", ""))
-        # Se infiere siempre (no solo si se pide optimizar con IA) porque
-        # tambien alimenta el prompt basico, no solo el optimizado con IA.
-        uso_correcto = _inferir_uso_correcto_producto(nombre)
+        if quiere_los_3:
+            prompts = construir_prompts_video(**_armar_datos_motor(context))
+            context["vf_prompt_1"] = prompts["tiktok"]
+            context["vf_prompt_1_plataforma"] = "tiktok"
+            context["vf_prompt_2"] = prompts["instagram"]
+            context["vf_prompt_2_plataforma"] = "instagram"
+            context["vf_prompt_3"] = prompts["facebook"]
+            context["vf_prompt_3_plataforma"] = "facebook"
+            context["step"] = "videofoto_waiting_elegir_prompt_multiple"
+            return (f"Aquí tienes los 3 prompts:\n\n"
+                    f"1) TikTok:\n{prompts['tiktok']}\n\n"
+                    f"2) Instagram:\n{prompts['instagram']}\n\n"
+                    f"3) Facebook:\n{prompts['facebook']}\n\n"
+                    f"¿Cuál confirmas? Escribe 1, 2 o 3 - o 'editar 1'/'editar 2'/'editar 3' si quieres cambiar alguno."), context
 
-        prompt_basico = _prompt_basico_video(nombre, precio, oferta, plataforma_texto, tono_texto, mostrar, texto_pantalla, duracion, descripcion_visual, uso_correcto)
+        context["step"] = "videofoto_waiting_plataforma_unica"
+        return "¿Para cuál plataforma? (TikTok / Instagram / Facebook)", context
 
-        aviso = ""
-        if optimizar:
-            from services.ollama_service import llamar_ollama, MENSAJE_TIMEOUT
-            meta_prompt = PROMPT_OPTIMIZAR_VIDEO.format(
-                nombre=nombre, precio=precio, oferta=oferta or "ninguna",
-                descripcion_visual=descripcion_visual or "no disponible - usa una descripcion generica coherente con el nombre del producto",
-                uso_correcto=uso_correcto or "el uso tipico de este producto",
-                plataforma=plataforma_texto, tono=tono_texto,
-                mostrar=mostrar or "no especificado", texto_pantalla=texto_pantalla or "ninguno",
-                duracion=duracion,
-            )
-            prompt_ia = llamar_ollama(meta_prompt)
-            if prompt_ia and prompt_ia != MENSAJE_TIMEOUT:
-                prompt_final = prompt_ia.strip()
-            else:
-                prompt_final = prompt_basico
-                aviso = "\n\n(No pude optimizar el prompt con IA en este momento - uso la versión básica.)"
-        else:
-            prompt_final = prompt_basico
+    if step == "videofoto_waiting_plataforma_unica":
+        from core.video_prompt_engine import construir_prompts_video, ASPECT_RATIO_POR_PLATAFORMA
 
-        context = {
-            "step": "videofoto_waiting_prompt_decision",
-            "vf_nombre": nombre,
-            "vf_foto": foto,
-            "vf_aspect_ratio": aspect_ratio,
-            "vf_duracion": duracion,
-            "vf_prompt_final": prompt_final,
-        }
-        return (f"Este es el prompt final que se usará para generar el video:\n\n{prompt_final}{aviso}\n\n"
+        plataforma = _resolver_plataforma_motor(message)
+        prompts = construir_prompts_video(**_armar_datos_motor(context))
+        prompt_elegido = prompts[plataforma]
+
+        context["step"] = "videofoto_waiting_prompt_decision"
+        context["vf_prompt_final"] = prompt_elegido
+        context["vf_aspect_ratio"] = ASPECT_RATIO_POR_PLATAFORMA[plataforma]
+        return (f"Este es el prompt para {NOMBRE_PLATAFORMA.get(plataforma, plataforma.title())} que se usará para generar el video:\n\n{prompt_elegido}\n\n"
                 f"¿Confirmar y generar video, o prefieres editarlo? (escribe 'confirmar' o 'editar')"), context
+
+    if step == "videofoto_waiting_elegir_prompt_multiple":
+        from core.video_prompt_engine import ASPECT_RATIO_POR_PLATAFORMA
+
+        texto_norm = unicodedata.normalize("NFD", message.strip()).encode("ascii", "ignore").decode("utf-8").lower()
+        m_editar = re.match(r"editar\s*(\d)$", texto_norm)
+        m_num = re.match(r"^(\d)$", texto_norm)
+
+        if m_editar and context.get(f"vf_prompt_{m_editar.group(1)}"):
+            idx = m_editar.group(1)
+            plataforma = context.get(f"vf_prompt_{idx}_plataforma", "tiktok")
+            context["step"] = "videofoto_waiting_prompt_editado"
+            context["vf_aspect_ratio"] = ASPECT_RATIO_POR_PLATAFORMA.get(plataforma, "9:16")
+            return f"Escribe el prompt que quieras usar para {NOMBRE_PLATAFORMA.get(plataforma, plataforma.title())} en su lugar (reemplaza el anterior por completo):", context
+
+        if m_num and context.get(f"vf_prompt_{m_num.group(1)}"):
+            idx = m_num.group(1)
+            plataforma = context.get(f"vf_prompt_{idx}_plataforma", "tiktok")
+            prompt_elegido = context[f"vf_prompt_{idx}"]
+            return _generar_video_final(
+                context.get("vf_nombre", ""), prompt_elegido,
+                context.get("vf_foto", ""), ASPECT_RATIO_POR_PLATAFORMA.get(plataforma, "9:16"),
+                context.get("vf_duracion", 8),
+            )
+
+        return "No reconozco esa opción. Escribe 1, 2 o 3 - o 'editar 1'/'editar 2'/'editar 3'.", context
 
     if step == "videofoto_waiting_prompt_decision":
         resp = unicodedata.normalize("NFD", message.strip()).encode("ascii", "ignore").decode("utf-8").lower()

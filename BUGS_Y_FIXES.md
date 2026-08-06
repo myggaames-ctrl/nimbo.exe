@@ -2664,3 +2664,115 @@ una llamada real a Veo 3/Vertex AI - toda la verificación usó mocks de
 aparte.
 
 **Archivos modificados:** `tools/contenido_tool.py`, `core/nimbo.py`, `CLAUDE.md`.
+
+---
+
+## [2026-08-06] Motor determinista de prompts de video (reemplaza a Ollama en la construcción del prompt)
+
+**Problema:** el prompt de Veo 3 para el flujo de video desde foto (`videofoto_*`) lo
+redactaba Ollama (`PROMPT_OPTIMIZAR_VIDEO`) - útil, pero no reproducible: el mismo
+producto podía dar un prompt distinto en cada corrida, y dependía de que Ollama
+estuviera disponible y respondiera algo coherente.
+
+**Causa:** no es un bug, es una funcionalidad nueva pedida explícitamente ("motor
+determinista de conocimiento experto en videografía publicitaria... sin Ollama en el
+loop del prompt"). Se documenta acá (además de en `CLAUDE.md`) porque así se pidió
+para esta instalación.
+
+**Solución:**
+- `core/video_prompt_engine.py` (archivo nuevo, sin ninguna llamada a Ollama):
+  - `clasificar_producto(nombre)`: clasifica por palabras clave del nombre en 6
+    categorías (`cocina`, `electrodomestico_calor`, `electrodomestico_frio`,
+    `electrodomestico_motor`, `limpieza`, `almacenamiento`) o `general` si no
+    matchea ninguna. El orden del diccionario decide el desempate si un nombre
+    matchea más de una categoría (determinístico, nunca al azar).
+  - `BIBLIOTECA_VISUAL`: fondos/props/iluminación/cámara hardcodeados por
+    categoría, tal como se especificó, para `cocina`, `electrodomestico_motor`,
+    `electrodomestico_calor` y `general`. **Limitación conocida, documentada a
+    propósito:** `electrodomestico_frio`, `limpieza` y `almacenamiento` no
+    tenían biblioteca propia en el pedido original - caen a la de `general` en
+    vez de inventar una biblioteca no pedida. Mismo criterio para
+    `FRASE_IMPACTO_POR_CATEGORIA` (esas 3 categorías también caen a la frase de
+    `general`).
+  - `inferir_accion(nombre)`: acción lógica a mostrar, por palabra clave del
+    nombre (lista ordenada, no diccionario - "huevo" se revisa ANTES que
+    "sartén" a propósito, para que "sartén para 4 huevos" muestre huevos
+    estrellados y no un salteado genérico solo porque también contiene la
+    palabra "sartén" - el mismo tipo de bug de uso incorrecto que motivó el
+    `uso_correcto` de la entrada anterior, ahora resuelto sin Ollama).
+  - `elegir_fondo_y_iluminacion(categoria, descripcion_visual)`: contraste con
+    el color real del producto (extraído por llava, ver entrada anterior) -
+    oscuro → fondo claro, claro → fondo oscuro, de color → fondo neutro,
+    metálico → iluminación lateral extra para reflejos. Cada fondo de
+    `BIBLIOTECA_VISUAL` va etiquetado con su tono (`claro`/`oscuro`/`neutro`)
+    como juicio editorial propio (el pedido dio los textos de los fondos, no
+    su clasificación de tono) - más preciso que intentar detectar el tono de
+    cada fondo con palabras clave sobre su propio texto (frágil: "granito gris
+    antracita" no contiene la palabra "oscuro"). Si la categoría no tiene un
+    fondo del tono buscado (ej. `electrodomestico_motor` no tiene ningún fondo
+    oscuro), cae a uno neutro, y si tampoco hay, al primero de la lista -
+    nunca revienta por falta de opciones.
+  - `construir_prompts_video(nombre, precio, descripcion_visual, oferta, mostrar,
+    texto_pantalla)`: arma los 3 prompts (TikTok/Instagram/Facebook) siguiendo
+    las plantillas pedidas. **Cambio real respecto al mapeo anterior:** Facebook
+    pasa de `1:1` a `16:9` (`ASPECT_RATIO_POR_PLATAFORMA`) - este pedido lo
+    especifica explícitamente ("Toma amplia 16:9"), así que se siguió la
+    versión más reciente. No se pudo verificar contra documentación real de
+    Vertex AI que Veo 3 image_to_video acepte `16:9` (misma limitación ya
+    documentada para `1:1` antes) - si lo rechaza, `operation.error` lo reporta
+    igual que cualquier otro error.
+- `core/nimbo.py`: se eliminaron `_prompt_basico_video()`, `PROMPT_OPTIMIZAR_VIDEO`,
+  `_resolver_plataforma_video()`, `_resolver_tono_video()`,
+  `_inferir_uso_correcto_producto()` y `PROMPT_USO_CORRECTO` (todos superados por el
+  motor nuevo). El step `videofoto_waiting_optimizar` ("¿optimizar con IA?") se
+  reemplazó por `videofoto_waiting_cuantos_prompts` ("¿quieres los 3 prompts o solo
+  uno?"): "3" arma los 3 con el motor y los muestra numerados
+  (`videofoto_waiting_elegir_prompt_multiple` - acepta "1"/"2"/"3" para confirmar y
+  generar de una vez, o "editar 1"/"editar 2"/"editar 3" para reemplazar uno antes de
+  generar); "uno" pregunta la plataforma primero
+  (`videofoto_waiting_plataforma_unica`, nuevo) y muestra solo ese prompt. Ambos
+  caminos terminan en el mismo step de confirmación que ya existía
+  (`videofoto_waiting_prompt_decision`), sin duplicar esa lógica.
+  - **Decisión de alcance, no removida:** las preguntas de `plataforma`
+    (TikTok/Instagram Reels/Facebook/General) y `tono` (urgente y llamativo/
+    informativo/etc.) SIGUEN en el flujo sin cambios - el pedido no las mencionó
+    para remover - pero sus respuestas ya no se usan para armar el prompt: el
+    motor determinista asigna un estilo/tono fijo y curado por plataforma
+    (TikTok energético, Instagram aspiracional/editorial, Facebook familiar y
+    cálido), que sustituye la selección libre de tono del usuario. Queda
+    documentado como redundancia conocida en vez de removerlas por cuenta
+    propia, más allá de lo pedido explícitamente.
+  - **El flujo de ajuste POST-entrega (`videofoto_waiting_ajuste`,
+    `PROMPT_AJUSTAR_VIDEO`) NO se tocó** - sigue usando Ollama a propósito: no fue
+    parte de este pedido, y necesita interpretar texto libre arbitrario del
+    usuario ("quiero el teflón amarillo dorado"), algo que un motor de reglas
+    fijas no puede cubrir de forma general.
+
+**Verificación:** con una empresa de prueba desechable y `services.ollama_service.
+modelo_soporta_vision`/`analizar_imagen_ollama` mockeados (para simular a `llava`
+disponible), y con `services.ollama_service.llamar_ollama` mockeado para que LANCE
+UNA EXCEPCIÓN si se llega a invocar durante la construcción del prompt (assert
+explícito, no solo un conteo después de los hechos):
+1. Camino "los 3 prompts": construyó los 3 correctamente, mostrados numerados;
+   confirmar el número 2 (Instagram) generó el video con el `aspect_ratio` correcto
+   (`1:1`) y el prompt correcto - sin ninguna llamada a `llamar_ollama` durante todo
+   el proceso (la excepción del mock nunca se disparó).
+2. Camino "uno": preguntó la plataforma, mostró solo ese prompt (Facebook, `16:9`
+   verificado), y el camino de "editar" siguió funcionando igual que antes.
+3. Opción inválida (`"9"`) en la elección de 1/2/3 → mensaje de "no reconozco esa
+   opción", sin avanzar ni romper el flujo.
+4. `"editar 1"` en el menú de 3 prompts → pide el reemplazo, lo genera con el
+   `aspect_ratio` de esa plataforma específica (TikTok, `9:16`) correctamente.
+5. El motor en sí (`construir_prompts_video()`) es determinista: 3 corridas con los
+   mismos datos de entrada dieron exactamente el mismo resultado (comparación
+   directa, no solo "se ve parecido"). Se verificaron por separado la clasificación,
+   la inferencia de acción (con el caso específico "sartén para 4 huevos" → huevos,
+   no salteado) y la regla de contraste (producto de teflón oscuro → fondo claro;
+   licuadora de acero inoxidable → iluminación lateral por metálico).
+
+No se pudo probar con una llamada real a Veo 3/Vertex AI - toda la verificación usó
+mocks sobre `services.video_gen.generar_video_producto`, el mismo punto de entrada
+que el código real usa.
+
+**Archivos modificados:** `core/video_prompt_engine.py` (nuevo), `core/nimbo.py`,
+`CLAUDE.md`.

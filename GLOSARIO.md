@@ -1210,3 +1210,26 @@ con `json.loads()`, o la llamada falla porque `\`\`\`json` no es JSON válido.
 lo metiera entre paréntesis ("el número es (555-1234)") - en el fondo el dato real
 sigue siendo "555-1234", pero primero hay que quitarle los paréntesis antes de
 poder marcarlo en el teléfono.
+
+---
+
+### sistema/motor determinista (vs. basado en IA)
+**Qué es:** un sistema que, para la misma entrada, SIEMPRE produce exactamente la
+misma salida - porque sigue reglas fijas escritas de antemano (`if`/`else`,
+diccionarios, listas), en vez de pedirle a un modelo de IA que "decida" algo cada vez
+(lo cual puede variar de una corrida a otra, aunque la entrada sea idéntica).
+
+**Para qué sirve en Nimbo:** `core/video_prompt_engine.py` (el motor de prompts de
+video para Veo 3) es determinista a propósito - clasifica el producto por palabras
+clave de su nombre, elige fondo/props/iluminación de una biblioteca fija por
+categoría, e infiere la acción correcta con un diccionario de palabras clave, todo
+sin ninguna llamada a Ollama. Esto reemplazó un sistema anterior que sí usaba Ollama
+para redactar el prompt (ver `BUGS_Y_FIXES.md`, entradas anteriores) - la ventaja de
+volverlo determinista es que el mismo producto siempre arma el mismo tipo de prompt
+(reproducible, fácil de depurar si algo sale mal), en vez de depender de que Ollama
+"interprete bien" cada vez.
+
+**Ejemplo de la vida real:** es la diferencia entre seguir una receta de cocina al
+pie de la letra (mismos ingredientes, mismas cantidades, mismo resultado siempre) y
+pedirle a un cocinero que improvise "algo rico" cada vez - lo segundo puede salir
+genial o puede salir distinto cada vez, lo primero es predecible.

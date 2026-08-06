@@ -802,39 +802,47 @@ identificacion de cobro).
     descripcion (bug real encontrado al construir esto), y cualquier otro texto
     reemplaza la descripcion directamente. Si no hubo analisis visual, se salta esta
     pregunta. Despues pregunta, una por una: oferta/promocion, plataforma (TikTok/
-    Instagram Reels/Facebook/General - mapea a `aspect_ratio` 9:16 o 1:1 para Facebook,
-    ver `_resolver_plataforma_video()` en `services/video_gen.py` y `core/nimbo.py`),
-    tono (urgente y llamativo/informativo/divertido y casual/elegante,
-    `_resolver_tono_video()`), que mostrar en el video (uso del producto/
-    caracteristicas/demostracion/unboxing - texto libre, no se valida contra una
-    lista), texto en pantalla (libre, o "no"), duracion aproximada (4/6/8 segundos -
-    los unicos que soporta Veo 3 image_to_video, confirmado; cualquier otro numero que
-    el usuario escriba se ajusta al valor valido mas cercano en vez de pasarlo tal
-    cual, `DURACIONES_VEO3_VALIDAS` en `core/nimbo.py`) y si quiere que Nimbo optimice
-    el prompt con IA. Antes de armar el prompt, `_inferir_uso_correcto_producto()`
-    le pregunta a Ollama (sobre el NOMBRE del producto, no la foto) cual es el uso
-    logico que deberia mostrarse (ej. "sarten para 4 huevos" -> "friendo huevos
-    estrellados, no revueltos") - se calcula siempre, no solo si se pide optimizar con
-    IA, porque tambien alimenta el prompt basico.
-    Con "no" arma un prompt basico deterministico (`_prompt_basico_video()`, incluye
-    `vf_descripcion_visual`/uso correcto si estan disponibles, con instrucciones de
-    fondo NUEVO para el video y de no inventar caracteristicas) directo con las
-    respuestas; con "si" le pide a Ollama (`llamar_ollama()`, no `analizar_ollama()` -
-    mismo criterio que el resto de generacion de contenido de este archivo, no es un
-    analisis largo) que redacte un prompt profesional de videografia siguiendo la
-    estructura de Veo 3 (escena principal, sujeto - usando la descripcion visual real
-    y un fondo nuevo apropiado para publicidad, no el de la foto original -, accion
-    segun el uso correcto, ambiente, iluminacion, camara, composicion, paleta de
-    colores, estilo, texto en pantalla - ver el meta-prompt `PROMPT_OPTIMIZAR_VIDEO`),
-    con fallback silencioso (con aviso en la respuesta) al prompt basico si Ollama no
-    responde. En cualquiera de los dos casos, el prompt final se muestra completo en
-    el chat ANTES de generar nada, con dos opciones: "confirmar" (genera el video de
-    una vez con ese prompt) o "editar" (pide que el usuario escriba un prompt de
-    reemplazo completo - el chat no tiene un campo de texto editable real como tal,
-    el "editar" en este contexto es "mandame el texto completo que quieras usar en su
-    lugar" como el siguiente mensaje del chat). `_generar_video_final()` es el unico
-    punto que llama a `generar_video_producto()` en este flujo (desde "confirmar" o
-    desde el prompt editado); la respuesta incluye el video reproducible inline
+    Instagram Reels/Facebook/General - esta respuesta queda guardada pero YA NO se usa
+    para armar el prompt, ver mas abajo), tono (urgente y llamativo/informativo/
+    divertido y casual/elegante - mismo caso, queda vestigial), que mostrar en el
+    video (uso del producto/caracteristicas/demostracion/unboxing - texto libre),
+    texto en pantalla (libre, o "no"), duracion aproximada (4/6/8 segundos - los
+    unicos que soporta Veo 3 image_to_video, confirmado; cualquier otro numero que el
+    usuario escriba se ajusta al valor valido mas cercano en vez de pasarlo tal cual,
+    `DURACIONES_VEO3_VALIDAS` en `core/nimbo.py`).
+    El ultimo paso, "¿quieres los 3 prompts (TikTok/Instagram/Facebook) o solo uno?"
+    (step `videofoto_waiting_cuantos_prompts`), reemplaza la vieja pregunta de
+    "¿optimizar con IA?" - **el prompt ya NO lo redacta Ollama, lo arma
+    `core/video_prompt_engine.py`** (archivo nuevo, motor determinista: mismo
+    producto siempre da el mismo prompt, sin ninguna llamada a Ollama en el
+    proceso). Ese motor: 1) clasifica el producto por palabras clave de su nombre
+    (`clasificar_producto()` - cocina/electrodomestico_calor/electrodomestico_frio/
+    electrodomestico_motor/limpieza/almacenamiento/general; las ultimas 3 no tienen
+    biblioteca propia todavia, caen a la de "general", ver el archivo), 2) arma el
+    prompt con una biblioteca visual hardcodeada por categoria (`BIBLIOTECA_VISUAL`
+    - fondos, props, iluminacion, camara), 3) infiere la accion correcta a mostrar
+    por palabra clave del nombre (`inferir_accion()` - ej. "sarten para 4 huevos" ->
+    "huevos estrellados... no revueltos" - "huevo" se revisa antes que "sarten" a
+    proposito, ver comentario en el archivo), 4) elige el fondo por CONTRASTE con el
+    color real del producto extraido por llava (`elegir_fondo_y_iluminacion()` -
+    producto oscuro -> fondo claro de la biblioteca, claro -> oscuro, de color ->
+    neutro, metalico -> iluminacion lateral extra para reflejos) y 5) arma los 3
+    prompts finales (`construir_prompts_video()`) - TikTok (vertical 9:16, energico,
+    sin texto en pantalla salvo que el usuario haya pedido uno), Instagram (cuadrado
+    1:1, estilo editorial/aspiracional, misma base de contenido que TikTok con un
+    cierre distinto) y Facebook (16:9 - cambio respecto al 1:1 que tenia antes, ver
+    BUGS_Y_FIXES.md -, toma amplia en vez de macro, SI muestra el precio como texto
+    grande en pantalla). Frase de impacto tambien fija por categoria
+    (`FRASE_IMPACTO_POR_CATEGORIA`). "3" muestra los 3 numerados y pide elegir uno (o
+    "editar 1"/"editar 2"/"editar 3") en el step
+    `videofoto_waiting_elegir_prompt_multiple`; "uno" pregunta la plataforma primero
+    (`videofoto_waiting_plataforma_unica`) y muestra solo ese - ambos caminos
+    terminan en el mismo step de confirmacion ya existente
+    (`videofoto_waiting_prompt_decision`: "confirmar" genera de una vez, "editar"
+    pide un prompt de reemplazo completo como siguiente mensaje - el chat no tiene un
+    campo de texto editable real). `_generar_video_final()` es el unico punto que
+    llama a `generar_video_producto()` en este flujo (desde "confirmar" o desde el
+    prompt editado); la respuesta incluye el video reproducible inline
     (`<video controls preload="metadata" playsinline>`, no solo un link) y un boton de
     descarga con estilo debajo. Al terminar, en vez de vaciar el contexto, deja el
     flujo en el step `videofoto_waiting_ajuste` (con el prompt usado guardado) y
