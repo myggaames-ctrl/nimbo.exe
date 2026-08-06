@@ -189,7 +189,19 @@ def video_desde_foto_tool(data):
     if not foto:
         return "No recibí ninguna foto."
 
-    ruta_disco = os.path.join(BASE_DIR, foto.lstrip("/"))
+    # "foto" ya paso el patron estricto de core/detectors/contenido_foto_detector.py
+    # (solo rutas con la forma exacta que /api/chat/foto genera), pero se
+    # revalida aca tambien (defensa en profundidad - "foto" sigue siendo texto
+    # de chat, no un valor interno) antes de tocar el disco: se resuelve la
+    # ruta real (os.path.realpath, sigue symlinks y colapsa "..") y se exige
+    # que quede DENTRO de la carpeta de fotos temporales del chat. Sin esto,
+    # un "foto" con path traversal (ej. "../../../etc/passwd") terminaria
+    # leyendose como bytes de imagen mas abajo (via Ollama vision o, si el
+    # marcador llega a services/video_gen.py, mandado como referencia a Veo 3).
+    carpeta_fotos_chat = os.path.realpath(os.path.join(BASE_DIR, "static", "fotos", "chat_temp"))
+    ruta_disco = os.path.realpath(os.path.join(BASE_DIR, foto.lstrip("/")))
+    if not ruta_disco.startswith(carpeta_fotos_chat + os.sep):
+        return "Foto inválida."
 
     query_busqueda = ""
     if modelo_soporta_vision():

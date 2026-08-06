@@ -2305,3 +2305,57 @@ en vez de asumir que funcionan sin haberlo verificado.
 `core/detectors/contenido_foto_detector.py` (nuevo), `core/intent_detector.py`,
 `tools/contenido_tool.py`, `core/nimbo.py`, `services/video_gen.py`,
 `templates/index.html`, `CLAUDE.md`.
+
+---
+
+## [2026-08-06] Path traversal / lectura arbitraria de archivos en el flujo de video desde foto (encontrado por la revisión automática post-commit)
+
+**Problema:** en el feature de "video de producto desde una foto subida al chat"
+(entrada anterior), el campo `foto` del marcador `[foto:ruta]` se usaba para armar una
+ruta de disco (`os.path.join(BASE_DIR, foto.lstrip("/"))` en
+`tools/contenido_tool.py.video_desde_foto_tool()`) sin validar que esa ruta
+efectivamente apuntara a la carpeta de fotos temporales del chat.
+
+**Causa:** el marcador `[foto:ruta]` lo arma `app.py` en `/api/chat/foto` con una ruta
+segura (uuid propio, siempre dentro de `static/fotos/chat_temp/`), pero
+`core/detectors/contenido_foto_detector.py` reconocía el marcador en CUALQUIER
+mensaje que le llegara al pipeline de `core.nimbo.send()` - y ese pipeline también se
+alimenta directo de `/api/chat` (texto plano, sin subir ningún archivo). Nada impedía
+que un usuario autenticado le escribiera directo a `/api/chat` un mensaje como
+`"[foto:../../../../etc/passwd] video de esto"`: el detector lo reconocía igual (el
+regex solo exigía la forma `[foto:algo]`, sin restringir "algo"), y esa ruta llegaba
+sin validar hasta `os.path.join()` - con un `../` bien puesto, resuelve por fuera de
+`BASE_DIR`. Si en el futuro se instala un modelo de Ollama con visión (hoy ninguno de
+los dos modelos pulled la tiene, ver `modelo_soporta_vision()`), esa ruta se abre y se
+manda como imagen; y si el mismo `foto` llega hasta `services/video_gen.py`
+(`generar_video_producto()`, vía el flujo conversacional completo), se lee como bytes
+y se sube a Veo 3 como imagen de referencia - un archivo arbitrario del servidor
+filtrado a un servicio externo. Encontrado por la revisión de seguridad automática
+que corre después de cada push/commit (mismo mecanismo que encontró el XSS de los
+toasts, ver entrada anterior de esa fecha).
+
+**Solución:** dos capas, no solo una:
+- `core/detectors/contenido_foto_detector.py`: se agregó `PATRON_RUTA_FOTO_VALIDA`
+  (regex `^/static/fotos/chat_temp/[0-9a-f-]+\.(?:jpg|jpeg|png|webp)$`) - exige que
+  `foto` tenga EXACTAMENTE la forma que `/api/chat/foto` genera. Cualquier otra cosa
+  (`..`, rutas absolutas fuera de esa carpeta, extensiones no permitidas, bytes NUL,
+  etc.) hace que el detector no reconozca el mensaje - cae al resto del pipeline
+  (fallback normal de Ollama) en vez de arrancar el flujo de video.
+- `tools/contenido_tool.py.video_desde_foto_tool()`: defensa en profundidad, por si
+  algún otro caller llegara a invocar la tool con un `foto` no validado - resuelve la
+  ruta real con `os.path.realpath()` (colapsa `..` y sigue symlinks) y verifica que
+  quede DENTRO de `static/fotos/chat_temp/` antes de tocar el disco; si no, responde
+  "Foto inválida." sin intentar abrir nada.
+
+**Verificación:** con un script de prueba (mismo mecanismo de la entrada anterior:
+`core.nimbo.send()` directo con `services.video_gen.generar_video_producto` mockeado)
+se confirmó que `"[foto:../../../../etc/passwd] video de esto"` ya NO dispara el
+flujo (el detector devuelve `None`, cae al fallback normal) y que el flujo legítimo
+(con una ruta real generada por `/api/chat/foto`) sigue funcionando exactamente igual
+que antes del fix, de punta a punta (encontrar producto → confirmar → oferta →
+plataforma → tono → video). También se probaron variantes adicionales directo contra
+el detector (ruta con `..` mezclada en medio, ruta fuera de `chat_temp`, extensión no
+permitida como `.php`, byte NUL) - todas rechazadas.
+
+**Archivos modificados:** `core/detectors/contenido_foto_detector.py`,
+`tools/contenido_tool.py`.
