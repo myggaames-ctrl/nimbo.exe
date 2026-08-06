@@ -3090,3 +3090,69 @@ documenta la corrección de los 7, en el mismo orden de impacto del diagnóstico
 
 **Archivos modificados:** `core/video_prompt_engine.py`, `core/nimbo.py`,
 `tools/contenido_tool.py`.
+
+---
+
+## [2026-08-06] 3 bugs finales del motor de prompts: frase genérica sin sentido, "huevo" no detectado, precio duplicado en Facebook
+
+**Problema:**
+1. La cláusula "producto de color y material estándar: [nombre]" (agregada en la
+   entrada anterior para evitar redundancia) aparecía en el prompt final sin aportar
+   nada - una frase genérica pegada delante del nombre, sin utilidad real.
+2. `inferir_accion()` no detectaba "huevo" cuando el nombre guardado en `vf_nombre`
+   no incluía esa palabra (ej. el usuario escribió "video de sarten para 4 huevos"
+   al subir la foto, pero al pedirle después "cómo se llama" respondió solo con
+   color/material: "Sarten De Teflon Amarillo Con Tapadera Marca Aldura") - la
+   acción caía al genérico de "sarten" (salteado de verduras) en vez de huevos
+   estrellados.
+3. En el prompt de Facebook el precio podía aparecer dos veces: una vez como
+   `'Q168.00'` calculado aparte, y otra vez dentro del texto en pantalla que el
+   cliente ya había escrito con su propio precio (ej. "Precio Q168.00 / Envíos a
+   toda Guatemala / WhatsApp 48747638").
+
+**Causa:** no son bugs nuevos encontrados por accidente - son 3 pedidos de
+corrección explícitos sobre comportamiento ya identificado. Se documentan acá
+porque así se pidió para esta instalación.
+
+**Solución:**
+1. `core/nimbo.py` (`videofoto_waiting_datos_nuevo`): se quitó el prefijo genérico -
+   ahora `vf_descripcion_visual` se guarda tal cual, sin ningún encabezado agregado.
+   `_declaracion_color()` en `core/video_prompt_engine.py` ya arma sola la oración
+   "Color y material reales del producto: X." cuando no hay corrección de color -
+   no hacía falta duplicar ese encabezado en `core/nimbo.py`.
+2. Se agregó un campo nuevo de punta a punta: `tools/contenido_tool.py` ahora manda
+   el mensaje/caption ORIGINAL que acompañaba la foto (`texto`) como campo extra en
+   ambos marcadores (`VIDEOFOTO_ENCONTRADO_INICIO`/`VIDEOFOTO_NUEVO_INICIO`, siempre
+   al final, protegido de truncarse con `split("|", N)`); `core/nimbo.py` lo guarda
+   como `vf_texto_original` y lo pasa al motor vía `_armar_datos_motor()`.
+   `core/video_prompt_engine.py.inferir_accion()` ahora recibe un segundo parámetro
+   `texto_adicional` (descripción visual + texto original combinados) y busca la
+   palabra clave en ese texto combinado, no solo en el nombre - determinista igual
+   (mismos textos de entrada, misma acción, el orden de `ACCION_POR_PALABRA_CLAVE`
+   sigue decidiendo el desempate).
+3. `core/video_prompt_engine.py`: nueva `_texto_pantalla_incluye_precio()` (regex
+   `Q` seguido de un dígito) detecta si el texto en pantalla del cliente ya trae su
+   propio precio. `_construir_prompt_facebook()` ahora se ramifica: si el texto ya
+   incluye precio, se muestra tal cual (con la oferta, si hay) SIN el precio
+   calculado aparte; si no lo incluye, se muestra el precio calculado como antes,
+   más el texto adicional del cliente si también lo dio.
+
+**Verificación:**
+- Los 3 fixes se probaron aislados (sin Flask) contra `core/video_prompt_engine.py`
+  directamente antes de la prueba integral.
+- Caso completo reproduciendo el reporte exacto: foto subida con caption "video de
+  sarten para 4 huevos promocion" → producto no encontrado → usuario responde
+  "cómo se llama" con "Sarten De Teflon Amarillo Con Tapadera Marca Aldura, precio
+  168" (sin mencionar huevos) → texto en pantalla "Precio Q168.00 / Envíos a toda
+  Guatemala / WhatsApp 48747638". Verificado con asserts explícitos en los 3
+  prompts finales: sin la frase genérica, "huevos estrellados" presente (detectado
+  vía `vf_texto_original`, no vía `vf_nombre`), y el precio "168" aparece
+  exactamente UNA vez en el prompt de Facebook (antes aparecía duplicado).
+- Se corrió de nuevo la batería completa de pruebas de las entradas anteriores
+  (producto de inventario con llava + marcador de 6 campos, reinicio con foto nueva
+  mid-flujo, red de seguridad de step viejo, editar uno de los 3 prompts) para
+  confirmar que el campo nuevo en el marcador y los cambios en el motor no rompieron
+  nada existente - todas pasaron.
+
+**Archivos modificados:** `core/video_prompt_engine.py`, `core/nimbo.py`,
+`tools/contenido_tool.py`.

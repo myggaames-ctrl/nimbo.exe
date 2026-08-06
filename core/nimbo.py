@@ -265,23 +265,25 @@ def _intentar_detectar(message: str, role: str, context: dict, contexto_historia
             # VIDEO_INICIO: arriba (ese es "video de [producto ya escrito]" por
             # texto; este es "aqui esta la foto de un producto" - preguntas y
             # steps distintos, ver videofoto_waiting_* mas abajo en send()).
-            # split("|", 4): el 5to campo (descripcion_visual, texto libre
-            # armado por un modelo de IA) puede traer sus propios "|" - se le
-            # deja el resto del string entero sin volver a partirlo.
+            # split("|", 5): el ultimo campo (texto, el mensaje/caption
+            # original que acompanaba la foto) puede traer sus propios "|" -
+            # se le deja el resto del string entero sin volver a partirlo.
             # partes[0] (el Id del producto) no se guarda en el context: no
             # lo lee ningun step de este flujo (limpieza de codigo muerto,
             # ver BUGS_Y_FIXES.md - antes se guardaba como vf_producto_id
             # sin que nada lo consumiera).
-            partes = str(result).replace("VIDEOFOTO_ENCONTRADO_INICIO:", "").split("|", 4)
+            partes = str(result).replace("VIDEOFOTO_ENCONTRADO_INICIO:", "").split("|", 5)
             nombre, precio = partes[1], partes[2]
             foto = partes[3] if len(partes) > 3 else ""
             descripcion_visual = partes[4] if len(partes) > 4 else ""
+            texto_original = partes[5] if len(partes) > 5 else ""
             context = {
                 "step": "videofoto_waiting_confirmar",
                 "vf_nombre": nombre,
                 "vf_precio": precio,
                 "vf_foto": foto,
                 "vf_descripcion_visual": descripcion_visual,
+                "vf_texto_original": texto_original,
             }
             return f"Encontré {nombre}, precio Q{precio}. ¿Quieres que genere un video? (si/no)", context
 
@@ -291,12 +293,18 @@ def _intentar_detectar(message: str, role: str, context: dict, contexto_historia
             # vez de crear el producto solo (ver nota de diseno en BUGS_Y_FIXES.md:
             # a proposito NO se crea un Producto nuevo en la base de datos como
             # efecto secundario de este flujo, solo se usan para armar el video).
-            # split("|", 1): igual que arriba, descripcion_visual puede traer
-            # sus propios "|".
-            partes = str(result).replace("VIDEOFOTO_NUEVO_INICIO:", "").split("|", 1)
+            # split("|", 2): igual que arriba, el ultimo campo (texto) puede
+            # traer sus propios "|".
+            partes = str(result).replace("VIDEOFOTO_NUEVO_INICIO:", "").split("|", 2)
             foto = partes[0].strip()
             descripcion_visual = partes[1].strip() if len(partes) > 1 else ""
-            context = {"step": "videofoto_waiting_datos_nuevo", "vf_foto": foto, "vf_descripcion_visual": descripcion_visual}
+            texto_original = partes[2].strip() if len(partes) > 2 else ""
+            context = {
+                "step": "videofoto_waiting_datos_nuevo",
+                "vf_foto": foto,
+                "vf_descripcion_visual": descripcion_visual,
+                "vf_texto_original": texto_original,
+            }
             return "No reconocí el producto. ¿Cómo se llama y cuál es el precio? (ej: licuadora oster 350)", context
 
         if str(result).startswith("SET_DESC_INICIO:"):
@@ -828,16 +836,21 @@ def _resolver_plataforma_motor(texto_plataforma: str) -> str:
 
 def _armar_datos_motor(context: dict) -> dict:
     """Junta los datos ya recolectados en el context (nombre/precio/
-    descripcion visual/oferta/mostrar/texto en pantalla/color corregido) en
-    los kwargs que espera core.video_prompt_engine.construir_prompts_video().
-    No hay pregunta de plataforma ni de tono en este flujo (se removieron,
-    ver BUGS_Y_FIXES.md limpieza de codigo muerto) - el motor determinista
-    ya asigna un tono y estilo fijo y curado por plataforma (ver
-    core/video_prompt_engine.py), asi que esas 2 preguntas nunca llegaban a
-    influir el prompt. vf_color_corregido se pasa SEPARADO de
-    vf_descripcion_visual (no mezclado) para que el motor pueda darle
-    prioridad absoluta sobre el color que detecto llava - ver
-    videofoto_waiting_descripcion_visual."""
+    descripcion visual/oferta/mostrar/texto en pantalla/color corregido/
+    texto original) en los kwargs que espera
+    core.video_prompt_engine.construir_prompts_video(). No hay pregunta de
+    plataforma ni de tono en este flujo (se removieron, ver BUGS_Y_FIXES.md
+    limpieza de codigo muerto) - el motor determinista ya asigna un tono y
+    estilo fijo y curado por plataforma (ver core/video_prompt_engine.py),
+    asi que esas 2 preguntas nunca llegaban a influir el prompt.
+    vf_color_corregido se pasa SEPARADO de vf_descripcion_visual (no
+    mezclado) para que el motor pueda darle prioridad absoluta sobre el
+    color que detecto llava - ver videofoto_waiting_descripcion_visual.
+    vf_texto_original es el mensaje/caption que acompanaba la foto cuando se
+    subio (ver tools/contenido_tool.py) - se manda ademas del nombre final
+    para que inferir_accion() pueda detectar palabras clave (ej. "huevos")
+    que el usuario haya mencionado ahi pero que no hayan quedado en el
+    nombre guardado."""
     return {
         "nombre": context.get("vf_nombre", ""),
         "precio": context.get("vf_precio", ""),
@@ -846,6 +859,7 @@ def _armar_datos_motor(context: dict) -> dict:
         "mostrar": context.get("vf_mostrar", ""),
         "texto_pantalla": context.get("vf_texto_pantalla", ""),
         "color_corregido": context.get("vf_color_corregido", ""),
+        "texto_original": context.get("vf_texto_original", ""),
     }
 
 
@@ -1120,17 +1134,18 @@ def send(message: str, context: dict = None, role: str = "admin") -> tuple:
             # amarillo" no quedan atrapados solo dentro del nombre, sino que
             # tambien alimentan el prompt visual (_declaracion_color() en
             # core/video_prompt_engine.py) y las reglas de contraste de color
-            # (elegir_fondo_y_iluminacion()). Se le antepone un prefijo
-            # generico ("producto de color y material estandar") en vez de
-            # repetir el nombre completo a secas - antes esto dejaba el
-            # nombre duplicado, palabra por palabra, tanto en la apertura del
-            # prompt (via nombre) como en la clausula de color/material (via
-            # descripcion_visual), sonando redundante. NO se dispara la
-            # pregunta de confirmacion de color de mas abajo en este caso a
-            # proposito - ese texto lo acaba de escribir el usuario, no lo
-            # "vio" ningun analisis de llava; pedirle que confirme sus
-            # propias palabras seria confuso.
-            context["vf_descripcion_visual"] = f"producto de color y material estándar: {nombre}"
+            # (elegir_fondo_y_iluminacion()). Se guarda tal cual, SIN ningun
+            # prefijo generico (una version anterior anteponia "producto de
+            # color y material estandar:" - bug real: esa frase generica
+            # terminaba en el prompt final sin aportar nada, ver
+            # BUGS_Y_FIXES.md). _declaracion_color() ya arma la oracion
+            # "Color y material reales del producto: X." sola, no hace falta
+            # duplicar ese encabezado aca. NO se dispara la pregunta de
+            # confirmacion de color de mas abajo en este caso a proposito -
+            # ese texto lo acaba de escribir el usuario, no lo "vio" ningun
+            # analisis de llava; pedirle que confirme sus propias palabras
+            # seria confuso.
+            context["vf_descripcion_visual"] = nombre
             context["step"] = "videofoto_waiting_oferta"
             return f"Producto: {nombre.title()}, precio Q{precio:g}.\n¿Hay oferta o promoción? (precio especial, descuento, 2x1, etc. o escribe 'no')", context
         return _preguntar_descripcion_visual_o_oferta(context, prefijo=f"Producto: {nombre.title()}, precio Q{precio:g}.\n")

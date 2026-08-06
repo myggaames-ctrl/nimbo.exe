@@ -297,11 +297,20 @@ def video_desde_foto_tool(data):
         query_busqueda = texto
 
     productos = get_products(search=query_busqueda) if query_busqueda else []
+    # texto (el mensaje/caption original que acompanaba la foto, ej. "video
+    # de sarten para 4 huevos promocion") se manda tambien en el marcador -
+    # core/nimbo.py lo guarda como vf_texto_original para que
+    # core/video_prompt_engine.py.inferir_accion() lo pueda revisar ademas
+    # del nombre final del producto. Bug real que motivo esto: el nombre que
+    # queda guardado (de la base de datos, o de lo que el usuario responda
+    # despues a "como se llama") puede no repetir detalles que si estaban en
+    # este mensaje original (ej. "huevos"), y sin este campo esos detalles
+    # se perdian sin ninguna forma de recuperarlos mas adelante en el flujo.
     if productos:
         p = productos[0]
-        return f"VIDEOFOTO_ENCONTRADO_INICIO:{p['Id']}|{p['Name'].strip()}|{p['Price']}|{foto}|{descripcion_visual}"
+        return f"VIDEOFOTO_ENCONTRADO_INICIO:{p['Id']}|{p['Name'].strip()}|{p['Price']}|{foto}|{descripcion_visual}|{texto}"
 
-    return f"VIDEOFOTO_NUEVO_INICIO:{foto}|{descripcion_visual}"
+    return f"VIDEOFOTO_NUEVO_INICIO:{foto}|{descripcion_visual}|{texto}"
 
 register("contenido.video_desde_foto", video_desde_foto_tool)
 

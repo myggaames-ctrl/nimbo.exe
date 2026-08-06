@@ -20,6 +20,7 @@ proposito - no fue parte de este pedido y necesita interpretar texto libre
 arbitrario del usuario ("quiero el teflon amarillo dorado"), algo que un
 motor de reglas fijas no puede cubrir de forma general.
 """
+import re
 import unicodedata
 
 
@@ -135,13 +136,26 @@ ACCION_POR_PALABRA_CLAVE = [
 ACCION_DEFAULT = "producto siendo usado de forma natural y elegante"
 
 
-def inferir_accion(nombre: str) -> str:
+def inferir_accion(nombre: str, texto_adicional: str = "") -> str:
     """Accion logica y correcta a mostrar en el video, inferida por palabra
-    clave del NOMBRE del producto (no de la foto). Determinista: mismo
-    nombre, siempre la misma accion."""
-    nombre_norm = _normalizar(nombre)
+    clave del NOMBRE del producto Y, si no alcanza, tambien de
+    texto_adicional (descripcion_visual + el mensaje/caption original que el
+    usuario escribio al subir la foto, ver core/nimbo.py
+    _armar_datos_motor()). Bug real que motivo esto: el nombre final
+    guardado en vf_nombre puede no repetir detalles que si estaban en el
+    mensaje original - ej. el usuario escribio "video de sarten para 4
+    huevos" al subir la foto, pero al pedirle despues "como se llama"
+    respondio solo describiendo color/material ("Sarten De Teflon Amarillo
+    Con Tapadera Marca Aldura"), sin repetir "huevos" - y sin revisar
+    tambien el texto original, la accion inferida caia al generico
+    "salteado de verduras" (por "sarten") en vez de "huevos estrellados".
+    Determinista: mismos textos de entrada, siempre la misma accion (se
+    busca en un solo texto combinado, asi que el orden de
+    ACCION_POR_PALABRA_CLAVE sigue siendo el que decide, no la posicion
+    dentro del texto)."""
+    texto_busqueda = _normalizar(f"{nombre} {texto_adicional}")
     for palabra, accion in ACCION_POR_PALABRA_CLAVE:
-        if palabra in nombre_norm:
+        if palabra in texto_busqueda:
             return accion
     return ACCION_DEFAULT
 
@@ -371,6 +385,20 @@ def _construir_prompt_instagram(datos: dict) -> str:
     return " ".join(partes)
 
 
+_PATRON_PRECIO_EN_TEXTO = re.compile(r"q\s*\d", re.IGNORECASE)
+
+
+def _texto_pantalla_incluye_precio(texto_pantalla: str) -> bool:
+    """True si texto_pantalla ya trae su propio precio (patron 'Q' seguido
+    de un digito, ej. 'Precio Q168.00 / Envios...') - usado en
+    _construir_prompt_facebook() para no mostrar el precio dos veces. Bug
+    real que motivo esto: si el cliente escribia su propio texto con precio
+    incluido, el prompt terminaba con el precio repetido - una vez como
+    'Q168.00' calculado aparte, y otra vez dentro del texto del cliente que
+    ya lo traia."""
+    return bool(_PATRON_PRECIO_EN_TEXTO.search(texto_pantalla or ""))
+
+
 def _construir_prompt_facebook(datos: dict) -> str:
     # Facebook cambia mas que solo el cierre: toma amplia (no macro) desde
     # el arranque, y SI lleva texto en pantalla (el precio, siempre) - al
@@ -378,7 +406,7 @@ def _construir_prompt_facebook(datos: dict) -> str:
     # explicito.
     props_texto = ", ".join(datos["props"])
     clausula_oferta = f" - {datos['oferta']}" if datos["oferta"] else ""
-    clausula_texto_adicional = _clausula_texto_pantalla_adicional(datos["texto_pantalla"])
+    texto_pantalla = datos["texto_pantalla"]
     partes = [f"Toma amplia 16:9 mostrando {datos['nombre']} en contexto completo de cocina/hogar."]
     if datos["declaracion_color"]:
         partes.append(datos["declaracion_color"])
@@ -388,14 +416,22 @@ def _construir_prompt_facebook(datos: dict) -> str:
         f"Ambiente: {datos['fondo']}.",
         f"Iluminacion: {datos['iluminacion']}.",
         f"Camara: {datos['camara']}, informativo y claro.",
-        f"Texto grande visible en pantalla: 'Q{_formatear_precio(datos['precio'])}'{clausula_oferta}.{clausula_texto_adicional}",
+    ]
+    if _texto_pantalla_incluye_precio(texto_pantalla):
+        # El cliente ya escribio su propio precio dentro del texto en
+        # pantalla pedido - no se repite el precio calculado aparte.
+        partes.append(f'Texto grande visible en pantalla, pedido por el cliente (ya incluye el precio, no repetirlo aparte): "{texto_pantalla}"{clausula_oferta}.')
+    else:
+        clausula_texto_adicional = _clausula_texto_pantalla_adicional(texto_pantalla)
+        partes.append(f"Texto grande visible en pantalla: 'Q{_formatear_precio(datos['precio'])}'{clausula_oferta}.{clausula_texto_adicional}")
+    partes += [
         "Estilo: publicidad familiar y calida. 4K.",
         f"Audio: musica calida de fondo. Voz en off: '{datos['frase']}'.",
     ]
     return " ".join(partes)
 
 
-def construir_prompts_video(nombre: str, precio, descripcion_visual: str = "", oferta: str = "", mostrar: str = "", texto_pantalla: str = "", color_corregido: str = "") -> dict:
+def construir_prompts_video(nombre: str, precio, descripcion_visual: str = "", oferta: str = "", mostrar: str = "", texto_pantalla: str = "", color_corregido: str = "", texto_original: str = "") -> dict:
     """Punto de entrada del motor: arma los 3 prompts (TikTok/Instagram/
     Facebook) listos para Veo 3, deterministas (sin Ollama en ningun punto
     de esta funcion ni de las que llama). precio puede venir como str o
@@ -406,7 +442,11 @@ def construir_prompts_video(nombre: str, precio, descripcion_visual: str = "", o
     llava se equivoco - tiene prioridad absoluta sobre descripcion_visual
     tanto en el texto del prompt (como oracion propia, ver
     _declaracion_color()) como en la eleccion de fondo por contraste (ver
-    elegir_fondo_y_iluminacion()).
+    elegir_fondo_y_iluminacion()). texto_original es el mensaje/caption que
+    acompanaba la foto al subirla (ver core/nimbo.py _armar_datos_motor) -
+    se le suma a descripcion_visual solo para la inferencia de accion (ver
+    inferir_accion()), por si el nombre final no repite un detalle que si
+    estaba ahi (ej. "huevos").
 
     Retorna {"tiktok": texto, "instagram": texto, "facebook": texto}."""
     categoria = clasificar_producto(nombre)
@@ -422,7 +462,7 @@ def construir_prompts_video(nombre: str, precio, descripcion_visual: str = "", o
         "texto_pantalla": texto_pantalla,
         "apertura": _apertura(nombre),
         "declaracion_color": _declaracion_color(descripcion_visual, color_corregido),
-        "accion": inferir_accion(nombre),
+        "accion": inferir_accion(nombre, f"{descripcion_visual} {texto_original}"),
         "clausula_mostrar": _clausula_mostrar(mostrar),
         "clausula_texto_pantalla": _clausula_texto_pantalla(texto_pantalla),
         "clausula_oferta": _clausula_oferta_sentence(oferta),
