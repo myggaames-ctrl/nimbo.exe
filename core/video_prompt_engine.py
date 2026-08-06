@@ -172,7 +172,7 @@ def _tono_del_producto(descripcion_visual: str) -> str:
     return ""
 
 
-def elegir_fondo_y_iluminacion(categoria: str, descripcion_visual: str):
+def elegir_fondo_y_iluminacion(categoria: str, descripcion_visual: str, color_corregido: str = ""):
     """(fondo, iluminacion) elegidos de la biblioteca de la categoria segun
     el contraste con el color real del producto: producto oscuro -> fondo
     claro, producto claro -> fondo oscuro, producto de color -> fondo
@@ -182,9 +182,18 @@ def elegir_fondo_y_iluminacion(categoria: str, descripcion_visual: str):
     reales en BIBLIOTECA_VISUAL, ej. electrodomestico_motor no tiene ningun
     fondo oscuro), cae al primer fondo neutro disponible, y si tampoco hay
     ninguno neutro, al primero de la lista - nunca revienta por falta de
-    opciones."""
+    opciones.
+
+    Si el usuario corrigio el color (color_corregido), la deteccion de tono
+    se basa SOLO en esa correccion, no en descripcion_visual - que puede
+    seguir mencionando el color VIEJO que llava identifico mal (bug real:
+    antes se usaba siempre descripcion_visual, y si el color corregido no
+    coincidia por casualidad con el orden de busqueda de
+    _tono_del_producto(), la eleccion de fondo terminaba basada en el color
+    equivocado)."""
     fondos = _biblioteca_de(categoria)["fondos"]
-    tono_producto = _tono_del_producto(descripcion_visual)
+    texto_para_tono = color_corregido if color_corregido else descripcion_visual
+    tono_producto = _tono_del_producto(texto_para_tono)
 
     def _primero(tono_buscado):
         return next((f for f, t in fondos if t == tono_buscado), None)
@@ -237,9 +246,43 @@ ASPECT_RATIO_POR_PLATAFORMA = {
 }
 
 
-def _apertura(nombre: str, descripcion_visual: str) -> str:
+def _declaracion_color(descripcion_visual: str, color_corregido: str = "") -> str:
+    """Oracion standalone (no un fragmento que dependa de encajar
+    gramaticalmente dentro de otra frase) que declara el color/material real
+    del producto. color_corregido - la correccion que el usuario escribio en
+    core/nimbo.py videofoto_waiting_descripcion_visual (ej. "interior
+    amarillo dorado casi color gold", o "es negro mate por dentro") cuando
+    el analisis de llava se equivoco - tiene PRIORIDAD ABSOLUTA sobre
+    descripcion_visual: se declara primero y explicito, y se le pide al
+    lector del prompt que ignore cualquier color que aparezca en
+    descripcion_visual si contradice.
+
+    Se devuelve como oracion propia (no insertada a la fuerza dentro de un
+    molde tipo "mostrando su interior de X") porque el texto que escribe el
+    usuario puede venir en cualquier forma gramatical - "amarillo dorado" es
+    un fragmento, pero "es negro mate por dentro" ya es una oracion
+    completa; forzarla dentro de otro molde ("mostrando su interior de es
+    negro mate por dentro") quedaba gramaticalmente roto.
+
+    Bug real que motivo el diseño de esta funcion: una version anterior
+    concatenaba la correccion directo con el texto de llava (que podia
+    seguir mencionando el color VIEJO, ej. "Teflon negro mate"), y ese texto
+    viejo terminaba compitiendo/ganando tanto en el prompt como en la
+    deteccion de contraste (ver elegir_fondo_y_iluminacion) porque seguia
+    presente palabra por palabra, sin ninguna indicacion de que estaba
+    superado."""
+    if color_corregido:
+        declaracion = (f"Color/material real del producto, confirmado por el cliente y con "
+                        f"prioridad sobre cualquier otro color mencionado a continuacion: {color_corregido}.")
+        if descripcion_visual:
+            declaracion += f" Otros detalles visuales observados (forma, condicion, fondo original): {descripcion_visual}."
+        return declaracion
     if descripcion_visual:
-        return f"Primer plano macro de {nombre}, mostrando fielmente su color y material reales: {descripcion_visual}"
+        return f"Color y material reales del producto: {descripcion_visual}."
+    return ""
+
+
+def _apertura(nombre: str) -> str:
     return f"Primer plano macro de {nombre}"
 
 
@@ -249,14 +292,28 @@ def _clausula_texto_pantalla(texto_pantalla: str) -> str:
     return ""
 
 
+def _formatear_precio(precio) -> str:
+    """Precio con 2 decimales fijos (Q168.00, no Q168.0 ni Q168) - precio
+    puede llegar como float o como string (ver construir_prompts_video,
+    core/nimbo.py guarda vf_precio como string en el camino de producto ya
+    existente en el inventario, y como float en el camino de producto
+    descrito a mano)."""
+    try:
+        return f"{float(precio):.2f}"
+    except (TypeError, ValueError):
+        return str(precio)
+
+
 def _clausula_mostrar(mostrar: str) -> str:
     return f" Enfoque narrativo: {mostrar}." if mostrar else ""
 
 
 def _construir_prompt_tiktok(datos: dict) -> str:
     props_texto = ", ".join(datos["props"])
-    partes = [
-        f"{datos['apertura']}.",
+    partes = [f"{datos['apertura']}."]
+    if datos["declaracion_color"]:
+        partes.append(datos["declaracion_color"])
+    partes += [
         f"{datos['accion']}.{datos['clausula_mostrar']}",
         f"Elementos visuales: {props_texto}.",
         f"Ambiente: {datos['fondo']}.",
@@ -276,8 +333,10 @@ def _construir_prompt_instagram(datos: dict) -> str:
     # musica mas suave en vez de "urbana") en vez del bloque vertical
     # energetico de TikTok.
     props_texto = ", ".join(datos["props"])
-    partes = [
-        f"{datos['apertura']}.",
+    partes = [f"{datos['apertura']}."]
+    if datos["declaracion_color"]:
+        partes.append(datos["declaracion_color"])
+    partes += [
         f"{datos['accion']}.{datos['clausula_mostrar']}",
         f"Elementos visuales: {props_texto}.",
         f"Ambiente: {datos['fondo']}.",
@@ -297,39 +356,48 @@ def _construir_prompt_facebook(datos: dict) -> str:
     # TikTok/Instagram, que lo evitan por defecto.
     props_texto = ", ".join(datos["props"])
     clausula_oferta = f" - {datos['oferta']}" if datos["oferta"] else ""
-    partes = [
-        f"Toma amplia 16:9 mostrando {datos['nombre']} en contexto completo de cocina/hogar"
-        + (f", con su color y material reales: {datos['descripcion_visual']}" if datos["descripcion_visual"] else "") + ".",
+    partes = [f"Toma amplia 16:9 mostrando {datos['nombre']} en contexto completo de cocina/hogar."]
+    if datos["declaracion_color"]:
+        partes.append(datos["declaracion_color"])
+    partes += [
         f"{datos['accion']}.{datos['clausula_mostrar']}",
         f"Elementos visuales: {props_texto}.",
         f"Ambiente: {datos['fondo']}.",
         f"Iluminacion: {datos['iluminacion']}.",
         f"Camara: {datos['camara']}, informativo y claro.",
-        f"Texto grande visible en pantalla: 'Q{datos['precio']}'{clausula_oferta}.",
+        f"Texto grande visible en pantalla: 'Q{_formatear_precio(datos['precio'])}'{clausula_oferta}.",
         "Estilo: publicidad familiar y calida. 4K.",
         f"Audio: musica calida de fondo. Voz en off: '{datos['frase']}'.",
     ]
     return " ".join(partes)
 
 
-def construir_prompts_video(nombre: str, precio, descripcion_visual: str = "", oferta: str = "", mostrar: str = "", texto_pantalla: str = "") -> dict:
+def construir_prompts_video(nombre: str, precio, descripcion_visual: str = "", oferta: str = "", mostrar: str = "", texto_pantalla: str = "", color_corregido: str = "") -> dict:
     """Punto de entrada del motor: arma los 3 prompts (TikTok/Instagram/
     Facebook) listos para Veo 3, deterministas (sin Ollama en ningun punto
     de esta funcion ni de las que llama). precio puede venir como str o
     numero (ver core/nimbo.py, vf_precio se guarda como string en algunos
-    caminos del flujo) - se usa tal cual en el texto, sin forzar formato.
+    caminos del flujo) - se formatea siempre a 2 decimales fijos donde se
+    muestra (ver _formatear_precio()). color_corregido es la correccion de
+    color que el usuario escribio en core/nimbo.py cuando el analisis de
+    llava se equivoco - tiene prioridad absoluta sobre descripcion_visual
+    tanto en el texto del prompt (como oracion propia, ver
+    _declaracion_color()) como en la eleccion de fondo por contraste (ver
+    elegir_fondo_y_iluminacion()).
 
     Retorna {"tiktok": texto, "instagram": texto, "facebook": texto}."""
     categoria = clasificar_producto(nombre)
     lib = _biblioteca_de(categoria)
-    fondo, iluminacion = elegir_fondo_y_iluminacion(categoria, descripcion_visual)
+    fondo, iluminacion = elegir_fondo_y_iluminacion(categoria, descripcion_visual, color_corregido)
 
     datos = {
         "nombre": nombre,
         "precio": precio,
         "oferta": oferta,
         "descripcion_visual": descripcion_visual,
-        "apertura": _apertura(nombre, descripcion_visual),
+        "color_corregido": color_corregido,
+        "apertura": _apertura(nombre),
+        "declaracion_color": _declaracion_color(descripcion_visual, color_corregido),
         "accion": inferir_accion(nombre),
         "clausula_mostrar": _clausula_mostrar(mostrar),
         "clausula_texto_pantalla": _clausula_texto_pantalla(texto_pantalla),

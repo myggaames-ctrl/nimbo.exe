@@ -811,14 +811,16 @@ def _resolver_plataforma_motor(texto_plataforma: str) -> str:
 
 def _armar_datos_motor(context: dict) -> dict:
     """Junta los datos ya recolectados en el context (nombre/precio/
-    descripcion visual/oferta/mostrar/texto en pantalla) en los kwargs que
-    espera core.video_prompt_engine.construir_prompts_video(). vf_plataforma
-    y vf_tono NO se incluyen a proposito: el motor determinista asigna un
-    tono y estilo fijo y curado por plataforma (ver
+    descripcion visual/oferta/mostrar/texto en pantalla/color corregido) en
+    los kwargs que espera core.video_prompt_engine.construir_prompts_video().
+    vf_plataforma y vf_tono NO se incluyen a proposito: el motor determinista
+    asigna un tono y estilo fijo y curado por plataforma (ver
     core/video_prompt_engine.py) que reemplaza la seleccion de tono libre
     del usuario - esas 2 preguntas siguen en el flujo (no se removieron, no
     era parte de este pedido) pero su respuesta ya no se usa para armar el
-    prompt."""
+    prompt. vf_color_corregido se pasa SEPARADO de vf_descripcion_visual (no
+    mezclado) para que el motor pueda darle prioridad absoluta sobre el
+    color que detecto llava - ver videofoto_waiting_descripcion_visual."""
     return {
         "nombre": context.get("vf_nombre", ""),
         "precio": context.get("vf_precio", ""),
@@ -826,6 +828,7 @@ def _armar_datos_motor(context: dict) -> dict:
         "oferta": context.get("vf_oferta", ""),
         "mostrar": context.get("vf_mostrar", ""),
         "texto_pantalla": context.get("vf_texto_pantalla", ""),
+        "color_corregido": context.get("vf_color_corregido", ""),
     }
 
 
@@ -1129,16 +1132,20 @@ def send(message: str, context: dict = None, role: str = "admin") -> tuple:
             return ("¿Cuál es el color correcto? Escribe algo como 'el interior es "
                     "amarillo dorado' o 'es negro mate por dentro'."), context
         else:
-            # El usuario corrigio el color: se antepone como dato
-            # AUTORITATIVO (reemplaza lo que llava detecto sobre el color -
-            # "usar ESE color en los prompts en vez del detectado por
-            # llava", pedido explicito) sin descartar el resto del analisis
-            # (forma/condicion/fondo de llava), que sigue siendo util para
-            # el prompt - a diferencia de una version anterior de este step,
-            # que reemplazaba la descripcion COMPLETA con la correccion.
-            color_corregido = message.strip()
-            descripcion_original = context.get("vf_descripcion_visual", "")
-            context["vf_descripcion_visual"] = f"{color_corregido}. {descripcion_original}".strip(". ").strip()
+            # El usuario corrigio el color: se guarda APARTE
+            # (vf_color_corregido), sin tocar vf_descripcion_visual. Una
+            # version anterior lo anteponia concatenado directo al texto de
+            # llava (que podia seguir mencionando el color VIEJO, ej.
+            # "Teflon negro mate") - eso dejaba ambas afirmaciones de color
+            # compitiendo en el mismo bloque de texto, y tanto el prompt
+            # final como la eleccion de fondo por contraste (ver
+            # core/video_prompt_engine.py elegir_fondo_y_iluminacion) podian
+            # terminar basandose en el color equivocado, que seguia presente
+            # palabra por palabra. Guardandolo separado,
+            # core.video_prompt_engine.construir_prompts_video() le da
+            # prioridad absoluta al color corregido en ambos lugares (ver
+            # _clausula_color_material()).
+            context["vf_color_corregido"] = message.strip()
         context["step"] = "videofoto_waiting_oferta"
         return "¿Hay oferta o promoción? (precio especial, descuento, 2x1, etc. o escribe 'no')", context
 

@@ -2918,3 +2918,86 @@ documenta acá porque así se pidió para esta instalación.
    rompieron nada existente - todas pasaron igual.
 
 **Archivos modificados:** `core/nimbo.py`.
+
+---
+
+## [2026-08-06] Color corregido por el usuario no tenía prioridad real en el prompt, y precio sin formato fijo en Facebook
+
+**Problema reportado:**
+1. El color corregido por el usuario (ej. "interior amarillo dorado casi color gold")
+   no aparecía en el prompt final generado.
+2. El precio en el prompt de Facebook aparecía como `Q168.0` en vez de `Q168.00`.
+
+**Investigación de 1:** se confirmó con una prueba directa que el texto de la
+corrección SÍ llegaba hasta `vf_descripcion_visual` y SÍ aparecía, literal, en el
+prompt final - pero la causa real del síntoma reportado era más profunda: la
+entrada anterior de esta fecha (confirmación de color interior) guardaba la
+corrección ANTEPONIÉNDOLA al texto original de llava
+(`f"{color_corregido}. {descripcion_original}"`), y ese texto original PODÍA seguir
+mencionando el color VIEJO que el usuario acababa de corregir (ej. corrección
+"amarillo dorado" seguida, en el mismo bloque de texto, por "Teflon negro mate,
+mango rojo..." de llava). Esto tenía dos consecuencias reales:
+- El prompt final quedaba con dos afirmaciones de color contradictorias en el mismo
+  párrafo, sin ninguna indicación de cuál era la correcta - Veo 3 (o cualquier
+  lector del prompt) no tenía forma de saber cuál de los dos colores usar, y podía
+  perfectamente terminar usando el viejo (el reportado como "no aparece" en la
+  práctica, aunque técnicamente sí estuviera en el texto).
+- La regla de contraste de color (`elegir_fondo_y_iluminacion()`,
+  `_tono_del_producto()`) escaneaba ese mismo bloque de texto combinado buscando
+  palabras clave de color en un orden fijo (metálico → oscuro → claro → vivo) - si
+  el color VIEJO (ej. "negro", que sigue en el texto) coincidía con una categoría
+  ANTES que el color corregido en ese orden de búsqueda, la elección de fondo
+  terminaba basada en el color equivocado.
+
+**Solución:**
+- `core/nimbo.py`: la corrección de color ahora se guarda APARTE
+  (`vf_color_corregido`), sin tocar `vf_descripcion_visual` - ya no se concatenan.
+  `_armar_datos_motor()` pasa ambos campos por separado al motor.
+- `core/video_prompt_engine.py`:
+  - `construir_prompts_video()` recibe `color_corregido` como parámetro separado.
+  - Nueva `_declaracion_color()`: arma una ORACIÓN PROPIA (no un fragmento forzado
+    dentro de otra frase) que declara el color corregido con prioridad explícita
+    ("Color/material real del producto, confirmado por el cliente y con prioridad
+    sobre cualquier otro color mencionado a continuación: X."), seguida del resto de
+    los detalles de llava (forma/condición/fondo) framed como secundarios. Se
+    diseñó como oración independiente (no como "mostrando su interior de X") porque
+    la corrección que escribe el usuario puede venir en cualquier forma gramatical -
+    un fragmento ("amarillo dorado") o una oración completa ("es negro mate por
+    dentro") - y forzarla dentro de otro molde producía texto gramaticalmente roto
+    para el segundo caso ("mostrando su interior de es negro mate por dentro").
+    Aplica igual en los 3 prompts (TikTok/Instagram/Facebook, antes el color
+    corregido solo tenía tratamiento especial en la apertura de TikTok/Instagram vía
+    `_apertura()` - Facebook armaba su propia apertura por separado y no lo tenía).
+  - `elegir_fondo_y_iluminacion()` ahora recibe `color_corregido` y, si está
+    presente, basa la detección de tono de contraste SOLO en ese texto (no en
+    `descripcion_visual`, que puede seguir mencionando el color viejo) - así la
+    elección de fondo también respeta la corrección del usuario, no el color que
+    llava identificó mal.
+  - `_formatear_precio()` (nueva): `f"{float(precio):.2f}"` con fallback a
+    `str(precio)` si no se puede convertir (`vf_precio` llega como string en el
+    camino de producto ya existente en el inventario, y como float en el camino de
+    producto descrito a mano - el fix funciona para ambos). Usada en
+    `_construir_prompt_facebook()`, el único de los 3 prompts que muestra el precio
+    como texto en pantalla.
+
+**Verificación:**
+1. Con el ejemplo exacto del reporte ("interior amarillo dorado casi color gold"
+   corrigiendo "Teflon negro mate" de llava): el prompt final incluye el color
+   corregido como oración explícita y prioritaria, con la instrucción de ignorar
+   cualquier color mencionado más abajo; el resto de los detalles de llava (mango
+   rojo, 4 cavidades) se preservan como contexto secundario.
+2. Se probaron además dos correcciones con forma gramatical distinta ("es negro mate
+   por dentro", "el interior es amarillo dorado") para confirmar que
+   `_declaracion_color()` produce una oración correcta en los 3 casos, sin depender
+   de que el usuario escriba un fragmento en vez de una oración completa.
+3. Se confirmó que la elección de fondo por contraste usa el color corregido (no el
+   viejo de llava) - con la corrección "es negro mate por dentro" sobre una
+   descripción original que decía "Teflon amarillo", el motor eligió correctamente
+   un fondo claro (contraste para un producto oscuro), no uno basado en "amarillo".
+4. `Q168.00` confirmado en el prompt de Facebook (antes `Q168.0`).
+5. Se corrió de nuevo la batería completa de pruebas de las tres entradas
+   anteriores (producto de inventario sin llava, reinicio con foto nueva mid-flujo,
+   red de seguridad de step viejo, enriquecimiento de descripción manual) para
+   confirmar que estos cambios no rompieron nada existente - todas pasaron igual.
+
+**Archivos modificados:** `core/nimbo.py`, `core/video_prompt_engine.py`.
