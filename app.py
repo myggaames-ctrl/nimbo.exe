@@ -1125,6 +1125,63 @@ def chat():
     return jsonify({"response": respuesta_tool, "source": "tool", "html": is_html})
 
 
+UPLOAD_FOLDER_CHAT_FOTOS = os.path.join(BASE_DIR, 'static', 'fotos', 'chat_temp')
+os.makedirs(UPLOAD_FOLDER_CHAT_FOTOS, exist_ok=True)
+MAX_FOTO_CHAT_BYTES = 8 * 1024 * 1024  # 8MB
+
+
+@app.route("/api/chat/foto", methods=["POST"])
+@login_required
+def chat_con_foto():
+    """Version de /api/chat que acepta una foto adjunta (multipart) ademas del
+    texto - usada por el flujo de "video de producto desde una foto subida al
+    chat" (ver BUGS_Y_FIXES.md, tools/contenido_tool.py). La foto se guarda en
+    static/fotos/chat_temp/ (temporal - a diferencia de ProductoFoto, esto no
+    queda asociado a ningun producto en la base de datos, solo existe en disco
+    como referencia visual para Veo 3) y se arma un mensaje con un marcador
+    [FOTO:ruta] al principio, que core/detectors/contenido_foto_detector.py
+    reconoce - de ahi en adelante el mensaje sigue el MISMO pipeline que
+    /api/chat (core.nimbo.send()), heredando el contexto conversacional, el
+    guardado en ChatHistorial, etc. sin duplicar esa logica."""
+    if 'foto' not in request.files:
+        return jsonify({"error": "No se envió ninguna foto"}), 400
+    foto = request.files['foto']
+    mensaje = (request.form.get("message") or "").strip()
+
+    if foto.filename == '':
+        return jsonify({"error": "Archivo vacío"}), 400
+    if request.content_length and request.content_length > MAX_FOTO_CHAT_BYTES:
+        return jsonify({"error": "La foto es demasiado grande (máximo 8MB)."}), 400
+
+    ext = foto.filename.rsplit('.', 1)[-1].lower() if '.' in foto.filename else ''
+    if ext not in ('jpg', 'jpeg', 'png', 'webp'):
+        return jsonify({"error": "Formato no permitido. Usa JPG, PNG o WEBP."}), 400
+
+    import uuid
+    filename = f"{uuid.uuid4()}.{ext}"
+    filepath = os.path.join(UPLOAD_FOLDER_CHAT_FOTOS, filename)
+    foto.save(filepath)
+    ruta = f"/static/fotos/chat_temp/{filename}"
+
+    mensaje_con_foto = f"[FOTO:{ruta}] {mensaje}".strip()
+
+    ctx = session.get("nimbo_ctx", {})
+    try:
+        respuesta_tool, ctx = nimbo_send(mensaje_con_foto, context=ctx, role=current_user.rol)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    session["nimbo_ctx"] = ctx
+
+    is_html = "<a " in str(respuesta_tool)
+    texto_mostrado_usuario = mensaje or "[foto adjunta]"
+    chat_history.append({"role": "user", "content": texto_mostrado_usuario, "time": datetime.now().strftime("%H:%M")})
+    chat_history.append({"role": "assistant", "content": respuesta_tool, "time": datetime.now().strftime("%H:%M")})
+    from database.nimbo_db import guardar_mensaje_chat
+    guardar_mensaje_chat("user", texto_mostrado_usuario)
+    guardar_mensaje_chat("assistant", str(respuesta_tool))
+    return jsonify({"response": respuesta_tool, "source": "tool", "html": is_html, "foto": ruta})
+
+
 @app.route("/api/chat/history", methods=["GET"])
 @login_required
 def get_history():

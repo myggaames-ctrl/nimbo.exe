@@ -6,16 +6,24 @@ import base64
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-def generar_video_producto(producto_nombre, descripcion="", ruta_foto=None, duracion=8):
+def generar_video_producto(producto_nombre, descripcion="", ruta_foto=None, duracion=8, aspect_ratio='9:16'):
+    """aspect_ratio: '9:16' (vertical, default - TikTok/Instagram Reels/uso
+    general) o '1:1' (cuadrado - Facebook). Ver core/nimbo.py step
+    videofoto_waiting_tono para el flujo que elige este valor segun la
+    plataforma que pidio el usuario. No se pudo verificar contra documentacion
+    real de Vertex AI que '1:1' sea un valor aceptado por Veo 3 (sin acceso a
+    internet al escribir esto) - si Veo 3 lo rechaza, operation.error lo
+    reporta igual que cualquier otro error de la API (ver mas abajo), no
+    revienta en silencio."""
     client = genai.Client(vertexai=True, project='pivotal-mode-499817-t7', location='us-central1')
-    
+
     prompt = f"Video publicitario profesional de {producto_nombre} para tienda de electrodomesticos en Guatemala."
     if descripcion:
         prompt += f" {descripcion}"
     prompt += " Fondo limpio, iluminacion profesional, estilo comercial moderno."
 
     config = types.GenerateVideosConfig(
-        aspect_ratio='9:16',
+        aspect_ratio=aspect_ratio,
         duration_seconds=duracion,
         number_of_videos=1,
     )

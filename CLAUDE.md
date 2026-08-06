@@ -756,6 +756,37 @@ identificacion de cobro).
       "para" (y "vendo", que se autocorregia a "vendio" y rompia "cuando vendo mas") al
       VOCABULARIO.
 - Contenido: posts, scripts, video Veo3, publicacion Facebook
+  - Video de producto desde una foto subida al chat: boton 📷 junto al campo de texto
+    del chat (templates/index.html) - `sendChat()` manda la foto por
+    `POST /api/chat/foto` (multipart, app.py) en vez del `POST /api/chat` con JSON de
+    siempre. Esa ruta guarda la foto en `static/fotos/chat_temp/<uuid>.<ext>`
+    (temporal, no queda asociada a ningun producto en la base de datos) y arma un
+    mensaje sintetico `[FOTO:ruta] mensaje` que pasa por el mismo `core.nimbo.send()`
+    de siempre - mismo patron que ya usa el escaneo de codigo de barras (texto
+    sintetico como puente hacia el pipeline de detectores).
+    `core/detectors/contenido_foto_detector.py` reconoce ese marcador (ya en
+    minuscula, el texto pasa antes por `CommandNormalizer.normalize()`) solo si
+    ademas trae una palabra clave (video/promocion/contenido/publicar) - una foto sin
+    esas palabras no dispara el flujo, sigue de largo por el resto del pipeline.
+    `tools/contenido_tool.py.video_desde_foto_tool()` (intent
+    `contenido.video_desde_foto`, admin-only como el resto de "contenido") intenta
+    identificar el producto con Ollama vision si el modelo pulled lo soporta (ver
+    `services/ollama_service.modelo_soporta_vision()` - hoy da `False`, ni
+    `qwen2.5:7b` ni `gemma2:9b` tienen vision, pero se detecta solo si en el futuro se
+    hace `ollama pull` de un modelo que si la tenga); si no hay vision o no devuelve
+    nada util, cae al texto que el usuario escribio junto a la foto como busqueda
+    (`get_products()`, mismo fuzzy match del resto del inventario). Si encuentra el
+    producto, `core/nimbo.py` (steps `videofoto_waiting_*`, flujo separado del ya
+    existente `VIDEO_INICIO:` de "video de [producto] por texto") confirma
+    ("Encontre X, precio QY. Quieres que genere un video?"); si no, pide nombre y
+    precio en un solo mensaje (ej. "licuadora oster 350") sin crear un `Producto`
+    nuevo en la base de datos (a proposito, para no mutar el inventario como efecto
+    secundario de este flujo). Despues pregunta oferta/promocion, plataforma (TikTok/
+    Instagram Reels/Facebook/General - mapea a `aspect_ratio` 9:16 o 1:1 para
+    Facebook, ver `services/video_gen.py`) y tono (urgente y llamativo/informativo/
+    divertido y casual/elegante), arma el prompt dinamico y llama a
+    `generar_video_producto()` en la misma respuesta, mostrando el video con boton de
+    descarga igual que el flujo de texto existente.
 - Recordatorios: pagos fijos, follow ups, cumpleanos, contenido
 - Backup: automatico 8pm, manual, 7 backups maximos
 - Login y roles: admin/empleado, onboarding /setup, gestion de usuarios, cambio y

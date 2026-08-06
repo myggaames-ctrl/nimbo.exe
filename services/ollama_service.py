@@ -45,6 +45,29 @@ def ollama_disponible():
         return False
 
 
+def modelo_soporta_vision(modelo=MODELO_CHAT):
+    """True si el modelo indicado (por defecto el unico modelo de chat, ver
+    MODELO_CHAT arriba) esta pulled en este Ollama Y su lista de
+    'capabilities' (que Ollama expone en GET /api/tags desde una version
+    reciente) incluye 'vision'. Chequeo dinamico a proposito (no un flag
+    hardcodeado): al momento de escribir esto ni qwen2.5:7b ni gemma2:9b (los
+    2 modelos pulled en este entorno) tienen vision, asi que esto da False
+    hoy - pero si en el futuro se hace `ollama pull` de un modelo con vision
+    (ej. llava, qwen2.5vl), esta funcion lo detecta solo, sin tocar codigo.
+    Ver analizar_imagen_ollama() para el flujo que usa esto (identificar un
+    producto en una foto subida por chat, con fallback a pedirlo a mano si
+    no hay vision disponible)."""
+    try:
+        r = requests.get(f"{OLLAMA_URL}/api/tags", timeout=3)
+        r.raise_for_status()
+        for m in r.json().get("models", []):
+            if m.get("model") == modelo or m.get("name") == modelo:
+                return "vision" in (m.get("capabilities") or [])
+        return False
+    except (requests.exceptions.RequestException, ValueError, KeyError):
+        return False
+
+
 def llamar_ollama(prompt, modelo=MODELO_CHAT, sistema=None, timeout=TIMEOUT_SEGUNDOS):
     """Llama al servidor local de Ollama (/api/chat) y devuelve el texto de la
     respuesta (string). sistema, si se da, se manda como mensaje role=system
@@ -86,3 +109,40 @@ def analizar_ollama(prompt):
     (TIMEOUT_ANALISIS_SEGUNDOS) porque estos prompts son mas largos/complejos
     que un mensaje de chat normal."""
     return llamar_ollama(prompt, timeout=TIMEOUT_ANALISIS_SEGUNDOS)
+
+
+def analizar_imagen_ollama(ruta_imagen, prompt, modelo=MODELO_CHAT, timeout=TIMEOUT_SEGUNDOS):
+    """Identificacion de producto en una foto (ver tools/contenido_tool.py,
+    flujo de video desde foto en el chat). Devuelve None DE UNA, sin llamar a
+    Ollama, si el modelo no soporta vision (ver modelo_soporta_vision()) - el
+    caller ya sabe que None significa 'no se pudo, pedilo a mano', mismo
+    contrato que llamar_ollama()/analizar_ollama(). Si el modelo si soporta
+    vision, manda la imagen codificada en base64 en el campo 'images' del
+    mensaje (formato multimodal de /api/chat de Ollama)."""
+    if not modelo_soporta_vision(modelo):
+        return None
+
+    import base64
+    try:
+        with open(ruta_imagen, "rb") as f:
+            imagen_b64 = base64.b64encode(f.read()).decode("ascii")
+    except OSError:
+        return None
+
+    try:
+        r = requests.post(
+            OLLAMA_CHAT_URL,
+            json={
+                "model": modelo,
+                "messages": [{"role": "user", "content": prompt, "images": [imagen_b64]}],
+                "stream": False,
+            },
+            timeout=timeout,
+        )
+        r.raise_for_status()
+        data = r.json()
+        return data["message"]["content"]
+    except requests.exceptions.Timeout:
+        return MENSAJE_TIMEOUT
+    except (requests.exceptions.RequestException, KeyError, ValueError):
+        return None

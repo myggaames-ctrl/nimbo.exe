@@ -1070,3 +1070,81 @@ como el lugar más natural para "lo de hoy" independientemente de la pestaña).
 escritorio de hoy - desaparece cuando levantás el escritorio (cerrás la pestaña).
 `localStorage` es como una libreta que dejás guardada en el cajón - sigue ahí mañana,
 la abras cuando la abras.
+
+---
+
+### multimodal (modelo de IA con visión)
+**Qué es:** un modelo de inteligencia artificial que puede recibir no solo texto sino
+también imágenes (u otros formatos como audio/video) como parte de la pregunta, y
+responder analizando lo que "ve" en esa imagen.
+
+**Para qué sirve en Nimbo:** `services/ollama_service.py.analizar_imagen_ollama()`
+manda una foto subida al chat al endpoint `/api/chat` de Ollama en formato
+multimodal (la imagen va codificada en base64 dentro del mensaje) para intentar
+identificar qué producto aparece en la foto - pero solo si el modelo que Nimbo tiene
+instalado soporta esto (ver `modelo_soporta_vision()` más abajo); hoy ninguno de los
+dos modelos pulled en este entorno (`qwen2.5:7b`, `gemma2:9b`) lo soporta, así que en
+la práctica el sistema cae siempre al texto que el usuario escribió junto a la foto.
+
+**Ejemplo de la vida real:** es la diferencia entre pedirle algo a alguien por
+teléfono (solo puede escuchar lo que decís) o en persona mostrándole una foto (puede
+"ver" de qué estás hablando, además de escucharte).
+
+---
+
+### capabilities (de un modelo de Ollama)
+**Qué es:** una lista que Ollama expone (desde una versión reciente) en
+`GET /api/tags` por cada modelo instalado, indicando qué puede hacer ese modelo en
+particular - por ejemplo `"vision"` si soporta imágenes, o `"tools"` si soporta
+function calling.
+
+**Para qué sirve en Nimbo:** `services/ollama_service.py.modelo_soporta_vision()`
+revisa esta lista para decidir, en el momento (no con un valor fijo escrito a mano),
+si vale la pena mandarle una foto al modelo de chat o si hay que pedirle al usuario
+que describa el producto a mano. Así, si en el futuro se instala un modelo con visión
+(ej. `llava`), Nimbo empieza a usarla automáticamente sin que haya que tocar código.
+
+**Ejemplo de la vida real:** es como revisar la ficha técnica de un empleado nuevo
+("sabe manejar", "habla inglés") antes de asignarle una tarea, en vez de asumir que
+puede hacer cualquier cosa y descubrir a mitad de camino que no.
+
+---
+
+### aspect ratio (relación de aspecto)
+**Qué es:** la proporción entre el ancho y el alto de una imagen o video - por
+ejemplo `9:16` es un video alto y angosto (como una pantalla de teléfono en
+vertical), y `1:1` es un video cuadrado.
+
+**Para qué sirve en Nimbo:** `services/video_gen.py.generar_video_producto()` recibe
+un parámetro `aspect_ratio` que se le pasa a Veo 3 (Vertical Video, el generador de
+video de Google) para que el video salga con la forma correcta según dónde se vaya a
+publicar - `9:16` para TikTok/Instagram Reels (donde el celular se sostiene en
+vertical) y `1:1` para Facebook (donde un video cuadrado se ve bien tanto en celular
+como en computadora).
+
+**Ejemplo de la vida real:** es como elegir entre tomar una foto "acostada" (horizontal)
+o "parada" (vertical) con el celular, según si la vas a poner en una historia de
+Instagram o en un marco de foto de escritorio - el contenido puede ser el mismo, pero
+la forma tiene que encajar donde se va a mostrar.
+
+---
+
+### marcador (texto sintético como puente entre dos partes del sistema)
+**Qué es:** en Nimbo, un texto con un formato especial y reconocible (ej.
+`VIDEO_INICIO:...`, `[FOTO:ruta]`) que una parte del código genera y otra parte del
+código sabe interpretar, para pasarse información sin tener que cambiar la firma de
+ninguna función.
+
+**Para qué sirve en Nimbo:** `core.nimbo.send()` solo recibe texto (el mensaje del
+chat) - cuando hace falta que arranque un flujo especial con datos que no vinieron
+como texto normal (ej. una foto subida por `POST /api/chat/foto`, o un código de
+barras escaneado), en vez de agregarle un parámetro nuevo a `send()`, el resto del
+sistema arma un mensaje de texto con un marcador al principio (`[FOTO:ruta] mensaje`)
+que un detector reconoce y convierte en el flujo correspondiente. Las herramientas
+(`tools/*.py`) también usan marcadores para decirle a `core/nimbo.py` "arrancá este
+flujo de varios pasos" (ej. `VIDEOFOTO_ENCONTRADO_INICIO:id|nombre|precio|foto`).
+
+**Ejemplo de la vida real:** es como escribir "URGENTE:" al principio de un correo
+para que quien lo reciba sepa, con solo ver esa palabra, que tiene que tratarlo
+distinto al resto de correos normales - sin necesidad de un sistema de correo
+completamente distinto solo para los urgentes.

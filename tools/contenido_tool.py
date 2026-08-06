@@ -169,6 +169,53 @@ def video_producto_tool(data):
 register("contenido.video", video_producto_tool)
 
 
+def video_desde_foto_tool(data):
+    """Punto de entrada del flujo de "video de producto desde una foto subida
+    al chat" (ver core/detectors/contenido_foto_detector.py, app.py
+    /api/chat/foto, core/nimbo.py steps videofoto_*). Intenta identificar el
+    producto en la foto con Ollama vision si el modelo pulled lo soporta (ver
+    services/ollama_service.modelo_soporta_vision) - si no lo soporta, o si no
+    logra identificar nada util, cae al texto que el usuario escribio junto a
+    la foto (data['texto']) como busqueda; si esa busqueda tampoco encuentra
+    nada (o no hay texto), arranca el flujo de "no reconoci el producto" para
+    pedirlo a mano en vez de fallar. La busqueda en si (con vision o con
+    texto) usa get_products(), el mismo fuzzy match que el resto del
+    inventario - no es una busqueda nueva ni distinta."""
+    from database.nimbo_db import get_products
+    from services.ollama_service import modelo_soporta_vision, analizar_imagen_ollama, MENSAJE_TIMEOUT
+
+    foto = data.get("foto", "") if isinstance(data, dict) else ""
+    texto = data.get("texto", "") if isinstance(data, dict) else ""
+    if not foto:
+        return "No recibí ninguna foto."
+
+    ruta_disco = os.path.join(BASE_DIR, foto.lstrip("/"))
+
+    query_busqueda = ""
+    if modelo_soporta_vision():
+        prompt_vision = (
+            "Identifica en pocas palabras que producto de una tienda de "
+            "electrodomesticos y repuestos aparece en esta foto (ej: "
+            "'licuadora', 'plancha', 'cuchilla de licuadora'). Responde "
+            "SOLO el nombre del producto, sin explicaciones ni puntuacion."
+        )
+        descripcion_ia = analizar_imagen_ollama(ruta_disco, prompt_vision)
+        if descripcion_ia and descripcion_ia != MENSAJE_TIMEOUT:
+            query_busqueda = descripcion_ia.strip()
+
+    if not query_busqueda:
+        query_busqueda = texto
+
+    productos = get_products(search=query_busqueda) if query_busqueda else []
+    if productos:
+        p = productos[0]
+        return f"VIDEOFOTO_ENCONTRADO_INICIO:{p['Id']}|{p['Name'].strip()}|{p['Price']}|{foto}"
+
+    return f"VIDEOFOTO_NUEVO_INICIO:{foto}"
+
+register("contenido.video_desde_foto", video_desde_foto_tool)
+
+
 def publicar_tool(data):
     if isinstance(data, str): return "Error: datos invalidos"
     from database.nimbo_db import get_products, get_foto_producto, nimbo_connect

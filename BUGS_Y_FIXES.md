@@ -2183,3 +2183,125 @@ anterior (cola, dedup, campana, persistencia) para confirmar que el fix no rompi
 nada - todas pasaron.
 
 **Archivos modificados:** `templates/index.html`.
+
+---
+
+## [2026-08-06] Generación de video de producto desde una foto subida al chat
+
+**Problema:** el único flujo para generar un video de producto con Veo 3 (ver
+`services/video_gen.py`) era escribiendo el nombre del producto por texto
+("video de licuadora"). No existía forma de subir una foto en el chat, identificar el
+producto a partir de esa foto, y armar un video promocional con oferta/plataforma/tono
+elegidos por el usuario.
+
+**Causa:** no es un bug, es una funcionalidad nueva pedida explícitamente. Se
+documenta acá (además de en `CLAUDE.md`, sección "Módulos completados") porque así se
+pidió explícitamente para esta instalación.
+
+**Solución:**
+- `services/ollama_service.py`: `modelo_soporta_vision(modelo=MODELO_CHAT)` chequea
+  dinámicamente (GET `/api/tags`, campo `capabilities`) si el modelo pulled soporta
+  imágenes - hoy da `False` (ni `qwen2.5:7b` ni `gemma2:9b`, los dos modelos pulled en
+  este entorno, tienen vision), pero si en el futuro se hace `ollama pull` de un
+  modelo con vision (ej. `llava`, `qwen2.5vl`) esto lo detecta solo, sin tocar código.
+  `analizar_imagen_ollama(ruta_imagen, prompt, ...)` devuelve `None` de una si no hay
+  vision disponible (mismo contrato que `llamar_ollama()`); si sí hay, manda la imagen
+  en base64 en el campo `images` del mensaje (formato multimodal de `/api/chat` de
+  Ollama).
+- `app.py`: ruta nueva `POST /api/chat/foto` (multipart: `foto` + `message`,
+  `@login_required`) - valida extensión (jpg/jpeg/png/webp) y tamaño (máximo 8MB,
+  mismo criterio que el resto de uploads de fotos del sistema), guarda el archivo en
+  `static/fotos/chat_temp/<uuid>.<ext>` (temporal, no queda asociado a ningún producto
+  en la base de datos) y arma un mensaje sintético `[FOTO:ruta] mensaje` que pasa por
+  el mismo `core.nimbo.send()` que usa `/api/chat` - mismo patrón que ya usa el
+  escaneo de código de barras (texto sintético como puente hacia el pipeline de
+  detectores, sin tener que darle a `send()` un segundo parámetro para la foto).
+- `core/detectors/contenido_foto_detector.py` (nuevo): reconoce el marcador
+  `[foto:ruta]` (ya en minúscula - el texto pasa antes por
+  `CommandNormalizer.normalize()`) seguido de alguna palabra clave (video, promocion,
+  contenido, publicar/publica) en el texto que acompaña a la foto - una foto subida
+  sin ninguna de esas palabras no dispara este flujo, sigue de largo por el resto del
+  pipeline (traducción/clarificación/fallback Ollama) como cualquier mensaje sin
+  match. Registrado primero en la lista de detectores de
+  `core/intent_detector.py` (mismo criterio que `CodigoBarrasDetector`: un marcador de
+  prefijo único no necesita competir en orden con los detectores basados en verbos).
+- `tools/contenido_tool.py`: `video_desde_foto_tool()` (intent
+  `contenido.video_desde_foto`, categoría `contenido` - admin-only, igual que el resto
+  de generación de contenido) intenta identificar el producto con Ollama vision si
+  está disponible; si no, o si vision no devuelve nada útil, cae al texto que el
+  usuario escribió junto a la foto como búsqueda. La búsqueda en sí usa
+  `get_products()`, el mismo fuzzy match del resto del inventario. Devuelve el
+  marcador `VIDEOFOTO_ENCONTRADO_INICIO:id|nombre|precio|foto` si encontró match, o
+  `VIDEOFOTO_NUEVO_INICIO:foto` si no.
+- `core/nimbo.py`: flujo conversacional nuevo y separado del ya existente de
+  `VIDEO_INICIO:` (ese es "video de [producto ya escrito]" por texto; este es "acá
+  está la foto de un producto") - steps `videofoto_waiting_confirmar` (si encontró
+  match: "Encontré X, precio QY. ¿Quieres que genere un video?"),
+  `videofoto_waiting_datos_nuevo` (si no encontró: pide nombre y precio en un solo
+  mensaje, ej. "licuadora oster 350" - el último número del mensaje se toma como
+  precio, el resto como nombre; a propósito NO se crea un `Producto` nuevo en la base
+  de datos con estos datos, solo se usan para armar el prompt del video, para no
+  mutar el inventario como efecto secundario de un flujo de "hacer un video"),
+  `videofoto_waiting_oferta`, `videofoto_waiting_plataforma`,
+  `videofoto_waiting_tono`. El último step arma el prompt dinámico (nombre, precio,
+  oferta si hay, plataforma, tono, siempre en español guatemalteco con colores
+  llamativos y texto grande) y llama a `generar_video_producto()` en la misma
+  respuesta (a diferencia del flujo de texto existente, que separa "avisar que está
+  generando" y "generar" en dos mensajes distintos del usuario - acá se genera de una
+  vez para no depender de un mensaje extra que dispare el paso real). Mapeo de
+  plataforma a `aspect_ratio`: TikTok/Instagram Reels/General → `9:16` (vertical),
+  Facebook → `1:1` (cuadrado).
+- `services/video_gen.py`: `generar_video_producto()` gana un parámetro nuevo
+  `aspect_ratio='9:16'` (con default, no rompe las llamadas existentes que no lo
+  pasan), pasado directo a `types.GenerateVideosConfig(aspect_ratio=...)`. No se pudo
+  verificar contra documentación real de Vertex AI que `'1:1'` sea un valor aceptado
+  por Veo 3 (sin acceso a internet al escribir esto) - si la API lo rechaza,
+  `operation.error` lo reporta igual que cualquier otro error, no revienta en
+  silencio.
+- `templates/index.html`: botón 📷 nuevo junto al campo de texto del chat (abre un
+  `<input type="file">` oculto), con una barra de preview (miniatura + nombre +
+  botón ✕ para quitar) que aparece al elegir una foto. `sendChat()` ahora manda la
+  foto (si hay una seleccionada) por `POST /api/chat/foto` como `multipart/form-data`
+  en vez del `POST /api/chat` con JSON de siempre; sin foto, el comportamiento no
+  cambió. De paso, la burbuja del mensaje del usuario en el chat ahora pasa por
+  `escHtml()` antes de insertarse (antes se insertaba sin escapar, un self-XSS latente
+  de baja severidad reflejando el propio texto del usuario) - se corrigió de pasada
+  al tocar esa misma línea para agregar la miniatura de la foto adjunta.
+
+**Limitación conocida (documentada, no corregida):** una foto subida sin ninguna
+palabra clave de contenido/video queda igual con el marcador `[foto:ruta]` pegado al
+mensaje cuando cae al fallback de Ollama (si ningún otro detector matchea) - puede
+confundir levemente esa respuesta de fallback. Se acepta como límite menor, fuera del
+pedido original.
+
+**Verificación:** con una empresa de prueba desechable (creada por
+`core.empresa.crear_empresa()`, con un producto sembrado directo por SQL y borrada al
+terminar junto con su carpeta en `data/empresas/`) se probó:
+1. El flujo completo llamando a `core.nimbo.send()` directo (con
+   `services.video_gen.generar_video_producto` mockeado con `unittest.mock.patch` para
+   no disparar una llamada real a Vertex AI/Veo 3, que requeriría billing real de GCP):
+   producto encontrado por texto (sin vision disponible, cae al texto de la foto) →
+   confirmar → oferta → plataforma (TikTok) → tono → video generado, con el
+   `aspect_ratio` correcto (`9:16`) y el prompt armado con todos los datos.
+2. Mismo flujo para producto NO encontrado: parseo correcto de "plancha philips q120"
+   a nombre "Plancha Philips" + precio 120 → Facebook → `aspect_ratio` correcto
+   (`1:1`) → tono elegante.
+3. Cancelación a mitad del flujo (`"cancelar"`) y respuesta "no" a la confirmación -
+   ambos cortan el flujo sin dejar el `context` a medias.
+4. Una foto con texto sin ninguna palabra clave ("hola como estas") NO dispara el
+   detector - cae al fallback normal de Ollama, como cualquier mensaje sin match.
+5. El endpoint `POST /api/chat/foto` completo contra un `app.test_client()` real
+   (login con CSRF real vía `/select-empresa` + `/login`, subiendo un JPEG real de
+   1x1px): guardó el archivo en `static/fotos/chat_temp/`, armó el marcador
+   correctamente, y el detector/tool lo reconocieron a través del pipeline HTTP real
+   (no solo en la llamada directa a `send()`).
+
+No se pudo probar en un navegador real (sin la extensión Claude in Chrome instalada,
+ver sesión) ni con una llamada real a Veo 3/Vertex AI (requeriría billing real de GCP,
+fuera de alcance disparar eso unilateralmente) - ambas limitaciones se comunican acá
+en vez de asumir que funcionan sin haberlo verificado.
+
+**Archivos modificados:** `services/ollama_service.py`, `app.py`,
+`core/detectors/contenido_foto_detector.py` (nuevo), `core/intent_detector.py`,
+`tools/contenido_tool.py`, `core/nimbo.py`, `services/video_gen.py`,
+`templates/index.html`, `CLAUDE.md`.

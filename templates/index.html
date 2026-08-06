@@ -924,7 +924,19 @@
               </div>
             </div>
           </div>
+          <div id="chat-foto-preview" style="display:none;align-items:center;gap:8px;padding:6px 10px;margin-bottom:6px;background:var(--bg-2,rgba(255,255,255,.05));border-radius:8px">
+            <img id="chat-foto-preview-img" src="" style="width:36px;height:36px;object-fit:cover;border-radius:6px">
+            <span id="chat-foto-preview-nombre" class="text-muted" style="font-size:12px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+            <button class="btn btn-ghost btn-sm" onclick="quitarFotoChat()" title="Quitar foto">✕</button>
+          </div>
           <div class="chat-input-area">
+            <input type="file" id="chat-foto-input" accept="image/jpeg,image/png,image/webp" style="display:none" onchange="onFotoChatSeleccionada(event)">
+            <button
+                class="btn btn-ghost btn-sm"
+                onclick="document.getElementById('chat-foto-input').click()"
+                title="Adjuntar foto de producto">
+                📷
+            </button>
             <textarea class="chat-input" id="chat-input" rows="1" placeholder="Escribe tu mensaje..." onkeydown="chatKeydown(event)"></textarea>
               <button
                   class="btn btn-ghost btn-sm"
@@ -1914,15 +1926,43 @@ function addMsgToUI(role, text, time, isHtml=false) {
   msgs.scrollTop = msgs.scrollHeight;
 }
 
+// Foto adjunta pendiente de enviar en el chat (ver /api/chat/foto en app.py,
+// flujo de "video de producto desde una foto" - CLAUDE.md). Se guarda como
+// File en vez de subirla al elegirla: solo se sube cuando el usuario manda
+// el mensaje (igual que adjuntar un archivo en cualquier chat normal).
+let chatFotoPendiente = null;
+
+function onFotoChatSeleccionada(event) {
+  const archivo = event.target.files[0];
+  if (!archivo) return;
+  chatFotoPendiente = archivo;
+  document.getElementById('chat-foto-preview-img').src = URL.createObjectURL(archivo);
+  document.getElementById('chat-foto-preview-nombre').textContent = archivo.name;
+  document.getElementById('chat-foto-preview').style.display = 'flex';
+  document.getElementById('chat-input').focus();
+}
+
+function quitarFotoChat() {
+  chatFotoPendiente = null;
+  document.getElementById('chat-foto-input').value = '';
+  document.getElementById('chat-foto-preview').style.display = 'none';
+}
+
 async function sendChat() {
   const input = document.getElementById('chat-input');
   const msg = input.value.trim();
-  if (!msg) return;
+  const foto = chatFotoPendiente;
+  if (!msg && !foto) return;
   input.value = '';
   input.focus();
 
   const now = new Date().toLocaleTimeString('es-GT', {hour:'2-digit',minute:'2-digit'});
-  addMsgToUI('user', msg, now);
+  let burbujaUsuario = msg ? escHtml(msg).replace(/\n/g,'<br>') : '';
+  if (foto) {
+    burbujaUsuario += `<br><img src="${URL.createObjectURL(foto)}" style="max-width:180px;border-radius:8px;margin-top:6px">`;
+  }
+  addMsgToUI('user', burbujaUsuario || '(foto adjunta)', now, true);
+  quitarFotoChat();
 
   // Loading
   const msgs = document.getElementById('chat-messages');
@@ -1934,21 +1974,29 @@ async function sendChat() {
   msgs.scrollTop = msgs.scrollHeight;
 
   try {
-    const endpoint = useOpenclaw ? '/api/openclaw/chat' : '/api/chat';
+    let r;
+    if (foto) {
+      const formData = new FormData();
+      formData.append('foto', foto);
+      formData.append('message', msg);
+      r = await fetch('/api/chat/foto', { method: 'POST', body: formData });
+    } else {
+      const endpoint = useOpenclaw ? '/api/openclaw/chat' : '/api/chat';
 
-    console.log("Endpoint usado:", endpoint);
-    console.log("OpenClaw activado:", useOpenclaw);
+      console.log("Endpoint usado:", endpoint);
+      console.log("OpenClaw activado:", useOpenclaw);
 
-    const r = await fetch(endpoint, {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({message: msg})
-});
+      r = await fetch(endpoint, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({message: msg})
+      });
+    }
 
-const text = await r.text();
-console.log("Respuesta servidor:", text);
+    const text = await r.text();
+    console.log("Respuesta servidor:", text);
 
-const d = JSON.parse(text);
+    const d = JSON.parse(text);
     document.getElementById('loading-msg')?.remove();
     if (d.response) addMsgToUI('assistant', d.response, new Date().toLocaleTimeString('es-GT',{hour:'2-digit',minute:'2-digit'}), d.html);
     else addMsgToUI('assistant', '⚠️ ' + (d.error || 'Error desconocido'), '');

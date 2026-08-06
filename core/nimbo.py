@@ -258,6 +258,34 @@ def _intentar_detectar(message: str, role: str, context: dict, contexto_historia
             tiene_foto = "Con foto del producto" if foto else "Sin foto (solo texto)"
             return f"Video de {nombre}. {tiene_foto}.\nEstilo del video? (producto, promocional, tutorial, reel viral):", context
 
+        if str(result).startswith("VIDEOFOTO_ENCONTRADO_INICIO:"):
+            # Arrancado por tools/contenido_tool.py video_desde_foto_tool cuando
+            # identifico (con Ollama vision o con el texto que acompanaba la foto)
+            # un producto que ya existe en el inventario. Flujo separado del de
+            # VIDEO_INICIO: arriba (ese es "video de [producto ya escrito]" por
+            # texto; este es "aqui esta la foto de un producto" - preguntas y
+            # steps distintos, ver videofoto_waiting_* mas abajo en send()).
+            partes = str(result).replace("VIDEOFOTO_ENCONTRADO_INICIO:", "").split("|")
+            producto_id, nombre, precio, foto = partes[0], partes[1], partes[2], partes[3] if len(partes) > 3 else ""
+            context = {
+                "step": "videofoto_waiting_confirmar",
+                "vf_producto_id": producto_id,
+                "vf_nombre": nombre,
+                "vf_precio": precio,
+                "vf_foto": foto,
+            }
+            return f"Encontré {nombre}, precio Q{precio}. ¿Quieres que genere un video? (si/no)", context
+
+        if str(result).startswith("VIDEOFOTO_NUEVO_INICIO:"):
+            # No se pudo identificar el producto (sin vision disponible, o vision/
+            # texto sin match en el inventario) - se pide nombre y precio a mano en
+            # vez de crear el producto solo (ver nota de diseno en BUGS_Y_FIXES.md:
+            # a proposito NO se crea un Producto nuevo en la base de datos como
+            # efecto secundario de este flujo, solo se usan para armar el video).
+            foto = str(result).replace("VIDEOFOTO_NUEVO_INICIO:", "").strip()
+            context = {"step": "videofoto_waiting_datos_nuevo", "vf_foto": foto}
+            return "No reconocí el producto. ¿Cómo se llama y cuál es el precio? (ej: licuadora oster 350)", context
+
         if str(result).startswith("SET_DESC_INICIO:"):
             partes = str(result).replace("SET_DESC_INICIO:", "").split("|")
             producto_id, nombre = partes[0], partes[1]
@@ -832,6 +860,104 @@ def send(message: str, context: dict = None, role: str = "admin") -> tuple:
         if error:
             return f"Error generando video: {error}", context
         return f'<video controls style="max-width:300px;border-radius:8px"><source src="{ruta}" type="video/mp4"></video><br>Video de {nombre} generado. <a href="{ruta}" download style="color:var(--accent)">⬇️ Descargar</a>', context
+
+    # Flujo de video de producto generado desde una foto subida al chat (ver
+    # core/detectors/contenido_foto_detector.py, app.py /api/chat/foto,
+    # tools/contenido_tool.py video_desde_foto_tool). Arrancado por
+    # VIDEOFOTO_ENCONTRADO_INICIO:/VIDEOFOTO_NUEVO_INICIO: mas arriba en
+    # _intentar_detectar(). Flujo separado del de video_waiting_estilo/
+    # video_waiting_texto de arriba (ese arranca escribiendo "video de X" por
+    # texto; este arranca subiendo una foto) - preguntas y datos distintos,
+    # aunque ambos terminan llamando a generar_video_producto().
+    if step == "videofoto_waiting_confirmar":
+        resp = message.strip().lower()
+        if resp not in ["si", "si.", "sí", "s", "ok", "dale", "yes", "de una"]:
+            return "Entendido, no genero el video.", {}
+        context["step"] = "videofoto_waiting_oferta"
+        return "¿Hay oferta o promoción? (precio especial, descuento, 2x1, etc. o escribe 'no')", context
+
+    if step == "videofoto_waiting_datos_nuevo":
+        # "No reconoci el producto. Como se llama y cual es el precio?" -
+        # se piden ambos datos en una sola respuesta (ej. "licuadora oster
+        # 350"): el ultimo numero del mensaje se toma como precio, el resto
+        # (sin palabras de relleno como "precio"/"cuesta") como nombre. A
+        # proposito NO se crea un Producto nuevo en la base de datos con estos
+        # datos - solo se usan para armar el prompt del video (ver nota en
+        # BUGS_Y_FIXES.md).
+        m = re.search(r"(\d+(?:[.,]\d+)?)", message)
+        if not m:
+            return "No pude identificar el precio. Escribe el nombre del producto y el precio (ej: licuadora oster 350).", context
+        precio = float(m.group(1).replace(",", "."))
+        nombre = message[:m.start()].strip()
+        nombre = re.sub(r"\b(precio|cuesta|vale|a|q|quetzales|es|de|por)\b\s*$", "", nombre, flags=re.IGNORECASE).strip(" ,.-")
+        if not nombre:
+            nombre = message[m.end():].strip(" ,.-Q")
+        if not nombre:
+            return "No pude identificar el nombre del producto. Escribe el nombre y el precio (ej: licuadora oster 350).", context
+        context["vf_nombre"] = nombre.title()
+        context["vf_precio"] = precio
+        context["step"] = "videofoto_waiting_oferta"
+        return f"Producto: {nombre.title()}, precio Q{precio:g}.\n¿Hay oferta o promoción? (precio especial, descuento, 2x1, etc. o escribe 'no')", context
+
+    if step == "videofoto_waiting_oferta":
+        texto = message.strip()
+        context["vf_oferta"] = "" if texto.lower() in ("no", "no.", "ninguna", "no hay") else texto
+        context["step"] = "videofoto_waiting_plataforma"
+        return "¿Para qué plataforma? (TikTok / Instagram Reels / Facebook / General)", context
+
+    if step == "videofoto_waiting_plataforma":
+        context["vf_plataforma"] = message.strip()
+        context["step"] = "videofoto_waiting_tono"
+        return "¿Qué tono quieres? (Urgente y llamativo / Informativo / Divertido y casual / Elegante)", context
+
+    if step == "videofoto_waiting_tono":
+        # Ultimo paso: ya con oferta/plataforma/tono se arma el prompt dinamico
+        # y se genera el video de una sola vez (a diferencia del flujo de
+        # video_waiting_texto/video_generando de arriba, que separa "avisar que
+        # esta generando" y "generar" en dos mensajes distintos del usuario -
+        # aqui se genera en la misma respuesta para no depender de que el
+        # usuario mande un mensaje extra que dispare el paso real).
+        from services.video_gen import generar_video_producto
+
+        nombre = context.get("vf_nombre", "")
+        precio = context.get("vf_precio", "")
+        foto = context.get("vf_foto", "")
+        oferta = context.get("vf_oferta", "")
+        plataforma_raw = unicodedata.normalize("NFD", context.get("vf_plataforma", "")).encode("ascii", "ignore").decode("utf-8").lower()
+        tono_raw = unicodedata.normalize("NFD", message.strip()).encode("ascii", "ignore").decode("utf-8").lower()
+        context = {}
+
+        if "tiktok" in plataforma_raw:
+            plataforma_texto, aspect_ratio = "TikTok", "9:16"
+        elif "reel" in plataforma_raw or "instagram" in plataforma_raw:
+            plataforma_texto, aspect_ratio = "Instagram Reels", "9:16"
+        elif "facebook" in plataforma_raw:
+            plataforma_texto, aspect_ratio = "Facebook", "1:1"
+        else:
+            plataforma_texto, aspect_ratio = "redes sociales en general", "9:16"
+
+        if "urgente" in tono_raw or "llamativo" in tono_raw:
+            tono_texto = "urgente y llamativo, con sensacion de oferta por tiempo limitado, texto grande en pantalla y colores vibrantes"
+        elif "informativo" in tono_raw:
+            tono_texto = "informativo y claro, resaltando las caracteristicas y beneficios del producto"
+        elif "divertido" in tono_raw or "casual" in tono_raw:
+            tono_texto = "divertido, casual y energico, cercano al cliente"
+        elif "elegante" in tono_raw:
+            tono_texto = "elegante y sofisticado, con iluminacion premium y ritmo pausado"
+        else:
+            tono_texto = message.strip()
+
+        prompt = f"Video publicitario de {nombre} para Mi Cocina Electrodomesticos Guatemala, para {plataforma_texto}. Precio Q{precio}."
+        if oferta:
+            prompt += f" Oferta especial: {oferta}."
+        prompt += f" Tono {tono_texto}."
+        prompt += " En espanol guatemalteco, colores llamativos, texto grande y legible en pantalla, estilo comercial profesional."
+
+        ruta, error = generar_video_producto(nombre, prompt, foto if foto else None, aspect_ratio=aspect_ratio)
+        if error:
+            return f"Error generando el video: {error}", context
+        return (f'<video controls style="max-width:300px;border-radius:8px"><source src="{ruta}" type="video/mp4"></video><br>'
+                f'Video de {nombre} generado. <a href="{ruta}" download style="color:var(--accent)">⬇️ Descargar</a>'), context
 
     # Flujo de descripcion de producto
     if step == "desc_waiting_descripcion":

@@ -23,6 +23,7 @@ from core.detectors.puntos_detector import PuntosDetector
 from core.detectors.codigo_barras_detector import CodigoBarrasDetector
 from core.detectors.tarifa_detector import TarifaDetector
 from core.detectors.reembolso_detector import ReembolsoDetector
+from core.detectors.contenido_foto_detector import ContenidoFotoDetector
 from core.command_normalizer import CommandNormalizer
 
 
@@ -34,6 +35,7 @@ class IntentDetector:
 
         self.detectors = [
 
+            ContenidoFotoDetector(),
             CajaDetector(),
             ReembolsoDetector(),
             DescuentoDetector(),
