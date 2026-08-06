@@ -831,18 +831,60 @@ Duracion: {duracion} segundos
 Responde SOLO con el prompt final para Veo 3, sin explicaciones, sin comillas, sin encabezados."""
 
 
+# Meta-prompt para videofoto_waiting_ajuste: le pide a Ollama que reescriba el
+# prompt ANTERIOR (el que ya se uso para generar un video) aplicando el
+# cambio puntual que pide el usuario ("quiero el teflon amarillo dorado",
+# "cambia la iluminacion"), en vez de arrancar un prompt nuevo desde cero -
+# asi el resto del video (producto, tono, composicion) no cambia sin que se
+# haya pedido.
+PROMPT_AJUSTAR_VIDEO = """Eres un director de videografia publicitaria experto en prompts para Veo 3, el generador de video de Google.
+
+Este es el prompt que se uso para generar un video:
+{prompt_anterior}
+
+El cliente pidio este ajuste puntual: "{ajuste}"
+
+Reescribe el prompt COMPLETO aplicando ese ajuste, manteniendo todo lo demas igual (mismo producto, mismo tono, misma estructura: escena principal, sujeto, accion, ambiente, iluminacion, camara, composicion visual, paleta de colores, estilo, texto en pantalla si aplica). Responde SOLO con el prompt final ajustado, en espanol, sin explicaciones ni comillas."""
+
+
 def _generar_video_final(nombre, prompt, foto, aspect_ratio, duracion):
-    """Ultimo paso del flujo de videofoto_*: llama a Veo 3 con el prompt ya
-    decidido (basico, optimizado por Ollama, o editado a mano por el usuario -
-    a esta altura da igual cual de los tres, ya es texto plano) y arma la
-    misma respuesta HTML (video + boton de descarga) que el resto de flujos
-    de video de este archivo."""
+    """Ultimo paso de generacion real: llama a Veo 3 con el prompt ya decidido
+    (basico, optimizado por Ollama, editado a mano, o ajustado post-entrega -
+    ver videofoto_waiting_ajuste) y arma la respuesta con el video reproducible
+    inline (tag <video> con controles nativos, no solo un link de descarga) +
+    un boton de descarga debajo.
+
+    Al terminar, en vez de vaciar el contexto por completo (como hacia antes),
+    deja el flujo en el step videofoto_waiting_ajuste con el prompt/datos
+    usados guardados - asi el siguiente mensaje del usuario se puede
+    interpretar como un pedido de ajuste sobre ESTE mismo video ("cambia la
+    iluminacion") sin repetir todas las preguntas desde cero, Y ademas evita
+    que un "no" o cualquier respuesta sin sentido despues del video se cuele
+    al detector de clarificacion de intenciones vagas y deje al usuario en un
+    loop de preguntas sin salida (ver BUGS_Y_FIXES.md) - videofoto_waiting_ajuste
+    reconoce esas respuestas de cierre y termina el flujo limpio."""
     from services.video_gen import generar_video_producto
     ruta, error = generar_video_producto(nombre, prompt, foto if foto else None, duracion=duracion, aspect_ratio=aspect_ratio)
     if error:
         return f"Error generando el video: {error}", {}
-    return (f'<video controls style="max-width:300px;border-radius:8px"><source src="{ruta}" type="video/mp4"></video><br>'
-            f'Video de {nombre} generado. <a href="{ruta}" download style="color:var(--accent)">⬇️ Descargar</a>'), {}
+    context = {
+        "step": "videofoto_waiting_ajuste",
+        "vf_nombre": nombre,
+        "vf_foto": foto,
+        "vf_aspect_ratio": aspect_ratio,
+        "vf_duracion": duracion,
+        "vf_prompt_final": prompt,
+    }
+    video_html = (
+        f'Video de {nombre} generado.<br>'
+        f'<video controls preload="metadata" playsinline style="max-width:320px;width:100%;border-radius:8px;display:block;margin-top:6px">'
+        f'<source src="{ruta}" type="video/mp4"></video>'
+        f'<div style="margin-top:8px"><a href="{ruta}" download style="display:inline-block;padding:6px 14px;'
+        f'background:var(--accent);color:white;border-radius:8px;text-decoration:none;font-size:13px">'
+        f'⬇️ Descargar video</a></div>'
+        f'<div style="margin-top:10px">¡Listo! ¿Quieres generar otro video o necesitas algo más?</div>'
+    )
+    return video_html, context
 
 
 def send(message: str, context: dict = None, role: str = "admin") -> tuple:
@@ -1173,6 +1215,41 @@ def send(message: str, context: dict = None, role: str = "admin") -> tuple:
             context.get("vf_foto", ""), context.get("vf_aspect_ratio", "9:16"),
             context.get("vf_duracion", 8),
         )
+
+    if step == "videofoto_waiting_ajuste":
+        # Arrancado por _generar_video_final() apenas se entrega un video -
+        # en vez de vaciar el contexto (lo que hacia que un "no" o cualquier
+        # respuesta ambigua se colara al detector de clarificacion de
+        # intenciones vagas y dejara al usuario en un loop de preguntas sin
+        # salida, ver BUGS_Y_FIXES.md), este step decide entre dos caminos:
+        # una frase de cierre (termina el flujo limpio) o un pedido de ajuste
+        # sobre el video recien generado (le pide a Ollama que reescriba el
+        # prompt anterior aplicando ese cambio puntual, y lo muestra para
+        # confirmar/editar igual que un prompt nuevo).
+        texto = message.strip()
+        texto_norm = unicodedata.normalize("NFD", texto).encode("ascii", "ignore").decode("utf-8").lower().rstrip(".!?")
+        FRASES_CIERRE_AJUSTE = (
+            "no", "no gracias", "no, gracias", "nada", "nada mas", "listo",
+            "gracias", "ya esta", "eso es todo", "asi esta bien", "esta bien",
+            "por ahora no", "no por ahora",
+        )
+        if texto_norm in FRASES_CIERRE_AJUSTE:
+            return "Perfecto, aquí estoy si necesitas algo más.", {}
+
+        from services.ollama_service import llamar_ollama, MENSAJE_TIMEOUT
+        prompt_anterior = context.get("vf_prompt_final", "")
+        prompt_ia = llamar_ollama(PROMPT_AJUSTAR_VIDEO.format(prompt_anterior=prompt_anterior, ajuste=texto))
+        if prompt_ia and prompt_ia != MENSAJE_TIMEOUT:
+            prompt_ajustado = prompt_ia.strip()
+            aviso = ""
+        else:
+            prompt_ajustado = f"{prompt_anterior} Ajuste pedido: {texto}."
+            aviso = "\n\n(No pude aplicar el ajuste con IA en este momento - lo agregué directo al prompt anterior.)"
+
+        context["step"] = "videofoto_waiting_prompt_decision"
+        context["vf_prompt_final"] = prompt_ajustado
+        return (f"Este es el prompt ajustado que se usará para el nuevo video:\n\n{prompt_ajustado}{aviso}\n\n"
+                f"¿Confirmar y generar video, o prefieres editarlo? (escribe 'confirmar' o 'editar')"), context
 
     # Flujo de descripcion de producto
     if step == "desc_waiting_descripcion":

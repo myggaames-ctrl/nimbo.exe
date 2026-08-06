@@ -2453,3 +2453,108 @@ Chrome instalada) - ambas limitaciones se comunican acá en vez de asumir que
 funcionan sin haberlo verificado.
 
 **Archivos modificados:** `core/nimbo.py`, `CLAUDE.md`.
+
+---
+
+## [2026-08-06] Flujo de video del chat: video no reproducible en el chat, sin manejo de correcciones post-generación, y loop después de entregar el video
+
+**Problema:** tres fallas reportadas en el flujo `videofoto_*` (video de producto
+desde una foto subida al chat):
+1. El video generado no se podía previsualizar dentro del chat, solo aparecía un
+   link de descarga.
+2. Si el usuario pedía un ajuste después de ver el video (ej. "quiero el teflón
+   amarillo dorado", "cambia la iluminación"), Nimbo no lo entendía - el flujo ya
+   había terminado y ese mensaje se procesaba como un chat nuevo sin contexto.
+3. Después de entregar el video, un "no" o cualquier respuesta ambigua metía a
+   Nimbo en un loop de preguntas sin sentido en vez de cerrar la conversación.
+
+**Causa:**
+1. Al revisar `core/nimbo.py._generar_video_final()` (la función que arma la
+   respuesta final de este flujo), el tag `<video controls>` YA estaba presente en
+   el HTML devuelto desde la implementación original de este flujo - no faltaba
+   agregarlo. La causa real más probable del síntoma reportado es que el link de
+   descarga quedaba como texto plano en la misma línea que el video (sin ningún
+   estilo de botón), lo que podía leerse como "solo hay un link" aunque el video sí
+   estuviera ahí arriba.
+2. y 3. son la MISMA causa raíz: `_generar_video_final()` vaciaba el `context` por
+   completo (`{}`) apenas entregaba el video, sin dejar ningún registro de qué se
+   acababa de generar. Cualquier mensaje siguiente (un pedido de ajuste, un "no",
+   cualquier cosa) se procesaba desde cero por el pipeline normal de detectores -
+   sin ningún detector que reconociera "quiero el teflón amarillo dorado" como una
+   instrucción válida, el mensaje caía en `_analizar_intencion_vaga()` (paso 3.5 del
+   pipeline, ver CLAUDE.md "Arquitectura del chat"), que podía arrancar una pregunta
+   de clarificación - y si la respuesta a ESA pregunta tampoco se entendía, el ciclo
+   se repetía sin ninguna salida clara. Nada de esto estaba relacionado con el
+   producto, el precio ni el video en sí - era simplemente la ausencia de un estado
+   post-entrega que supiera qué hacer con la respuesta siguiente.
+
+**Solución:**
+- `_generar_video_final()`: el HTML del video ahora incluye `preload="metadata"` y
+  `playsinline` (mejor compatibilidad entre navegadores) y el link de descarga se
+  reescribió como un botón real (`<a>` con `display:inline-block`, fondo del color
+  de acento, padding, `border-radius`) en su propio bloque debajo del video, en vez
+  de texto plano en la misma línea.
+- En vez de terminar con `context = {}`, `_generar_video_final()` ahora deja el
+  flujo en un step nuevo, `videofoto_waiting_ajuste`, guardando el prompt/nombre/
+  foto/aspect_ratio/duración usados - y la respuesta del video termina con
+  "¡Listo! ¿Quieres generar otro video o necesitas algo más?" (el mensaje de cierre
+  pedido, ya integrado en la misma respuesta, no como una pregunta aparte).
+- `videofoto_waiting_ajuste` (step nuevo en `core/nimbo.py`) decide entre dos
+  caminos con el siguiente mensaje del usuario:
+  - Una frase de cierre reconocida ("no", "no gracias", "nada más", "listo",
+    "gracias", "ya está", "eso es todo", etc.) → responde "Perfecto, aquí estoy si
+    necesitas algo más." y limpia el contexto (`{}`) - el chat vuelve al estado
+    normal, sin quedar esperando nada específico (esto es lo que corta el loop:
+    ya no hay ningún step activo que un "no" ambiguo pueda romper).
+  - Cualquier otra cosa se trata como un pedido de ajuste: se le pide a Ollama
+    (`llamar_ollama()`, meta-prompt nuevo `PROMPT_AJUSTAR_VIDEO`) que reescriba el
+    prompt ANTERIOR completo aplicando ese cambio puntual (no arma un prompt desde
+    cero - mantiene producto, tono y estructura, solo aplica el ajuste pedido). El
+    prompt ajustado se muestra para confirmar/editar reutilizando el mismo step ya
+    existente `videofoto_waiting_prompt_decision` (sin duplicar esa lógica) - al
+    confirmar, se regenera el video con `_generar_video_final()`, que a su vez
+    vuelve a dejar el flujo en `videofoto_waiting_ajuste` - así se pueden encadenar
+    varios ajustes seguidos sobre el mismo video sin repetir las preguntas de
+    oferta/plataforma/tono/etc. Si Ollama no responde, cae a agregar el ajuste como
+    texto plano al final del prompt anterior, con un aviso explícito en la
+    respuesta (mismo criterio de fallback que `videofoto_waiting_optimizar`).
+- Limitación conocida, documentada a propósito: `videofoto_waiting_ajuste` no
+  intenta clasificar semánticamente si el mensaje es realmente un ajuste al video o
+  un cambio de tema completo (ej. "cuánto tengo en inventario") - cualquier mensaje
+  que no sea una de las frases de cierre reconocidas se manda a Ollama como si fuera
+  un ajuste. Se aceptó esta simplificación porque el reporte original era
+  específicamente sobre el loop con respuestas ambiguas tipo "no", no sobre cambios
+  de tema - y es el mismo criterio de simplicidad que ya usan el resto de los steps
+  binarios de este archivo (si/no, confirmar/editar, etc.), sin agregar detección de
+  intención extra que no se pidió. El flujo de texto anterior a este (video de
+  producto por texto, `video_waiting_estilo`/`video_waiting_texto`/`video_generando`
+  - un flujo distinto y anterior a esta sesión) NO se tocó, porque el reporte y el
+  nombre del step nuevo (`videofoto_waiting_ajuste`) apuntan específicamente al
+  flujo de foto.
+
+**Verificación:** con una empresa de prueba desechable (mismo mecanismo de entradas
+anteriores) y `services.video_gen.generar_video_producto`/
+`services.ollama_service.llamar_ollama` mockeados con `unittest.mock.patch`:
+1. Video generado → la respuesta contiene el tag `<video controls>` con el archivo
+   correcto, el botón de descarga con estilo, y el mensaje de cierre, todo en la
+   misma respuesta.
+2. Pedido de ajuste ("quiero el teflón amarillo dorado") después del video →
+   Ollama recibe el prompt anterior + el ajuste, devuelve un prompt nuevo → se
+   muestra para confirmar → "confirmar" regenera el video con ESE prompt (verificado
+   que `generar_video_producto` recibe el prompt ajustado, no el original) → vuelve
+   a quedar en `videofoto_waiting_ajuste` (se probaron 2 ajustes seguidos sobre el
+   mismo video, ambos aplicados correctamente en cadena).
+3. Ollama no responde durante un ajuste → cae al fallback de texto plano con aviso,
+   sin romper el flujo; un error real de Veo 3 durante la regeneración limpia el
+   contexto (`{}`) en vez de dejarlo en un step esperando algo.
+4. "no" después del video → cierra limpio, contexto vacío; el siguiente mensaje
+   ("hola") se procesa como un chat normal desde cero, sin ningún rastro del step
+   anterior - confirmando que el loop reportado ya no ocurre.
+
+No se pudo probar en un navegador real (sin la extensión Claude in Chrome) que el
+`<video>` se reproduzca visualmente como se espera - la verificación se limitó a
+confirmar que el HTML devuelto por el backend es correcto y bien formado (con la
+misma estructura de tag `<video><source></video>` que Chrome/Firefox reproducen de
+forma nativa).
+
+**Archivos modificados:** `core/nimbo.py`.
