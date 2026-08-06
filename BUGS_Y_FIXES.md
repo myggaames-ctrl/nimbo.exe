@@ -2144,3 +2144,42 @@ byte-idéntico al que ya estaba - el mapa se genera a partir de las relaciones e
 archivos/módulos, no de funciones o rutas nuevas dentro de un archivo ya mapeado
 (`app.py`/`database/nimbo_db.py` ya estaban en el grafo), así que no hubo nada que
 committear ahí.
+
+---
+
+## [2026-08-06] XSS real en los toasts de alertas (encontrado por la revisión automática post-commit)
+
+**Problema:** justo después de pushear el commit del sistema de notificaciones toast
+(entrada anterior), una revisión de seguridad automática que corre sobre cada commit
+marcó `_mostrarToast()`/`renderHistorialAlertas()` (`templates/index.html`) como
+vulnerables a XSS: `alerta.titulo`/`alerta.descripcion` se insertaban directo en
+`innerHTML` sin escapar. No era teórico - `get_alertas_todas()` arma esos textos con
+datos reales del negocio que un usuario puede escribir libremente: nombre de
+producto (`{r['Nombre']} está en cero`), nombre de proveedor/cliente
+(`Le debes Q... a {r['ProveedorNombre']}`), y el mensaje de un recordatorio personal
+(`r["Mensaje"]`, texto completamente libre, sin ningún filtro). Un producto o
+proveedor con un nombre tipo `<img src=x onerror="...">`, o un recordatorio personal
+con ese contenido, se hubiera ejecutado como HTML/JS real en la sesión de cualquier
+admin que viera el toast o abriera el historial de la campana - mismo tipo de bug que
+ya se había encontrado y corregido una vez en este proyecto (preview de importación
+de Excel, ver la entrada del 2026-08-05 en este mismo archivo).
+
+**Solución:** se reusó `escHtml()` (`templates/index.html`, la misma función que ya
+arregló el bug de Excel - crea un `<div>`, le asigna el texto como `textContent`, y
+lee de vuelta su `innerHTML`, aprovechando que el navegador escapa automáticamente al
+hacer esa vuelta) en las 5 interpolaciones de datos del negocio dentro de los toasts
+y el historial: `titulo`/`descripcion` en `_mostrarToast()`, y `titulo`/`descripcion`/
+`hora` en `renderHistorialAlertas()`. `alerta.id` NO se escapó a propósito: nunca es
+texto libre, siempre lo arma el backend como `"categoria_numero"` a partir de un Id
+entero (ver `get_alertas_todas()`), sin ninguna forma de que un usuario lo controle.
+
+**Verificación:** se rearmó el arnés de Node.js de la entrada anterior con un
+escenario nuevo específico: una alerta con
+`titulo = '<img src=x onerror="alert(document.cookie)">'` - antes del fix esto
+hubiera quedado como HTML real en el DOM; después del fix, `innerHTML` del toast y
+del historial contienen la versión escapada (`&lt;img ...`), nunca el tag crudo. Se
+volvieron a correr también las 12 aserciones de comportamiento de la entrada
+anterior (cola, dedup, campana, persistencia) para confirmar que el fix no rompió
+nada - todas pasaron.
+
+**Archivos modificados:** `templates/index.html`.

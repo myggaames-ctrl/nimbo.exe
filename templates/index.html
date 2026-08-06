@@ -3959,11 +3959,20 @@ function _mostrarToast(alerta) {
   const div = document.createElement('div');
   div.className = `toast toast-${alerta.tipo}`;
   div.id = 'toast-' + alerta.id;
+  // escHtml() en titulo/descripcion: vienen de datos del negocio (nombre de
+  // producto, proveedor, cliente, o el texto libre de un recordatorio
+  // personal) que un usuario pudo haber escrito con HTML/JS adentro - sin
+  // escapar, un nombre de producto tipo "<img src=x onerror=...>" se
+  // ejecutaria como HTML real en la sesion de cualquier admin que vea el
+  // toast (mismo tipo de bug que el del preview de importacion de Excel,
+  // ver BUGS_Y_FIXES.md). alerta.id NO se escapa porque nunca es texto
+  // libre - siempre lo arma el backend como "categoria_numero" a partir de
+  // un Id entero (ver get_alertas_todas() en database/nimbo_db.py).
   div.innerHTML = `
     <span class="toast-icon">${ALERTAS_ICONOS[alerta.tipo] || '🔵'}</span>
     <div class="toast-body">
-      <div class="toast-titulo">${alerta.titulo}</div>
-      <div class="toast-desc">${alerta.descripcion}</div>
+      <div class="toast-titulo">${escHtml(alerta.titulo)}</div>
+      <div class="toast-desc">${escHtml(alerta.descripcion)}</div>
     </div>
     <button class="toast-cerrar" onclick="cerrarToast('${alerta.id}')" title="Cerrar">✕</button>
   `;
@@ -4017,10 +4026,10 @@ function renderHistorialAlertas() {
     <div class="historial-item">
       <span class="toast-icon">${ALERTAS_ICONOS[a.tipo] || '🔵'}</span>
       <div style="flex:1;min-width:0">
-        <div class="toast-titulo">${a.titulo}</div>
-        <div class="toast-desc">${a.descripcion}</div>
+        <div class="toast-titulo">${escHtml(a.titulo)}</div>
+        <div class="toast-desc">${escHtml(a.descripcion)}</div>
       </div>
-      ${a.hora ? `<span class="text-muted" style="font-size:10px;white-space:nowrap">${a.hora}</span>` : ''}
+      ${a.hora ? `<span class="text-muted" style="font-size:10px;white-space:nowrap">${escHtml(a.hora)}</span>` : ''}
     </div>
   `).join('');
 }
