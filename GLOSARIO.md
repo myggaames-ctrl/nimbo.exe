@@ -1013,3 +1013,60 @@ producción.
 **Ejemplo de la vida real:** es como decirle a alguien "de ahora en más, entrá siempre
 por la puerta con guardia de seguridad, nunca por la de atrás" - no tiene sentido dar
 esa instrucción si todavía no existe la puerta con guardia.
+
+---
+
+### toast (notificación)
+**Qué es:** una notificación pequeña que aparece en la pantalla por unos segundos y
+después desaparece sola, sin interrumpir lo que estabas haciendo (a diferencia de un
+`alert()` o un modal, que bloquean la pantalla hasta que le hagas clic). El nombre
+viene de que "salta" a la vista como una tostada que salta de la tostadora.
+
+**Para qué sirve en Nimbo:** el sistema de notificaciones del dashboard (ver
+`BUGS_Y_FIXES.md`, 2026-08-06) muestra alertas de negocio (stock en cero, pagos por
+vencer, etc.) como toasts que se deslizan desde la esquina superior derecha y se
+cierran solos a los 6 segundos (o antes, con el botón ✕) - hasta 4 a la vez, el resto
+espera en una cola (`alertasCola` en `templates/index.html`).
+
+**Ejemplo de la vida real:** es como las notificaciones que aparecen arriba de la
+pantalla de un teléfono cuando llega un mensaje - las ves, y si no hacés nada
+desaparecen solas después de un rato, sin que tengas que cerrarlas a la fuerza para
+seguir usando el teléfono.
+
+---
+
+### polling
+**Qué es:** la técnica de preguntarle al servidor "¿hay algo nuevo?" a intervalos
+regulares (cada tantos segundos/minutos), en vez de que el servidor avise por su
+cuenta cuando pasa algo (eso último se llama "push", y necesita una conexión especial
+tipo WebSocket que Nimbo no usa).
+
+**Para qué sirve en Nimbo:** el reloj del dashboard llama a `refreshStatus()` cada 30
+segundos, y el sistema de notificaciones llama a `cargarAlertasToast()` cada 5 minutos
+(`ALERTAS_POLL_MS` en `templates/index.html`) para revisar si hay alertas nuevas -
+ambos son polling: el navegador pregunta, el servidor no avisa solo.
+
+**Ejemplo de la vida real:** es como llamar por teléfono cada rato para preguntar "¿ya
+llegó el paquete?" en vez de que el cartero te llame a vos apenas llega - funciona,
+pero es el que pregunta el que tiene que acordarse de insistir.
+
+---
+
+### sessionStorage y localStorage
+**Qué es:** dos lugares donde el navegador puede guardar datos pequeños (texto)
+asociados a un sitio web, sin necesidad de mandarlos al servidor. La diferencia entre
+los dos es cuánto dura lo guardado: `sessionStorage` se borra solo al cerrar esa
+pestaña/ventana; `localStorage` queda guardado aunque cierres el navegador y lo
+vuelvas a abrir otro día.
+
+**Para qué sirve en Nimbo:** el sistema de notificaciones usa `sessionStorage` para
+recordar qué alertas cerraste con la X **en esta sesión** (no repetirlas mientras
+sigas con la pestaña abierta) y `localStorage` para el historial de la campana
+(**todas** las alertas de hoy, se hayan cerrado o no - tiene que sobrevivir a que
+recargues la página con F5, algo que `sessionStorage` también permite, pero se pensó
+como el lugar más natural para "lo de hoy" independientemente de la pestaña).
+
+**Ejemplo de la vida real:** `sessionStorage` es como una nota adhesiva pegada al
+escritorio de hoy - desaparece cuando levantás el escritorio (cerrás la pestaña).
+`localStorage` es como una libreta que dejás guardada en el cajón - sigue ahí mañana,
+la abras cuando la abras.

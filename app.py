@@ -2130,6 +2130,21 @@ def get_recordatorios():
     return jsonify(get_recordatorios())
 
 
+@app.route("/api/alertas/todas")
+@admin_required
+def get_alertas_todas():
+    """Sistema de notificaciones toast del dashboard (ver BUGS_Y_FIXES.md,
+    2026-08-06) - distinto de /api/recordatorios de arriba (ese es de
+    proposito general, 2 niveles de urgencia; este siempre trae el mismo set
+    de 8 categorias con 4 niveles). Admin-only, mismo criterio que
+    /api/recordatorios: combina datos financieros (cuentas por pagar/cobrar,
+    pagos fijos, meta semanal) que un empleado no deberia ver, junto con
+    alertas de inventario que si podria ver - se prefirio restringir todo el
+    endpoint a admin en vez de filtrar por categoria segun rol."""
+    from database.nimbo_db import get_alertas_todas
+    return jsonify(get_alertas_todas())
+
+
 @app.route("/api/cotizaciones/resumen")
 @admin_required
 def get_resumen_cotizaciones():

@@ -4200,6 +4200,159 @@ def get_recordatorios():
     return recordatorios
 
 
+# ── ALERTAS (sistema de notificaciones toast del dashboard) ───────────
+# Distinto de get_recordatorios() de arriba: ese es un aggregator de proposito
+# general (mensajes sueltos con 2 niveles de urgencia, pensado para el chat/
+# el widget viejo de recordatorios). Esta funcion es especifica para el
+# sistema de toasts (ver BUGS_Y_FIXES.md, 2026-08-06): siempre el mismo set de
+# 8 categorias, con 4 niveles de urgencia (critico/urgente/aviso/info) y un id
+# estable por alerta (para que el frontend no repita una que el usuario ya
+# cerro en la sesion).
+
+ALERTAS_ORDEN_PRIORIDAD = {"critico": 0, "urgente": 1, "aviso": 2, "info": 3}
+DIAS_CUENTA_COBRAR_VENCIDA_ALERTA = 30
+STOCK_MINIMO_DEFAULT_ALERTA = 3
+
+
+def get_alertas_todas():
+    """8 categorias de alertas para el sistema de notificaciones toast:
+    stock en cero (critico), stock bajo del minimo (urgente), pagos fijos
+    vencidos (critico) / que vencen hoy (urgente) / en los proximos 3 dias
+    (aviso), cuentas por pagar vencidas (critico), cuentas por cobrar
+    vencidas hace mas de 30 dias (aviso), recordatorios personales de hoy
+    (info) y meta semanal alcanzada (info). Ordenadas de mas a menos
+    urgente."""
+    from datetime import date
+    hoy = date.today()
+    alertas = []
+
+    conn = nimbo_connect()
+    cur = conn.cursor()
+
+    # ── Stock en cero (critico) ──
+    cur.execute("""
+        SELECT p.Id, p.Nombre FROM Producto p
+        LEFT JOIN Stock s ON p.Id = s.ProductoId
+        WHERE p.Activo=1 AND IFNULL(s.Cantidad,0) = 0
+    """)
+    for r in cur.fetchall():
+        alertas.append({
+            "id": f"stock_cero_{r['Id']}",
+            "tipo": "critico",
+            "categoria": "inventario",
+            "titulo": "Sin existencias",
+            "descripcion": f"{r['Nombre']} está en cero",
+        })
+
+    # ── Stock bajo del minimo (urgente) - excluye los que ya estan en 0
+    # (esos ya se reportaron arriba como criticos, no se duplican) ──
+    cur.execute("""
+        SELECT p.Id, p.Nombre, s.Cantidad, sm.Minimo
+        FROM Producto p
+        JOIN Stock s ON p.Id = s.ProductoId
+        LEFT JOIN StockMinimo sm ON sm.ProductId = p.Id
+        WHERE p.Activo=1 AND s.Cantidad > 0
+    """)
+    for r in cur.fetchall():
+        minimo = r["Minimo"] if r["Minimo"] is not None else STOCK_MINIMO_DEFAULT_ALERTA
+        if r["Cantidad"] <= minimo:
+            alertas.append({
+                "id": f"stock_bajo_{r['Id']}",
+                "tipo": "urgente",
+                "categoria": "inventario",
+                "titulo": "Stock bajo",
+                "descripcion": f"{r['Nombre']}: quedan {r['Cantidad']:.0f} (mínimo {minimo:.0f})",
+            })
+
+    # ── Pagos fijos: vencido / vence hoy / vence en <=3 dias ──
+    # PagoFijo no tiene columna de "pagado este mes" (es un recordatorio
+    # recurrente por dia-del-mes, no una factura con estado) - "vencido"
+    # aca significa "ya paso el dia de pago de ESTE mes", igual que el
+    # criterio que ya usaba get_pagos_proximos() para "proximo".
+    for p in get_pagos_fijos():
+        if not p.get("DiaPago"):
+            continue
+        dias_para_vencer = p["DiaPago"] - hoy.day
+        monto_txt = f" (Q{p['Monto']:.2f})" if p.get("Monto") else ""
+        if dias_para_vencer < 0:
+            alertas.append({
+                "id": f"pago_fijo_vencido_{p['Id']}_{hoy.month}_{hoy.year}",
+                "tipo": "critico",
+                "categoria": "pagos",
+                "titulo": "Pago vencido",
+                "descripcion": f"{p['Nombre']}{monto_txt} venció el día {p['DiaPago']}",
+            })
+        elif dias_para_vencer == 0:
+            alertas.append({
+                "id": f"pago_fijo_hoy_{p['Id']}_{hoy.month}_{hoy.year}",
+                "tipo": "urgente",
+                "categoria": "pagos",
+                "titulo": "Pago vence hoy",
+                "descripcion": f"{p['Nombre']}{monto_txt} vence hoy",
+            })
+        elif dias_para_vencer <= 3:
+            alertas.append({
+                "id": f"pago_fijo_proximo_{p['Id']}_{hoy.month}_{hoy.year}",
+                "tipo": "aviso",
+                "categoria": "pagos",
+                "titulo": "Pago próximo",
+                "descripcion": f"{p['Nombre']}{monto_txt} vence en {dias_para_vencer} día(s)",
+            })
+
+    # ── Cuentas por pagar vencidas (critico) ──
+    marcar_pagos_vencidos()
+    cur.execute("SELECT * FROM CuentaPagar WHERE Estado='VENCIDO'")
+    for r in cur.fetchall():
+        alertas.append({
+            "id": f"cuenta_pagar_{r['Id']}",
+            "tipo": "critico",
+            "categoria": "pagos",
+            "titulo": "Cuenta por pagar vencida",
+            "descripcion": f"Le debes Q{r['MontoPendiente']:.2f} a {r['ProveedorNombre']} ({r['Descripcion']})",
+        })
+
+    # ── Cuentas por cobrar vencidas hace mas de 30 dias (aviso) ──
+    marcar_cuentas_vencidas()
+    cur.execute("""SELECT * FROM CuentaCobrar
+        WHERE Estado='VENCIDO' AND date(FechaVencimiento) < date('now', ?)""",
+        (f"-{DIAS_CUENTA_COBRAR_VENCIDA_ALERTA} days",))
+    for r in cur.fetchall():
+        alertas.append({
+            "id": f"cuenta_cobrar_{r['Id']}",
+            "tipo": "aviso",
+            "categoria": "clientes",
+            "titulo": "Cuenta por cobrar vencida",
+            "descripcion": f"{r['ClienteNombre']} debe Q{r['MontoPendiente']:.2f} desde hace más de {DIAS_CUENTA_COBRAR_VENCIDA_ALERTA} días",
+        })
+
+    # ── Recordatorios personales de hoy (info) ──
+    cur.execute("SELECT * FROM RecordatorioPersonal WHERE date(Fecha)=date('now') AND Completado=0")
+    for r in cur.fetchall():
+        alertas.append({
+            "id": f"recordatorio_{r['Id']}",
+            "tipo": "info",
+            "categoria": "recordatorio",
+            "titulo": "Recordatorio de hoy",
+            "descripcion": r["Mensaje"],
+        })
+
+    conn.close()
+
+    # ── Meta semanal alcanzada (info) ──
+    meta = get_progreso_meta_semanal()
+    if meta and meta.get("estado") == "CUMPLIDA":
+        alertas.append({
+            "id": f"meta_semanal_{meta['semana']}_{meta['anio']}",
+            "tipo": "info",
+            "categoria": "ventas",
+            "titulo": "¡Meta semanal alcanzada!",
+            "descripcion": f"Q{meta['ventas_actuales']:.2f} de Q{meta['meta_q']:.2f} ({meta['porcentaje']:.0f}%)",
+        })
+
+    alertas.sort(key=lambda a: ALERTAS_ORDEN_PRIORIDAD[a["tipo"]])
+    return alertas
+
+
 # ── PAGOS FIJOS ───────────────────────────────────────
 
 def init_pagos_fijos_ext(db_path=None):

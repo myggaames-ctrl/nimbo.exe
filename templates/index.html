@@ -19,6 +19,7 @@
     --green:     #22c55e;
     --red:       #ef4444;
     --blue:      #3b82f6;
+    --yellow:    #eab308;
     --radius:    12px;
   }
 
@@ -155,6 +156,107 @@
   .page-sub { font-size: 12px; color: var(--muted); margin-top: 1px; }
 
   .topbar-right { display: flex; align-items: center; gap: 10px; }
+
+  /* ── NOTIFICACIONES: toasts + campana ────────────────── */
+  .toast-container {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: 340px;
+    max-width: calc(100vw - 40px);
+    pointer-events: none;
+  }
+  .toast {
+    pointer-events: auto;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--toast-color, var(--accent));
+    border-radius: var(--radius);
+    padding: 12px 12px 12px 14px;
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.45);
+    animation: toast-entra 0.25s ease-out;
+  }
+  .toast.toast-saliendo { animation: toast-sale 0.18s ease-in forwards; }
+  @keyframes toast-entra {
+    from { transform: translateX(120%); opacity: 0; }
+    to   { transform: translateX(0);    opacity: 1; }
+  }
+  @keyframes toast-sale {
+    from { transform: translateX(0);    opacity: 1; max-height: 200px; }
+    to   { transform: translateX(120%); opacity: 0; max-height: 200px; }
+  }
+  .toast-icon { font-size: 16px; line-height: 1.3; }
+  .toast-body { flex: 1; min-width: 0; }
+  .toast-titulo { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
+  .toast-desc { font-size: 12px; color: var(--muted); line-height: 1.4; word-wrap: break-word; }
+  .toast-cerrar {
+    background: none; border: none; color: var(--muted); cursor: pointer;
+    font-size: 14px; line-height: 1; padding: 2px; flex-shrink: 0;
+  }
+  .toast-cerrar:hover { color: var(--text); }
+  .toast-critico { --toast-color: var(--red); }
+  .toast-urgente { --toast-color: var(--accent); }
+  .toast-aviso   { --toast-color: var(--yellow); }
+  .toast-info    { --toast-color: var(--blue); }
+
+  .campana-wrap { position: relative; }
+  .campana-badge {
+    position: absolute;
+    top: -3px;
+    right: -3px;
+    background: var(--red);
+    color: white;
+    font-size: 10px;
+    font-weight: 700;
+    min-width: 15px;
+    height: 15px;
+    border-radius: 8px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 0 3px;
+    line-height: 1;
+  }
+  .historial-alertas-dropdown {
+    display: none;
+    position: absolute;
+    top: 100%;
+    right: 0;
+    margin-top: 8px;
+    width: 340px;
+    max-width: calc(100vw - 40px);
+    max-height: 420px;
+    overflow-y: auto;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: 0 12px 32px rgba(0,0,0,0.5);
+    z-index: 999;
+    padding: 6px;
+  }
+  .historial-alertas-titulo {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    padding: 6px 8px;
+  }
+  .historial-item {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    padding: 8px;
+    border-radius: 8px;
+  }
+  .historial-item:hover { background: var(--surface2); }
 
   .btn {
     padding: 7px 14px;
@@ -602,6 +704,9 @@
 </head>
 <body>
 
+<!-- ── NOTIFICACIONES TOAST ────────────────────────────── -->
+<div class="toast-container" id="toast-container"></div>
+
 <!-- ── SIDEBAR ─────────────────────────────────────────── -->
 <aside class="sidebar">
   <div class="sidebar-logo">
@@ -706,6 +811,14 @@
       <div class="page-sub" id="page-sub">Resumen general del negocio</div>
     </div>
     <div class="topbar-right">
+      {% if rol == 'admin' %}
+      <div class="campana-wrap">
+        <button class="btn btn-ghost btn-sm" id="btn-campana" onclick="toggleHistorialAlertas(event)" title="Alertas de hoy">
+          🔔<span class="campana-badge" id="campana-contador">0</span>
+        </button>
+        <div class="historial-alertas-dropdown" id="historial-alertas-dropdown"></div>
+      </div>
+      {% endif %}
       <button class="btn btn-ghost btn-sm" onclick="refreshStatus()">↻ Actualizar</button>
     </div>
   </div>
@@ -3767,6 +3880,159 @@ async function confirmarCobro() {
   loadCajaEstado();
 }
 
+// ── NOTIFICACIONES: toasts + campana ────────────────────
+// Distinto de loadAlertas() (mas arriba, la tarjeta "Alertas de stock" del
+// dashboard) - esto es el sistema de notificaciones tipo toast (ver
+// BUGS_Y_FIXES.md, 2026-08-06), alimentado por /api/alertas/todas.
+const ALERTAS_ICONOS = {critico: '🔴', urgente: '🟠', aviso: '🟡', info: '🔵'};
+const ALERTAS_ORDEN = {critico: 0, urgente: 1, aviso: 2, info: 3};
+const ALERTAS_MAX_VISIBLES = 4;
+const ALERTAS_DURACION_MS = 6000;
+const ALERTAS_POLL_MS = 5 * 60 * 1000;
+
+// Todo el estado de alertas se guarda con la fecha de HOY en la clave, para
+// que "cerradas" (no repetir en esta sesion) y "historial" (todas las de
+// hoy, para la campana) arranquen de cero solos al cambiar de dia, sin
+// necesitar un job de limpieza aparte.
+const _alertasHoyStr = new Date().toISOString().slice(0, 10);
+function _alertasClave(base) { return `${base}_${_alertasHoyStr}`; }
+
+function _alertasCargarCerradas() {
+  try { return new Set(JSON.parse(sessionStorage.getItem(_alertasClave('nimbo_alertas_cerradas')) || '[]')); }
+  catch(e) { return new Set(); }
+}
+function _alertasGuardarCerradas() {
+  sessionStorage.setItem(_alertasClave('nimbo_alertas_cerradas'), JSON.stringify([...alertasCerradas]));
+}
+function _alertasCargarHistorial() {
+  try { return JSON.parse(localStorage.getItem(_alertasClave('nimbo_alertas_historial')) || '{}'); }
+  catch(e) { return {}; }
+}
+function _alertasGuardarHistorial() {
+  localStorage.setItem(_alertasClave('nimbo_alertas_historial'), JSON.stringify(alertasHistorial));
+}
+
+// alertasCerradas: ids que el usuario ya cerro con la X en ESTA sesion de
+// navegador (sessionStorage) - no vuelven a aparecer como toast, pero SI
+// siguen en el historial de la campana. alertasHistorial: todas las alertas
+// vistas HOY (localStorage, sobrevive a un F5) - lo que muestra la campana,
+// sin importar si se cerraron o no.
+let alertasCerradas = _alertasCargarCerradas();
+let alertasHistorial = _alertasCargarHistorial();
+let alertasCola = [];
+let alertasVisiblesCount = 0;
+
+async function cargarAlertasToast() {
+  try {
+    const r = await fetch('/api/alertas/todas');
+    if (!r.ok) return;
+    const alertas = await r.json();
+
+    let cambioHistorial = false;
+    alertas.forEach(a => {
+      if (!alertasHistorial[a.id]) {
+        alertasHistorial[a.id] = {...a, hora: new Date().toTimeString().slice(0, 5)};
+        cambioHistorial = true;
+      }
+    });
+    if (cambioHistorial) _alertasGuardarHistorial();
+    actualizarContadorCampana();
+
+    const yaEncoladasOVisibles = new Set(alertasCola.map(a => a.id));
+    const nuevas = alertas.filter(a =>
+      !alertasCerradas.has(a.id) && !yaEncoladasOVisibles.has(a.id) && !document.getElementById('toast-' + a.id)
+    );
+    alertasCola.push(...nuevas);
+    _procesarColaToasts();
+  } catch(e) { console.error('alertas error:', e); }
+}
+
+function _procesarColaToasts() {
+  while (alertasVisiblesCount < ALERTAS_MAX_VISIBLES && alertasCola.length > 0) {
+    _mostrarToast(alertasCola.shift());
+  }
+}
+
+function _mostrarToast(alerta) {
+  alertasVisiblesCount++;
+  const cont = document.getElementById('toast-container');
+  const div = document.createElement('div');
+  div.className = `toast toast-${alerta.tipo}`;
+  div.id = 'toast-' + alerta.id;
+  div.innerHTML = `
+    <span class="toast-icon">${ALERTAS_ICONOS[alerta.tipo] || '🔵'}</span>
+    <div class="toast-body">
+      <div class="toast-titulo">${alerta.titulo}</div>
+      <div class="toast-desc">${alerta.descripcion}</div>
+    </div>
+    <button class="toast-cerrar" onclick="cerrarToast('${alerta.id}')" title="Cerrar">✕</button>
+  `;
+  cont.appendChild(div);
+  div.dataset.timer = setTimeout(() => cerrarToast(alerta.id), ALERTAS_DURACION_MS);
+}
+
+function cerrarToast(id) {
+  const el = document.getElementById('toast-' + id);
+  alertasCerradas.add(id);
+  _alertasGuardarCerradas();
+  actualizarContadorCampana();
+  if (!el) return;
+  clearTimeout(Number(el.dataset.timer));
+  el.classList.add('toast-saliendo');
+  setTimeout(() => {
+    el.remove();
+    alertasVisiblesCount = Math.max(0, alertasVisiblesCount - 1);
+    _procesarColaToasts();
+  }, 180);
+}
+
+function actualizarContadorCampana() {
+  const badge = document.getElementById('campana-contador');
+  if (!badge) return;
+  const noLeidas = Object.keys(alertasHistorial).filter(id => !alertasCerradas.has(id)).length;
+  badge.style.display = noLeidas > 0 ? 'flex' : 'none';
+  badge.textContent = noLeidas > 99 ? '99+' : String(noLeidas);
+}
+
+function toggleHistorialAlertas(event) {
+  if (event) event.stopPropagation();
+  const dd = document.getElementById('historial-alertas-dropdown');
+  if (!dd) return;
+  const abrir = dd.style.display !== 'block';
+  if (abrir) renderHistorialAlertas();
+  dd.style.display = abrir ? 'block' : 'none';
+}
+
+function renderHistorialAlertas() {
+  const dd = document.getElementById('historial-alertas-dropdown');
+  const items = Object.values(alertasHistorial).sort(
+    (a, b) => (ALERTAS_ORDEN[a.tipo] ?? 9) - (ALERTAS_ORDEN[b.tipo] ?? 9)
+  );
+  const titulo = '<div class="historial-alertas-titulo">Alertas de hoy</div>';
+  if (!items.length) {
+    dd.innerHTML = titulo + '<div class="text-muted" style="padding:8px;font-size:12.5px">Sin alertas hoy.</div>';
+    return;
+  }
+  dd.innerHTML = titulo + items.map(a => `
+    <div class="historial-item">
+      <span class="toast-icon">${ALERTAS_ICONOS[a.tipo] || '🔵'}</span>
+      <div style="flex:1;min-width:0">
+        <div class="toast-titulo">${a.titulo}</div>
+        <div class="toast-desc">${a.descripcion}</div>
+      </div>
+      ${a.hora ? `<span class="text-muted" style="font-size:10px;white-space:nowrap">${a.hora}</span>` : ''}
+    </div>
+  `).join('');
+}
+
+document.addEventListener('click', (e) => {
+  const dd = document.getElementById('historial-alertas-dropdown');
+  const btn = document.getElementById('btn-campana');
+  if (dd && dd.style.display === 'block' && !dd.contains(e.target) && e.target !== btn && !btn?.contains(e.target)) {
+    dd.style.display = 'none';
+  }
+});
+
 // ── INIT ───────────────────────────────────────────────
 refreshStatus();
 loadStats();
@@ -3781,6 +4047,10 @@ loadCuentasPagar();
 loadFlujoCaja();
 loadMetaSemanal();
 setInterval(refreshStatus, 30000);
+{% if rol == 'admin' %}
+cargarAlertasToast();
+setInterval(cargarAlertasToast, ALERTAS_POLL_MS);
+{% endif %}
 
 async function addStock(id, nombre) {
   const qty = parseInt(prompt("Unidades que entran de " + nombre + ":"));

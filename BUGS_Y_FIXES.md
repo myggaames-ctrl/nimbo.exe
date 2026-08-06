@@ -2042,3 +2042,105 @@ después de todos los cambios - ninguno tocó el esquema de tablas.
 con `actualizar_mapa.sh`). Dependencias nuevas (pip, sin `requirements.txt` en el
 proyecto - mismo criterio que el resto de dependencias): `flask-limiter`,
 `flask-talisman`, `flask-wtf`.
+
+---
+
+## [2026-08-06] Sistema de notificaciones toast + alertas en tiempo real
+
+**Contexto:** implementación del sistema de notificaciones tipo "toast" pedido, con
+un nuevo endpoint `GET /api/alertas/todas`. Antes de crear nada se verificó si ya
+existía (pedido explícito): no existía esa ruta exacta, pero sí varias relacionadas
+que NO cubrían lo mismo - `/api/db/alertas` (`get_alertas_stock()`, solo stock bajo
+con un umbral fijo de 5 si no hay mínimo definido, sin los otros 7 tipos),
+`/api/inventario/alertas-predictivas` (proyección de días de stock restante, otro
+criterio distinto), y `/api/recordatorios` (`get_recordatorios()`, un agregador de
+propósito general con mensajes sueltos y solo 2 niveles de urgencia - alta/media -,
+pensado para el chat, no para un sistema de 4 niveles con id estable por alerta). Se
+construyó `get_alertas_todas()` como una función nueva y separada, reusando donde
+tenía sentido (`get_pagos_fijos()`, `marcar_pagos_vencidos()`/`marcar_cuentas_vencidas()`,
+`get_progreso_meta_semanal()`) pero con queries propias para las categorías donde el
+criterio pedido no coincidía con ninguna función existente.
+
+**Backend (`database/nimbo_db.py` `get_alertas_todas()` + `app.py`
+`GET /api/alertas/todas`, `@admin_required`):**
+- Las 8 categorías pedidas, mapeadas a los 4 niveles según la tabla de colores del
+  pedido: stock en cero → crítico; stock bajo del mínimo (`StockMinimo.Minimo`, o 3
+  si no tiene fila propia - **el pedido especificó 3, distinto del 5 que ya usaba
+  `get_alertas_stock()` para su propio propósito - no se tocó esa función, quedan
+  dos umbrales por defecto distintos a propósito para dos features distintas**) →
+  urgente; pago fijo vencido → crítico; pago fijo que vence hoy → urgente; pago fijo
+  que vence en 1-3 días → aviso; cuenta por pagar vencida → crítico (el pedido no la
+  coloreaba explícitamente, se agrupó con "pago vencido" - 🔴 - por ser la misma
+  naturaleza: una deuda vencida); cuenta por cobrar vencida hace más de 30 días →
+  aviso; recordatorio personal de hoy → info (el pedido daba "recordatorio de
+  proveedor" como ejemplo de info pero no está en la lista de 8 categorías a
+  detectar - no existe una tabla de recordatorios de proveedor en el proyecto, se
+  usó el recordatorio personal, que sí está en la lista, para ese nivel); meta
+  semanal alcanzada → info.
+- **Pagos fijos "vencidos" - limitación real del esquema:** `PagoFijo` es un
+  recordatorio recurrente por día-del-mes (`DiaPago`), sin ninguna columna de "ya se
+  pagó este mes" (a diferencia de `CuentaPagar`/`CuentaCobrar`, que sí son cuentas
+  con estado real). "Vencido" se calculó como `DiaPago < día de hoy` - correcto para
+  "recién pasó su día", pero sin registro de pago va a seguir marcándose vencido el
+  resto del mes hasta que el día vuelva a llegar el próximo mes. Es el mismo
+  criterio que ya usaba `get_pagos_proximos()` para "próximo" (ventana `[DiaPago-
+  DiasAntes, DiaPago]`), documentado como limitación conocida, no un bug nuevo.
+- **Admin-only:** el endpoint mezcla categorías sensibles (cuentas por pagar/cobrar,
+  meta semanal - datos financieros que un empleado no debería ver) con categorías
+  que un empleado sí podría ver (stock) - se decidió restringir el endpoint entero a
+  admin, mismo criterio que ya usa `/api/recordatorios` para el mismo tipo de mezcla,
+  en vez de filtrar por categoría según rol dentro del propio endpoint.
+- Cada alerta trae un `id` estable y determinístico (ej. `stock_cero_15`,
+  `pago_fijo_vencido_2_8_2026` - con mes/año para que un pago fijo vencido de un mes
+  no se confunda con el mismo pago vencido el mes siguiente) para que el frontend
+  pueda no repetir una que el usuario ya cerró.
+
+**Frontend (`templates/index.html`, CSS puro + JS vanilla, sin librerías):**
+- Contenedor de toasts fijo arriba a la derecha (`#toast-container`), cada toast con
+  ícono (🔴🟠🟡🔵ⓘ según tipo), título, descripción, botón ✕, animación de entrada
+  deslizando desde la derecha y de salida en reversa; se autocierra a los 6 segundos
+  (`ALERTAS_DURACION_MS`). Máximo 4 visibles (`ALERTAS_MAX_VISIBLES`) - el resto
+  espera en `alertasCola` (array en memoria) y se muestra en cuanto se cierra uno de
+  los 4 visibles.
+- Campana en el topbar (`#btn-campana`, solo admin) con contador de no leídas
+  (`#campana-contador`) - clic abre un dropdown (`#historial-alertas-dropdown`) con
+  **todas** las alertas del día, se hayan cerrado como toast o no.
+- Persistencia de estado: `alertasCerradas` (ids cerrados con la X, `sessionStorage`
+  - "no repetir en esta sesión", se borra sola al cerrar la pestaña) y
+  `alertasHistorial` (todas las alertas vistas hoy, `localStorage` - sobrevive a un
+  F5, es lo que alimenta la campana). Ambas claves incluyen la fecha de hoy
+  (`YYYY-MM-DD`) para que arranquen vacías solas al cambiar de día, sin necesitar un
+  job de limpieza aparte.
+- `cargarAlertasToast()` se llama al cargar el dashboard y cada 5 minutos
+  (`setInterval`, `ALERTAS_POLL_MS`) - ambas llamadas envueltas en
+  `{% if rol == 'admin' %}` (igual que el botón de la campana) para no generar
+  tráfico ni ruido en el log de seguridad (`ACCESO_DENEGADO`, ver la entrada anterior
+  sobre seguridad) para empleados/técnicos, que igual recibirían 403 del backend.
+- Se agregó la variable CSS `--yellow` (no existía, solo `--red`/`--accent`
+  (naranja)/`--blue`/`--green`) para el tier "aviso".
+
+**Verificación:** el backend se probó con datos reales de Mi Cocina (0 alertas
+actualmente - consistente con los datos reales: sin stock bajo, sin cuentas
+vencidas, pagos fijos lejos de su fecha) y, para ejercitar las 8 categorías de
+verdad, con una empresa descartable creada solo para la prueba
+(`test-alertas-temp`, vía `POST /api/empresa/crear`) sembrada con un caso de cada
+categoría - las 9 alertas esperadas (2 de pagos fijos) salieron con el tipo, orden
+de prioridad y mensaje correctos; la empresa se borró por completo al terminar. La
+lógica de frontend (cola/máximo 4/dedup entre polls/acumulación del historial
+independiente de los cierres/cálculo del contador de la campana/orden de prioridad/
+persistencia en sessionStorage y localStorage) se probó aparte con un arnés de
+Node.js que mockea `document`/`sessionStorage`/`localStorage`/`fetch` y ejecuta las
+funciones reales extraídas del HTML ya renderizado por el servidor (no reescritas a
+mano) - 20 aserciones, todas pasaron. **No se pudo probar visualmente en un
+navegador real** (se ofreció instalar la extensión Claude in Chrome y el usuario la
+rechazó por ahora) - la animación, el layout del toast/dropdown y la apariencia
+general quedan sin verificación visual directa, solo la lógica y el HTML/CSS
+generado se revisaron con detalle.
+
+**Archivos modificados:** `app.py`, `database/nimbo_db.py`, `templates/index.html`,
+`GLOSARIO.md` (3 términos nuevos: toast, polling, sessionStorage y localStorage). Se
+corrió `actualizar_mapa.sh` como pedía el checklist final, pero `mapa_nimbo.html` salió
+byte-idéntico al que ya estaba - el mapa se genera a partir de las relaciones entre
+archivos/módulos, no de funciones o rutas nuevas dentro de un archivo ya mapeado
+(`app.py`/`database/nimbo_db.py` ya estaban en el grafo), así que no hubo nada que
+committear ahí.
