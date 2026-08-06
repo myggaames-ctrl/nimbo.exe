@@ -78,11 +78,6 @@ sus datos (ej. `SELECT * FROM Usuario`) siguen intactos.
 
 ## Limitaciones conocidas (por diseno, no son bugs)
 
-- El chequeo 1 excluye a proposito 4 tablas nativas de Aronium (`Customer`,
-  `Document`, `DocumentItem`, `Product` - ver `TABLAS_ARONIUM_EXTERNAS` en el script):
-  se acceden con `database.nimbo_db.connect()` (el POS externo, `pos.db`), no con
-  `nimbo_connect()`, y nunca deberian tener un `CREATE TABLE` en el codigo propio de
-  Nimbo - no son un esquema que Nimbo cree, son un sistema externo que Nimbo lee.
 - El regex que busca uso de tablas solo mira dentro de literales de string (comillas
   simples, dobles o triples) del codigo Python, para no confundir el `FROM` de SQL con
   el `from X import Y` de Python. Dos palabras sueltas dentro de comentarios/

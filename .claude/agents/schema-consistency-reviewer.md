@@ -39,10 +39,10 @@ lo note.
 
 2. Si el chequeo 1 (codigo vs codigo) encuentra tablas usadas sin `CREATE TABLE`:
    - Confirmar que no es un falso positivo conocido (ver "Limitaciones conocidas" en
-     `.claude/skills/verificar-esquema-empresa/SKILL.md` - tablas nativas de Aronium,
-     o texto libre en un comentario/docstring que coincidio por casualidad con el
-     patron). Si es un falso positivo nuevo de este segundo tipo, se puede agregar al
-     set de exclusion del script (`tablas_usadas_por_codigo()`), explicando por que.
+     `.claude/skills/verificar-esquema-empresa/SKILL.md` - texto libre en un
+     comentario/docstring que coincidio por casualidad con el patron de SQL). Si es un
+     falso positivo nuevo de este tipo, se puede agregar al set de exclusion del script
+     (`tablas_usadas_por_codigo()`), explicando por que.
    - Si es real: revisar si falta agregar una funcion `init_*` ya existente a
      `_inicializar_tablas_empresa()` en `core/empresa.py`, o si falta escribir un
      `init_*` nuevo. Si el `CREATE TABLE` de esa tabla vive en un archivo que el

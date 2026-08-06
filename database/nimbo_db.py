@@ -5,17 +5,8 @@ import sqlite3
 from datetime import datetime
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DB_PATH = os.environ.get(
-    "ARONIUM_DB_PATH",
-    "/mnt/c/Users/Victor Paxtor/AppData/Local/Aronium/Data/pos.db"
-)
 
 UMBRAL_SIMILITUD_PRODUCTO = 0.6
-
-def connect():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
 
 def _buscar_productos_similares(search, limit=100, umbral=UMBRAL_SIMILITUD_PRODUCTO):
     """Busqueda difusa por similitud de nombres (difflib), usada como respaldo
@@ -166,63 +157,77 @@ def get_low_stock(min_stock=5):
     return rows
 
 def get_sales_today():
-    conn = connect()
+    """Reemplaza la version vieja que leia Document de Aronium (caja fisica) -
+    ahora lee de la propia tabla Venta de Nimbo (ver BUGS_Y_FIXES.md, remocion
+    completa de la integracion con Aronium)."""
+    conn = nimbo_connect()
     cur = conn.cursor()
     today = datetime.now().strftime('%Y-%m-%d')
     cur.execute("""
         SELECT COUNT(*) as Cantidad, IFNULL(SUM(Total),0) as Total
-        FROM Document
-        WHERE DATE(Date) = ?
+        FROM Venta
+        WHERE DATE(Fecha) = ?
     """, (today,))
     row = cur.fetchone()
     conn.close()
     return dict(row) if row else {"Cantidad": 0, "Total": 0}
 
 def get_sales_month():
-    conn = connect()
+    """Reemplaza la version vieja que leia Document de Aronium - ver
+    get_sales_today()."""
+    conn = nimbo_connect()
     cur = conn.cursor()
     month = datetime.now().strftime('%Y-%m')
     cur.execute("""
         SELECT COUNT(*) as Cantidad, IFNULL(SUM(Total),0) as Total
-        FROM Document
-        WHERE STRFTIME('%Y-%m', Date) = ?
+        FROM Venta
+        WHERE STRFTIME('%Y-%m', Fecha) = ?
     """, (month,))
     row = cur.fetchone()
     conn.close()
     return dict(row) if row else {"Cantidad": 0, "Total": 0}
 
 def get_top_products(limit=10):
-    conn = connect()
+    """Productos mas vendidos por unidades. Reemplaza la version vieja que
+    leia DocumentItem/Product de Aronium (con precio y total real por item) -
+    Venta no guarda un detalle estructurado de items por venta, asi que esta
+    version extrae (cantidad, nombre) de Venta.Descripcion de forma
+    best-effort (_extraer_items_venta, mismo criterio que get_patrones_ventas()
+    y el "producto favorito" de tools/cliente_tool.py). A diferencia de la
+    version vieja, no devuelve un Total en quetzales por producto: esa
+    informacion no esta disponible sin el detalle estructurado que si tenia
+    Aronium."""
+    conn = nimbo_connect()
     cur = conn.cursor()
-    cur.execute("""
-        SELECT p.Name, SUM(di.Quantity) as Vendidos,
-               SUM(di.Total) as Total
-        FROM DocumentItem di
-        JOIN Product p ON di.ProductId = p.Id
-        GROUP BY p.Id
-        ORDER BY Vendidos DESC
-        LIMIT ?
-    """, (limit,))
-    rows = [dict(r) for r in cur.fetchall()]
+    cur.execute("SELECT Descripcion FROM Venta")
+    ventas = cur.fetchall()
     conn.close()
-    return rows
+
+    conteo = {}
+    for v in ventas:
+        for cantidad, nombre in _extraer_items_venta(v["Descripcion"]):
+            conteo[nombre] = conteo.get(nombre, 0) + cantidad
+
+    top = sorted(conteo.items(), key=lambda kv: kv[1], reverse=True)[:limit]
+    return [{"Name": nombre, "Vendidos": round(cantidad, 2)} for nombre, cantidad in top]
 
 def get_customers(search="", limit=50):
-    conn = connect()
+    """Reemplaza la version vieja que leia el catalogo nativo de clientes de
+    Aronium (tabla Customer) - ahora lee la tabla Cliente propia de Nimbo."""
+    conn = nimbo_connect()
     cur = conn.cursor()
     if search:
         cur.execute("""
-            SELECT Id, Name, Email, PhoneNumber
-            FROM Customer
-            WHERE Name LIKE ? AND IsEnabled = 1
-            ORDER BY Name LIMIT ?
+            SELECT Id, Nombre AS Name, Email, Telefono AS PhoneNumber
+            FROM Cliente
+            WHERE Nombre LIKE ?
+            ORDER BY Nombre LIMIT ?
         """, (f"%{search}%", limit))
     else:
         cur.execute("""
-            SELECT Id, Name, Email, PhoneNumber
-            FROM Customer
-            WHERE IsEnabled = 1
-            ORDER BY Name LIMIT ?
+            SELECT Id, Nombre AS Name, Email, Telefono AS PhoneNumber
+            FROM Cliente
+            ORDER BY Nombre LIMIT ?
         """, (limit,))
     rows = [dict(r) for r in cur.fetchall()]
     conn.close()
@@ -406,9 +411,7 @@ def nimbo_connect(db_path=None):
     (flask.g.empresa_db, seteado por app.py en before_request) - mismo criterio que
     core.auth._connect(db_path). Si no hay contexto de Flask o todavia no se eligio
     empresa, cae a NIMBO_DB (el nimbo.db de la raiz, compatibilidad con scripts
-    sueltos y con el modo single-tenant de antes de esta migracion). DB_PATH (la
-    base de Aronium, para connect()) no se toca - sigue siendo global, fuera del
-    alcance de esta migracion multi-tenant."""
+    sueltos y con el modo single-tenant de antes de esta migracion)."""
     if db_path is None:
         try:
             from flask import g
@@ -422,19 +425,18 @@ def nimbo_connect(db_path=None):
     return conn
 
 
-# ── PRODUCTO Y STOCK (catalogo propio de Nimbo, independiente de Aronium) ──
+# ── PRODUCTO Y STOCK (catalogo propio de Nimbo) ──
 #
-# Hasta esta migracion, Product/Stock vivian unicamente en pos.db (Aronium) y
-# get_products()/get_product_by_code()/get_product_by_id()/add_stock()/
-# remove_stock()/get_stock() (y sus consumidores fuzzy/derivados:
+# Historicamente Product/Stock vivian unicamente en pos.db (Aronium, un POS
+# externo) y get_products()/get_product_by_code()/get_product_by_id()/
+# add_stock()/remove_stock()/get_stock() (y sus consumidores fuzzy/derivados:
 # _buscar_productos_similares, get_valor_inventario, get_margen_productos,
 # get_productos_sin_codigo, asignar_codigo_barras, _codigo_ean_existe) leian y
-# escribian ahi via connect(). Todos esos ahora usan nimbo_connect() contra las
-# tablas propias Producto/Stock de nimbo.db, definidas mas abajo. connect()
-# (Aronium/pos.db) se mantiene solo para lo que sigue siendo dominio de
-# Aronium: reportes de ventas reales de caja fisica (get_sales_today/month,
-# get_top_products, get_reporte_dia via costo historico, get_balance_mes) y
-# clientes nativos de Aronium (get_customers) - nada de eso se toco.
+# escribian ahi via connect(). La integracion con Aronium (connect(), DB_PATH,
+# get_sales_today/month/get_top_products/get_customers y el calculo de
+# costos_productos de get_balance_mes) se removio por completo despues - ver
+# BUGS_Y_FIXES.md - Nimbo ya no lee ni escribe ningun archivo externo de POS,
+# todo pasa por nimbo_connect() contra las tablas propias de nimbo.db.
 #
 # Compatibilidad: las funciones migradas devuelven exactamente las mismas
 # claves que antes (Id, Name, Code, Price, Cost, Stock, Description) aunque
@@ -809,76 +811,6 @@ def init_recordatorios(db_path=None):
             FechaCreado DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    conn.commit()
-    conn.close()
-
-
-def migrar_productos_desde_aronium():
-    """Se corre una sola vez al arrancar (ver app.py, justo despues de
-    init_productos()). Si Producto ya tiene filas (ya se migro antes, o es un
-    negocio que empezo directo en Nimbo) no hace nada. Si no, intenta conectar
-    a pos.db (connect(), Aronium) y copiar su catalogo Product/Stock tal cual -
-    preservando el mismo Id que tenian en Aronium, porque Kardex,
-    GarantiaProducto, ItemCombo, UnidadMedida, StockMinimo, Descuento,
-    CodigoBarrasGenerado y ProductoProveedor ya tienen filas en nimbo.db que
-    guardan ese Id suelto (sin FK real) como referencia a un producto - si se
-    reasignaran Ids nuevos esas referencias quedarian huerfanas/incorrectas.
-    Si pos.db no existe o no es alcanzable (negocio nuevo, ver CLAUDE.md),
-    nimbo.db se queda con Producto/Stock vacios sin error."""
-    conn = nimbo_connect()
-    cur = conn.cursor()
-    cur.execute("SELECT COUNT(*) FROM Producto")
-    if cur.fetchone()[0] > 0:
-        conn.close()
-        return
-
-    try:
-        conn_aronium = connect()
-        cur_a = conn_aronium.cursor()
-        cur_a.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='Product'")
-        if not cur_a.fetchone():
-            conn_aronium.close()
-            conn.close()
-            return
-    except Exception:
-        conn.close()
-        return
-
-    columnas = {r["name"] for r in cur_a.execute("PRAGMA table_info(Product)").fetchall()}
-    tiene_code = "Code" in columnas
-    tiene_desc = "Description" in columnas
-    tiene_enabled = "IsEnabled" in columnas
-
-    cur_a.execute("SELECT * FROM Product")
-    productos = cur_a.fetchall()
-
-    ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    for p in productos:
-        cur.execute(
-            "INSERT INTO Producto (Id, Codigo, Nombre, Precio, Costo, Descripcion, Activo, FechaCreado) "
-            "VALUES (?,?,?,?,?,?,?,?)",
-            (
-                p["Id"],
-                p["Code"] if tiene_code else "",
-                p["Name"],
-                float(p["Price"] or 0),
-                float(p["Cost"] or 0),
-                p["Description"] if tiene_desc else None,
-                int(p["IsEnabled"]) if tiene_enabled and p["IsEnabled"] is not None else 1,
-                ahora
-            )
-        )
-
-    cur_a.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='Stock'")
-    if cur_a.fetchone():
-        cur_a.execute("SELECT ProductId, SUM(Quantity) as Cantidad FROM Stock GROUP BY ProductId")
-        for s in cur_a.fetchall():
-            cur.execute(
-                "INSERT INTO Stock (ProductoId, Cantidad, StockMinimo, UltimaActualizacion) VALUES (?,?,0,?)",
-                (s["ProductId"], float(s["Cantidad"] or 0), ahora)
-            )
-
-    conn_aronium.close()
     conn.commit()
     conn.close()
 
@@ -2772,10 +2704,10 @@ def get_turno(turno_id):
 def abrir_turno(empleado_id, empleado_nombre, fondo_inicial):
     """Crea el turno con su fondo inicial. FondoInicial queda fijo desde este INSERT:
     no existe en todo el codebase ninguna funcion ni endpoint que haga UPDATE de esa
-    columna despues de creada (la consola SQL del dashboard es solo SELECT y solo
-    contra la base de Aronium, no contra nimbo.db). Si se abrio con datos incorrectos,
-    la unica correccion posible es que un admin anule el turno (ver anular_turno) y
-    se abra uno nuevo."""
+    columna despues de creada (la consola SQL del dashboard, aunque consulta nimbo.db
+    directamente, es solo SELECT - no puede escribir). Si se abrio con datos
+    incorrectos, la unica correccion posible es que un admin anule el turno (ver
+    anular_turno) y se abra uno nuevo."""
     import json
     total = _total_denominaciones(fondo_inicial)
     conn = nimbo_connect()
@@ -4567,31 +4499,38 @@ def get_balance_mes(mes=None, anio=None):
     # Gastos registrados
     cur.execute("SELECT IFNULL(SUM(Monto),0) as total FROM Gasto WHERE Mes=? AND Anio=?", (mes, anio))
     gastos = float(cur.fetchone()["total"])
-    
+
+    # Costo de los productos vendidos en el mes (catalogo propio Producto,
+    # nimbo.db) - extraido de Venta.Descripcion con _extraer_items_venta()
+    # (best-effort, sin detalle estructurado de items por venta, ver seccion
+    # Caja en CLAUDE.md). Reemplaza el calculo viejo que mezclaba ingresos de
+    # Nimbo (Venta) con costos de Aronium (Document/DocumentItem) - ver
+    # BUGS_Y_FIXES.md, remocion completa de la integracion con Aronium. Este
+    # cambio de metodologia puede mover los numeros de contabilidad respecto a
+    # lo que se reportaba antes (ya no mezcla los dos sistemas de ventas).
+    cur.execute("SELECT Descripcion FROM Venta WHERE Mes=? AND Anio=?", (mes, anio))
+    ventas_mes = cur.fetchall()
+    costos_productos = 0.0
+    for v in ventas_mes:
+        for cantidad, nombre in _extraer_items_venta(v["Descripcion"]):
+            cur.execute("SELECT Costo FROM Producto WHERE Nombre LIKE ?", (f"%{nombre}%",))
+            prod = cur.fetchone()
+            if prod and prod["Costo"] is not None:
+                costos_productos += float(prod["Costo"]) * cantidad
+
     conn_nimbo.close()
-    
-    # Costos de productos vendidos desde Aronium
-    conn_aronium = connect()
-    cur2 = conn_aronium.cursor()
-    cur2.execute("""SELECT di.Quantity, p.Cost FROM DocumentItem di
-        JOIN Product p ON di.ProductId=p.Id
-        JOIN Document d ON di.DocumentId=d.Id
-        WHERE strftime('%m', d.Date)=? AND strftime('%Y', d.Date)=?""",
-        (str(mes).zfill(2), str(anio)))
-    costos_aronium = sum(float(r[0]) * float(r[1]) for r in cur2.fetchall())
-    conn_aronium.close()
-    
+
     comision_pos = ingresos * 0.06
     iva = ingresos * 0.12
-    isr_estimado = max(0, (ingresos - gastos - costos_aronium) * 0.05)
-    utilidad_bruta = ingresos - costos_aronium - gastos
+    isr_estimado = max(0, (ingresos - gastos - costos_productos) * 0.05)
+    utilidad_bruta = ingresos - costos_productos - gastos
     utilidad_neta = utilidad_bruta - comision_pos
-    
+
     return {
         "mes": mes,
         "anio": anio,
         "ingresos": round(ingresos, 2),
-        "costos_productos": round(costos_aronium, 2),
+        "costos_productos": round(costos_productos, 2),
         "gastos_operativos": round(gastos, 2),
         "comision_pos": round(comision_pos, 2),
         "iva_estimado": round(iva, 2),
@@ -4895,14 +4834,6 @@ def hacer_backup():
         f"{backup_dir}/nimbo_{fecha}.db"
     )
 
-    # Backup Aronium
-    try:
-        shutil.copy2(
-            DB_PATH,
-            f"{backup_dir}/aronium_{fecha}.db"
-        )
-    except: pass
-    
     # Mantener solo los ultimos 7 backups
     backups = sorted([f for f in os.listdir(backup_dir) if f.startswith("nimbo_")])
     while len(backups) > 7:

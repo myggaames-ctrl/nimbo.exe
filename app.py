@@ -1,9 +1,8 @@
 """
 Nimbo AI Dashboard - Backend Flask
-Conecta con OpenClaw, Aronium SQLite y Ollama local
+Conecta con OpenClaw y Ollama local
 """
 import os
-import sqlite3
 import subprocess
 import json
 import csv
@@ -230,12 +229,6 @@ def admin_o_tecnico_required(f):
             return jsonify({"error": "Acceso restringido a administrador o tecnico"}), 403
         return f(*args, **kwargs)
     return wrapper
-
-# ── Configuración ──────────────────────────────────────────
-ARONIUM_DB = os.environ.get(
-    "ARONIUM_DB_PATH",
-    "/mnt/c/Users/Victor Paxtor/AppData/Local/Aronium/Data/pos.db"
-)
 
 inventory = InventoryService()
 engine = ActionEngine()
@@ -956,60 +949,30 @@ def clear_history():
 
 
 # ══════════════════════════════════════════════════════════
-# INVENTARIO ARONIUM
+# INVENTARIO (catalogo propio de Nimbo)
 # ══════════════════════════════════════════════════════════
-
-def get_db():
-    conn = sqlite3.connect(ARONIUM_DB)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-@app.route("/api/inventory", methods=["GET"])
-@login_required
-def get_inventory():
-    try:
-        conn = get_db()
-        cur = conn.cursor()
-        # Tablas comunes en Aronium
-        cur.execute("""
-            SELECT name FROM sqlite_master
-            WHERE type='table'
-            ORDER BY name
-        """)
-        tables = [r[0] for r in cur.fetchall()]
-        conn.close()
-        return jsonify({"tables": tables})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
+# Hasta la remocion completa de la integracion con Aronium (ver BUGS_Y_FIXES.md)
+# estas rutas leian pos.db (Aronium) directo, adivinando nombres de tabla
+# genericos ("items"/"products"/etc). Ahora usan las funciones propias de
+# database/nimbo_db.py, igual que el resto del dashboard. Existia ademas una
+# ruta duplicada /api/inventory/products (inventory_products(), mas abajo en
+# el archivo) que llamaba a un metodo inexistente (inventory.products()) y
+# por eso nunca se ejecutaba en la practica - Werkzeug siempre despachaba a
+# la version de aca (la primera registrada); se elimino esa duplicada al
+# hacer esta limpieza.
 
 @app.route("/api/inventory/products", methods=["GET"])
 @login_required
 def get_products():
     try:
-        conn = get_db()
-        cur = conn.cursor()
+        from database.nimbo_db import get_products as db_get_products
         search = request.args.get("search", "")
-
-        # Intentar con tablas comunes de Aronium
-        for table in ["items", "products", "Items", "Products", "item", "product"]:
-            try:
-                if search:
-                    cur.execute(f"SELECT * FROM {table} WHERE name LIKE ? LIMIT 100",
-                                (f"%{search}%",))
-                else:
-                    cur.execute(f"SELECT * FROM {table} LIMIT 100")
-                rows = [dict(r) for r in cur.fetchall()]
-                cols = [d[0] for d in cur.description]
-                conn.close()
-                return jsonify({"products": rows, "columns": cols, "table": table})
-            except Exception:
-                continue
-
-        conn.close()
-        return jsonify({"products": [], "columns": [], "table": None,
-                        "message": "No se encontró tabla de productos"})
+        productos = db_get_products(search=search)
+        return jsonify({
+            "products": productos,
+            "columns": ["Id", "Name", "Code", "Price", "Cost", "Stock"],
+            "table": "Producto",
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -1018,30 +981,11 @@ def get_products():
 @login_required
 def get_stats():
     try:
-        conn = get_db()
-        cur = conn.cursor()
-        stats = {}
-
-        for table in ["items", "products", "Items", "Products"]:
-            try:
-                cur.execute(f"SELECT COUNT(*) FROM {table}")
-                stats["total_products"] = cur.fetchone()[0]
-                stats["table"] = table
-                break
-            except Exception:
-                continue
-
-        # Intentar ventas
-        for table in ["sales", "Sales", "transactions", "Transactions"]:
-            try:
-                cur.execute(f"SELECT COUNT(*) FROM {table}")
-                stats["total_sales"] = cur.fetchone()[0]
-                break
-            except Exception:
-                continue
-
-        conn.close()
-        return jsonify(stats)
+        from database.nimbo_db import contar_productos, get_sales_month
+        return jsonify({
+            "total_products": contar_productos(),
+            "total_sales": get_sales_month()["Cantidad"],
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -1049,13 +993,14 @@ def get_stats():
 @app.route("/api/inventory/query", methods=["POST"])
 @admin_required
 def custom_query():
-    """Consulta SQL personalizada (solo SELECT)"""
+    """Consulta SQL personalizada (solo SELECT) contra nimbo.db"""
     data = request.json
     sql = data.get("sql", "").strip()
     if not sql.lower().startswith("select"):
         return jsonify({"error": "Solo se permiten consultas SELECT"}), 400
     try:
-        conn = get_db()
+        from database.nimbo_db import nimbo_connect
+        conn = nimbo_connect()
         cur = conn.cursor()
         cur.execute(sql)
         rows = [dict(r) for r in cur.fetchall()]
@@ -1186,19 +1131,8 @@ def delete_task(task_id):
 @app.route("/api/status", methods=["GET"])
 @login_required
 def status():
-    ollama_ok = ollama_disponible()
-
-    db_ok = False
-    try:
-        conn = sqlite3.connect(ARONIUM_DB)
-        conn.close()
-        db_ok = True
-    except Exception:
-        pass
-
     return jsonify({
-        "ollama": ollama_ok,
-        "aronium": db_ok,
+        "ollama": ollama_disponible(),
         "time": datetime.now().strftime("%d/%m/%Y %H:%M")
     })
 @app.route("/api/openclaw/chat", methods=["POST"])
@@ -1267,19 +1201,6 @@ def stock_columns():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     
-@app.route("/api/inventory/products", methods=["GET"])
-@login_required
-def inventory_products():
-
-    try:
-        return jsonify(
-            inventory.products()
-        )
-    except Exception as e:
-        return jsonify({
-            "error": str(e)
-        }), 500
-    
 @app.route("/api/skills/check", methods=["GET"])
 @admin_required
 def skills_check():
@@ -1342,27 +1263,36 @@ def api_tools():
 @app.route("/api/db/products")
 @login_required
 def db_products():
-    from database.nimbo_db import get_products
-    search = request.args.get("search", "")
-    return jsonify(get_products(search=search))
+    try:
+        from database.nimbo_db import get_products
+        search = request.args.get("search", "")
+        return jsonify(get_products(search=search))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/api/db/stats")
 @login_required
 def db_stats():
-    from database.nimbo_db import get_sales_today, get_sales_month, get_low_stock, get_top_products
-    return jsonify({
-        "sales_today": get_sales_today(),
-        "sales_month": get_sales_month(),
-        "low_stock": get_low_stock(),
-        "top_products": get_top_products()
-    })
+    try:
+        from database.nimbo_db import get_sales_today, get_sales_month, get_low_stock, get_top_products
+        return jsonify({
+            "sales_today": get_sales_today(),
+            "sales_month": get_sales_month(),
+            "low_stock": get_low_stock(),
+            "top_products": get_top_products()
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/api/db/customers")
 @login_required
 def db_customers():
-    from database.nimbo_db import get_customers
-    search = request.args.get("search", "")
-    return jsonify(get_customers(search=search))
+    try:
+        from database.nimbo_db import get_customers
+        search = request.args.get("search", "")
+        return jsonify(get_customers(search=search))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/api/db/products/add", methods=["POST"])
 @login_required

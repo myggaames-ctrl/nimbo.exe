@@ -45,13 +45,14 @@ Chat en lenguaje natural en espanol que controla todo el negocio.
 - Agente PC: OpenClaw con Gemini (puerto 18789) - ya NO es el fallback automatico del chat
   (ver Arquitectura del chat), pero se mantiene como opcion manual: boton en el dashboard y
   la ruta /api/openclaw/chat en app.py siguen intactos, sin cambios.
-- Base de datos 1: Aronium SQLite /mnt/c/Users/Victor Paxtor/AppData/Local/Aronium/Data/pos.db -
-  ya NO es la fuente de productos/stock (ver seccion "Catalogo propio (Producto/Stock)" mas
-  abajo); se sigue usando solo para reportes de ventas reales hechas en la caja fisica de
-  Aronium (get_sales_today/get_sales_month/get_top_products/get_balance_mes) y su catalogo
-  nativo de clientes (get_customers) - nada de eso se toco en esta migracion.
-- Base de datos 2: Nimbo SQLite /home/ictor_axtor/micocina-dashboard/nimbo.db - desde esta
-  migracion tambien es la unica fuente de productos, stock y kardex (antes vivian en Aronium).
+- Base de datos: Nimbo SQLite /home/ictor_axtor/micocina-dashboard/nimbo.db - unica fuente de
+  datos del negocio (productos, stock, kardex, ventas, clientes). Aronium (el POS externo que
+  se uso durante la migracion inicial - Aronium SQLite, pos.db) ya NO se usa en ningun punto
+  del proyecto: la integracion completa (ARONIUM_DB_PATH, database.nimbo_db.connect(),
+  get_sales_today/get_sales_month/get_top_products/get_customers leyendo Document/
+  DocumentItem/Product/Customer de Aronium, la seccion "INVENTARIO ARONIUM" de app.py, y
+  migrar_productos_desde_aronium()) se removio por completo (ver BUGS_Y_FIXES.md). Ver
+  "Catalogo propio (Producto/Stock)" mas abajo para el historial de esa migracion.
 
 ## Arranque diario
 - Terminal 1: ~/nimbo-start.sh
@@ -304,19 +305,17 @@ identificacion de cobro).
     (ProductId/ProductName/Minimo), que no se toco; son dos campos con el mismo proposito
     sin consolidar, pendiente para una limpieza futura.
   - database.nimbo_db.init_productos() crea ambas tablas (se llama en app.py junto al resto
-    de init_*). database.nimbo_db.migrar_productos_desde_aronium() se llama una sola vez
-    despues, tambien en app.py: si Producto ya tiene filas no hace nada (idempotente, para
-    no correr en cada arranque); si no, intenta conectar a pos.db (Aronium) - si existe y
-    tiene una tabla Product, copia cada producto preservando EXACTAMENTE el mismo Id que
-    tenia en Aronium (usa PRAGMA table_info para tolerar que el pos.db real no tenga
-    columnas Code/Description/IsEnabled) y suma su Stock por producto entre almacenes; si
-    pos.db no existe o no es alcanzable (negocio nuevo, ver ARONIUM_DB_PATH en .env),
-    Producto/Stock se quedan vacios sin error, listos para crear productos desde cero.
-    Preservar el mismo Id es critico: Kardex, GarantiaProducto, ItemCombo, UnidadMedida,
-    StockMinimo, Descuento (tipo producto), CodigoBarrasGenerado y ProductoProveedor ya
-    tenian filas en nimbo.db con un ProductId/ProductoId suelto (sin FK real) apuntando al
-    Id que el producto tenia en Aronium - si la migracion reasignara Ids nuevos esas
-    referencias quedarian huerfanas.
+    de init_*). En su momento, database.nimbo_db.migrar_productos_desde_aronium() se corria
+    una sola vez despues (tambien en app.py) para copiar el catalogo Product/Stock de pos.db
+    (Aronium) preservando EXACTAMENTE el mismo Id que tenian los productos en Aronium -
+    critico porque Kardex, GarantiaProducto, ItemCombo, UnidadMedida, StockMinimo, Descuento
+    (tipo producto), CodigoBarrasGenerado y ProductoProveedor ya tenian filas en nimbo.db con
+    un ProductId/ProductoId suelto (sin FK real) apuntando a ese Id - si la migracion hubiera
+    reasignado Ids nuevos esas referencias habrian quedado huerfanas. Esa migracion ya se
+    hizo (los Ids preservados siguen siendo la base de todas esas referencias hoy) y la
+    funcion se elimino del codebase al remover por completo la integracion con Aronium (ver
+    mas abajo y BUGS_Y_FIXES.md) - no queda ninguna dependencia de pos.db para crear una
+    empresa nueva, que arranca directo con Producto/Stock vacios.
   - Funciones migradas en database/nimbo_db.py (mismos nombres, parametros y claves de
     retorno que antes - Id/Name/Code/Price/Cost/Stock/Description en ingles, aunque las
     columnas fisicas de Producto/Stock esten en espanol; nada que consuma estas funciones
@@ -332,16 +331,26 @@ identificacion de cobro).
     get_reporte_dia() tambien se migro en la parte que busca el costo de los productos
     vendidos por Nimbo (Venta.Descripcion) - antes ese lookup de costo iba, por error de
     diseno original, contra el Product de Aronium.
-  - Lo que SIGUE dependiendo de Aronium (fuera del alcance de esta migracion, connect()
-    sigue apuntando a pos.db para esto): get_sales_today()/get_sales_month()/
-    get_top_products() (reportes de ventas hechas directamente en la caja fisica de
-    Aronium, un sistema de ventas distinto al propio de Nimbo - ver Caja Registradora),
-    get_customers() (catalogo nativo de clientes de Aronium, no relacionado con la tabla
-    Cliente de Nimbo) y el calculo de costos_productos dentro de get_balance_mes(), que
-    suma el costo de los items de Document/DocumentItem (historial de ventas nativo de
-    Aronium) - ese calculo ya mezclaba ingresos de Nimbo (tabla Venta) con costos de
-    Aronium (Document/DocumentItem) desde antes de esta migracion, no se toco por no ser
-    parte del pedido y por el riesgo de cambiar numeros de contabilidad ya en uso.
+  - Remocion completa de Aronium (2026-08-06, ver BUGS_Y_FIXES.md): hasta esta limpieza,
+    4 funciones seguian dependiendo de Aronium via database.nimbo_db.connect()/DB_PATH
+    (ARONIUM_DB_PATH) - get_sales_today()/get_sales_month()/get_top_products() (leian
+    Document/DocumentItem/Product, el historial de ventas nativo de la caja fisica de
+    Aronium) y get_customers() (leia el catalogo nativo Customer de Aronium, sin relacion
+    con la tabla Cliente de Nimbo) - ademas del calculo de costos_productos dentro de
+    get_balance_mes() (mezclaba ingresos de Nimbo, tabla Venta, con costos de Document/
+    DocumentItem de Aronium). Las 4 se reescribieron para leer solo tablas propias de
+    Nimbo (Venta, Cliente, Producto): get_sales_today/month ahora agregan Venta.Total por
+    fecha; get_top_products y el costos_productos de get_balance_mes extraen items de
+    Venta.Descripcion con _extraer_items_venta() (best-effort, mismo criterio que
+    get_patrones_ventas() - Venta no guarda un detalle estructurado de items, asi que
+    get_top_products() ya no puede devolver un Total en quetzales por producto como antes,
+    solo unidades vendidas); get_customers() ahora lee Cliente. connect()/DB_PATH
+    (ARONIUM_DB_PATH) se eliminaron del codigo, junto con la seccion "INVENTARIO ARONIUM"
+    de app.py (4 rutas que tambien leian pos.db directo adivinando nombres de tabla
+    genericos - se reescribieron sobre las mismas tablas propias, ver seccion "Inventario"
+    mas abajo) y el ping a Aronium de /api/status. Cambiar la metodologia de
+    costos_productos puede mover los numeros de contabilidad que ya estaban en uso
+    respecto a como se calculaban antes (ya no mezcla los dos sistemas de ventas).
 - Inventario: CRUD, kardex, alertas stock, fotos, descripcion
   - Alertas predictivas: database.nimbo_db.get_alertas_predictivas() calcula, para cada
     producto, el promedio de unidades de SALIDA por dia en el Kardex de los ultimos 30 dias
@@ -836,8 +845,9 @@ identificacion de cobro).
     para eso).
   - FondoInicial es inmutable: se fija una unica vez en el INSERT de database.nimbo_db.abrir_turno()
     y no existe en todo el codebase ninguna funcion/endpoint que le haga UPDATE despues (la
-    consola SQL del dashboard es solo SELECT y solo contra Aronium/pos.db, nunca contra
-    nimbo.db). La unica forma de corregir un fondo mal capturado es que un admin anule el turno.
+    consola SQL del dashboard, aunque consulta nimbo.db directamente, es solo SELECT - no
+    puede escribir). La unica forma de corregir un fondo mal capturado es que un admin anule
+    el turno.
   - Fondo inicial automatico: al abrir un turno nuevo, si existe un turno CERRADO previo,
     database.nimbo_db.get_ultimo_cierre_denominaciones() recupera el desglose que se conto
     fisicamente en su cierre (el JSON guardado en el MovimientoCaja tipo AJUSTE de ese turno)

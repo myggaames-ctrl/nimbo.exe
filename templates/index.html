@@ -688,10 +688,6 @@
       <span class="status-label">Ollama</span>
       <span><span class="status-dot" id="dot-ollama"></span><span id="txt-ollama" style="font-size:11px">—</span></span>
     </div>
-    <div class="status-row">
-      <span class="status-label">Aronium DB</span>
-      <span><span class="status-dot" id="dot-aronium"></span><span id="txt-aronium" style="font-size:11px">—</span></span>
-    </div>
     <div class="status-row mt-2">
       <span class="status-label" id="clock" style="font-size:10px"></span>
     </div>
@@ -718,7 +714,7 @@
 
     <!-- ══ DASHBOARD ══ -->
     <div class="panel active" id="panel-dashboard">
-      <div class="stats-grid">
+      <div class="stats-grid" style="grid-template-columns:repeat(3, 1fr)">
         <div class="stat-card">
           <div class="stat-label">Productos</div>
           <div class="stat-value stat-accent" id="stat-products">—</div>
@@ -732,10 +728,6 @@
         <div class="stat-card">
           <div class="stat-label">Estado Ollama</div>
           <div class="stat-value" id="stat-ollama" style="font-size:16px;margin-top:4px">—</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">Base de datos</div>
-          <div class="stat-value" id="stat-db" style="font-size:16px;margin-top:4px">—</div>
         </div>
       </div>
 
@@ -1246,7 +1238,7 @@
     <!-- ══ SQL CONSOLE ══ -->
     <div class="panel" id="panel-sql">
       <div class="card">
-        <div class="card-title">Consola SQL — Base de datos Aronium</div>
+        <div class="card-title">Consola SQL — Base de datos Nimbo</div>
         <textarea class="sql-input" id="sql-input" rows="4" placeholder="SELECT * FROM items LIMIT 20"></textarea>
         <div class="flex gap-2 mb-4">
           <button class="btn btn-primary" onclick="runSQL()">▶ Ejecutar</button>
@@ -1515,11 +1507,11 @@ let inventoryColumns = [];
 const titles = {
   dashboard: ['Dashboard', 'Resumen general del negocio'],
   chat: ['Chat IA', 'Asistente powered by Ollama'],
-  inventory: ['Inventario', 'Productos en Aronium'],
+  inventory: ['Inventario', 'Productos'],
   analytics: ['Análisis', 'Proyecciones y métricas'],
   content: ['Generador de contenido', 'Posts, scripts y descripciones'],
   tasks: ['Tareas', 'Pendientes del día'],
-  sql: ['Consola SQL', 'Consultas directas a Aronium'],
+  sql: ['Consola SQL', 'Consultas directas a Nimbo'],
   kardex: ['Kardex', 'Historial de entradas y salidas'],
   historial: ['Historial de Chat', 'Conversaciones guardadas'],
   graficas: ['Gráficas', 'Análisis visual del negocio'],
@@ -1765,11 +1757,6 @@ async function refreshStatus() {
     const tg = document.getElementById('txt-ollama');
     dg.className = 'status-dot ' + (d.ollama ? 'green' : 'red');
     tg.textContent = d.ollama ? 'Conectado' : 'Sin conexión';
-
-    const da = document.getElementById('dot-aronium');
-    const ta = document.getElementById('txt-aronium');
-    da.className = 'status-dot ' + (d.aronium ? 'green' : 'red');
-    ta.textContent = d.aronium ? 'Conectado' : 'Sin conexión';
   } catch(e) {
     console.error('Status error:', e);
   }
@@ -1794,9 +1781,6 @@ async function loadStats() {
     const r = await fetch('/api/status');
     const d = await r.json();
     document.getElementById('stat-ollama').innerHTML = d.ollama
-      ? '<span class="badge badge-green">✓ Online</span>'
-      : '<span class="badge badge-red">✗ Offline</span>';
-    document.getElementById('stat-db').innerHTML = d.aronium
       ? '<span class="badge badge-green">✓ Online</span>'
       : '<span class="badge badge-red">✗ Offline</span>';
   } catch(e) {}

@@ -1779,3 +1779,118 @@ que un `pkill` anterior funcionó.
 
 **Archivos modificados:** `app.py`, `database/nimbo_db.py`,
 `templates/diagnostico.html`, `CLAUDE.md`.
+
+---
+
+## [2026-08-06] Remoción completa de la integración con Aronium
+
+**Problema:** un escaneo del repo (ver la sesión anterior, "reportar qué partes del
+código todavía referencian Aronium") encontró que, a pesar de que Nimbo ya tenía sus
+propias tablas (`Producto`, `Stock`, `Venta`, `Cliente`) desde la migración de hace
+unas semanas, seguían quedando 8 puntos reales conectados a Aronium (`pos.db`, el
+POS externo): 4 funciones en `database/nimbo_db.py`, una sección completa de 4 rutas
+en `app.py`, un ping de salud en `/api/status`, una ruta duplicada muerta, y un label
+desactualizado en el dashboard. Dos de esos puntos (`get_customers()` y
+`get_top_products()`) además estaban **rotos** contra la configuración real de
+`.env` (`ARONIUM_DB_PATH=aronium_demo.db`): la demo no tiene tabla `Customer` ni
+columna `DocumentItem.Total`, y ninguna de las dos rutas que los exponían
+(`/api/db/customers`, `/api/db/stats`) tenía `try/except` - hubieran tirado un 500
+sin manejar.
+
+**Solución:** se removió la integración por completo, reemplazando cada punto por
+el equivalente sobre las tablas propias de Nimbo:
+
+- `database/nimbo_db.py`:
+  - `connect()`/`DB_PATH` (`ARONIUM_DB_PATH`) - eliminados. Ya no queda ninguna
+    conexión a un archivo externo en todo el proyecto.
+  - `get_sales_today()`/`get_sales_month()` - ahora agregan `Venta.Total` por fecha
+    en vez de `Document.Total` de Aronium (mismo shape de retorno, sin cambios para
+    quien las llama).
+  - `get_top_products()` - ya no puede leer `DocumentItem`/`Product` (no hay ese
+    detalle estructurado en Nimbo); ahora extrae `(cantidad, nombre)` de
+    `Venta.Descripcion` con `_extraer_items_venta()` (el mismo helper best-effort
+    que ya usaba `get_patrones_ventas()`). Cambio de contrato: ya no devuelve un
+    `Total` en quetzales por producto, solo `Vendidos` (unidades) - nada en el
+    codebase consumía ese campo, así que no rompe nada existente.
+  - `get_customers()` - ahora lee la tabla `Cliente` propia en vez del catálogo
+    nativo `Customer` de Aronium.
+  - `costos_productos` dentro de `get_balance_mes()` - ya no mezcla ingresos de
+    `Venta` (Nimbo) con costos de `Document`/`DocumentItem` (Aronium); ahora extrae
+    los items vendidos del mes con `_extraer_items_venta()` y busca su `Costo` en
+    `Producto`. **Nota:** esto cambia la metodología de cálculo respecto a lo que
+    se venía reportando - los números de `costos_productos`/`utilidad_bruta`/
+    `utilidad_neta`/`isr_estimado` de meses futuros pueden diferir de los que
+    hubiera dado la fórmula vieja.
+  - `migrar_productos_desde_aronium()` - eliminada. Ya no tenía ningún caller en
+    todo el codebase (la migración real ya se había hecho y el call site ya se
+    había quitado de `app.py` en algún momento anterior sin que se actualizara
+    `CLAUDE.md`) - confirmado antes de borrar.
+  - `hacer_backup()` - ya no intenta copiar `pos.db` a `backups/aronium_*.db`.
+  - Comentarios/docstrings que ya no aplicaban (la consola SQL "solo contra
+    Aronium", el bloque de "PRODUCTO Y STOCK... independiente de Aronium") se
+    corrigieron para reflejar el estado nuevo.
+- `app.py`:
+  - La sección "INVENTARIO ARONIUM" (`get_db()`, `GET /api/inventory` - sin ningún
+    caller en el frontend, se eliminó directo -, `GET /api/inventory/products`,
+    `GET /api/inventory/stats`, `POST /api/inventory/query`) se reescribió sobre
+    `database/nimbo_db.py` y `nimbo_connect()`. La consola SQL (`/api/inventory/query`)
+    ahora corre contra `nimbo.db` en vez de `pos.db` - sigue siendo solo `SELECT`
+    (no puede escribir, sin cambios en esa validación).
+  - Se eliminó la ruta duplicada muerta: `/api/inventory/products` estaba
+    registrada dos veces (`get_products()`, la de Aronium, y `inventory_products()`,
+    que llamaba a un método `inventory.products()` que ni siquiera existe en
+    `InventoryService` - nunca se ejecutaba, Werkzeug siempre despachaba a la
+    primera). Se consolidó en una sola ruta funcional.
+  - `/api/status` ya no pinguea Aronium ni devuelve la clave `"aronium"`.
+  - `import sqlite3` quedó sin ningún uso después de estos cambios - se removió.
+- `templates/index.html`:
+  - Fila "Aronium DB" del sidebar y tarjeta "Base de datos" del dashboard -
+    eliminadas (junto con su JS en `refreshStatus()`/`loadStats()`). El grid de
+    tarjetas del dashboard pasó de 4 a 3 columnas (solo en esa instancia puntual,
+    vía `style` inline - la clase `.stats-grid` es compartida con el panel Caja,
+    que sí necesita sus 4 columnas reales, así que no se tocó la clase).
+  - `titles.inventory` ("Productos en Aronium" → "Productos") y `titles.sql`
+    ("Consultas directas a Aronium" → "Consultas directas a Nimbo"), más el
+    `card-title` de la consola SQL ("Base de datos Aronium" → "Base de datos
+    Nimbo").
+- `.env`: se quitó `ARONIUM_DB_PATH` (la línea activa y la alternativa comentada).
+- Se agregó `try/except` a `/api/db/products`, `/api/db/stats` y `/api/db/customers`
+  (no lo tenían - eran justamente las rutas que podían crashear sin manejo si el
+  origen de datos fallaba).
+- `.claude/skills/verificar-esquema-empresa/`: el chequeo de esquema excluía a
+  propósito 4 tablas (`Customer`, `Document`, `DocumentItem`, `Product`,
+  `TABLAS_ARONIUM_EXTERNAS` en `verificar_esquema.py`) porque el código las leía
+  sin tener un `CREATE TABLE` propio (eran de Aronium, por diseño). Se confirmó con
+  el propio script (`tablas_usadas_por_codigo() & TABLAS_ARONIUM_EXTERNAS`) que
+  ya no queda ninguna referencia a esas 4 tablas en el código, y se quitó la
+  exclusión (ya no hace falta) del script, `SKILL.md` y
+  `.claude/agents/schema-consistency-reviewer.md`.
+
+**Verificación:** se probó en vivo contra el servidor real (con datos reales de
+Mi Cocina) sin reiniciar el proceso - Werkzeug con el reloader de debug ya tenía
+cargado el código nuevo. `/api/status` ya no trae `"aronium"`; `/api/db/stats` y
+`/api/db/customers` devuelven datos reales (antes hubieran crasheado contra la
+`aronium_demo.db` configurada); `/api/inventory/products`, `/api/inventory/stats`
+y `/api/inventory/query` funcionan contra `nimbo.db`; `GET /api/inventory` (la
+ruta vieja sin caller) da 404 como corresponde; el comando de chat "balance de
+julio 2026" calculó `costos_productos` correctamente sobre datos reales de ventas
+(Q480.00, sin crashear); "sugerir combos", "ventas de hoy" y el dashboard completo
+(`GET /`) cargan sin errores y sin ninguna mención a "Aronium" en el HTML
+renderizado. `python3 -m py_compile` limpio en los 3 archivos Python tocados, y
+`verificar_esquema.py` sigue reportando "Todo consistente." después de quitar la
+exclusión.
+
+**Nota:** quedan referencias a "Aronium" en otras partes de `CLAUDE.md` (ej.
+"ProductoId de Aronium" en las secciones de Descuento/Garantía/Combo/Unidades de
+medida/Códigos de barra) - esas son notas de procedencia histórica de un `Id`
+(los productos migrados preservaron su `Id` original de Aronium a propósito, ver
+la sección "Catálogo propio (Producto/Stock)"), no llamadas activas a Aronium, así
+que se dejaron tal cual. El archivo `aronium_demo.db` en la raíz del proyecto
+también quedó huérfano (ya no lo lee nada) - no se borró por no ser parte del
+pedido, es un archivo de datos, no código.
+
+**Archivos modificados:** `app.py`, `database/nimbo_db.py`, `templates/index.html`,
+`.env` (no versionado), `CLAUDE.md`,
+`.claude/skills/verificar-esquema-empresa/scripts/verificar_esquema.py`,
+`.claude/skills/verificar-esquema-empresa/SKILL.md`,
+`.claude/agents/schema-consistency-reviewer.md`.

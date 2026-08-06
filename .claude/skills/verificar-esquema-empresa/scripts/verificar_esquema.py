@@ -37,13 +37,6 @@ ARCHIVOS_SQL = [
     "core/empresa.py",
 ]
 
-# Tablas que el codigo SI usa (FROM/INTO/UPDATE) pero que a proposito no tienen
-# CREATE TABLE en ningun init_* de este proyecto - son tablas nativas de Aronium
-# (pos.db, el POS externo), accedidas via database.nimbo_db.connect() en vez de
-# nimbo_connect(). No son un bug, son una integracion con un sistema externo -
-# ver seccion "Catalogo propio (Producto/Stock)" y "Lo que SIGUE dependiendo de
-# Aronium" en CLAUDE.md.
-TABLAS_ARONIUM_EXTERNAS = {"Customer", "Document", "DocumentItem", "Product"}
 
 
 def tablas_creadas_por_codigo():
@@ -105,7 +98,6 @@ def tablas_usadas_por_codigo():
     # espanol como "...haga UPDATE de esa tabla..." (prosa, no SQL real) - ambos son
     # ruido de que el regex no distingue SQL real de texto libre dentro de un string.
     tablas -= {"sqlite_master", "sqlite_sequence", "SET", "de"}
-    tablas -= TABLAS_ARONIUM_EXTERNAS
     return tablas
 
 
