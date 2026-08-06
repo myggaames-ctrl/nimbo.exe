@@ -768,21 +768,25 @@ def _extraer_precio_producto(mensaje: str):
 
 
 def _preguntar_descripcion_visual_o_oferta(context: dict, prefijo: str = ""):
-    """Se llama justo despues de confirmar el producto (tanto si ya existia
-    en el inventario como si se acaba de describir a mano). Si
-    tools/contenido_tool.py video_desde_foto_tool logro un analisis visual de
-    la foto (vf_descripcion_visual, con llava), se lo muestra al usuario para
-    que lo confirme o corrija ANTES de seguir (step
-    videofoto_waiting_descripcion_visual) - asi un color/material mal
-    identificado no llega arrastrado hasta el prompt final de Veo 3. Si no
+    """Se llama justo despues de confirmar el producto que SI viene de un
+    analisis real de una foto (tools/contenido_tool.py video_desde_foto_tool
+    con llava) - nunca para un producto descrito a mano por el usuario (ver
+    videofoto_waiting_datos_nuevo, que llena vf_descripcion_visual el mismo
+    con el texto que el usuario ya escribio, y salta esta pregunta a
+    proposito: no tiene sentido pedirle que "confirme" algo que el mismo
+    acaba de escribir). Si hay descripcion visual, se le pregunta puntualmente
+    por el color interior (el dato que mas suele fallar/importar en
+    electrodomesticos de cocina - teflon, esmalte, etc.) ANTES de seguir
+    (step videofoto_waiting_descripcion_visual), para que un color mal
+    identificado no llegue arrastrado hasta el prompt final de Veo 3. Si no
     hay descripcion visual (llava no esta pulled, o no se pudo analizar), se
-    salta esa pregunta de una vez y sigue directo con oferta, igual que
-    antes de este cambio."""
+    salta esa pregunta de una vez y sigue directo con oferta."""
     descripcion_visual = context.get("vf_descripcion_visual", "")
     if descripcion_visual:
         context["step"] = "videofoto_waiting_descripcion_visual"
         return (f"{prefijo}Vi en la foto: {descripcion_visual}\n"
-                f"¿Es correcto o quieres corregir algo? (si, o escribe la corrección)"), context
+                f"¿El color interior del producto es correcto? Si no, descríbelo "
+                f"(ej: 'el interior es amarillo dorado', 'es negro mate por dentro')."), context
     context["step"] = "videofoto_waiting_oferta"
     return f"{prefijo}¿Hay oferta o promoción? (precio especial, descuento, 2x1, etc. o escribe 'no')", context
 
@@ -1089,29 +1093,52 @@ def send(message: str, context: dict = None, role: str = "admin") -> tuple:
             return "No pude identificar el nombre del producto. Escribe el nombre y el precio (ej: licuadora oster 350).", context
         context["vf_nombre"] = nombre.title()
         context["vf_precio"] = precio
+        if not context.get("vf_descripcion_visual"):
+            # Sin analisis de llava (no esta pulled, o no ayudo a encontrar
+            # el producto): se usa el texto completo que el usuario escribio
+            # como descripcion visual tambien - asi detalles como "teflon
+            # amarillo" no quedan atrapados solo dentro del nombre, sino que
+            # tambien alimentan el prompt visual (_apertura() en
+            # core/video_prompt_engine.py) y las reglas de contraste de color
+            # (elegir_fondo_y_iluminacion()). NO se dispara la pregunta de
+            # confirmacion de color de mas abajo en este caso a proposito -
+            # ese texto lo acaba de escribir el usuario, no lo "vio" ningun
+            # analisis de llava; pedirle que confirme sus propias palabras
+            # seria confuso.
+            context["vf_descripcion_visual"] = nombre
+            context["step"] = "videofoto_waiting_oferta"
+            return f"Producto: {nombre.title()}, precio Q{precio:g}.\n¿Hay oferta o promoción? (precio especial, descuento, 2x1, etc. o escribe 'no')", context
         return _preguntar_descripcion_visual_o_oferta(context, prefijo=f"Producto: {nombre.title()}, precio Q{precio:g}.\n")
 
     if step == "videofoto_waiting_descripcion_visual":
-        # Confirmacion/correccion del analisis visual de llava (ver
-        # tools/contenido_tool.py video_desde_foto_tool) antes de seguir con
-        # el resto de preguntas - permite corregir un color/material mal
-        # identificado en vez de arrastrarlo hasta el prompt final de Veo 3.
+        # Confirmacion/correccion del color interior real (ver
+        # tools/contenido_tool.py video_desde_foto_tool, analisis con llava)
+        # antes de seguir con el resto de preguntas - permite corregir un
+        # color mal identificado en vez de arrastrarlo hasta el prompt final
+        # de Veo 3.
         resp_norm = unicodedata.normalize("NFD", message.strip()).encode("ascii", "ignore").decode("utf-8").lower().rstrip(".!?")
         if resp_norm in ("si", "s", "ok", "correcto", "esta bien", "de una", "dale", "yes"):
-            pass  # descripcion se queda igual, sigue con oferta mas abajo
+            pass  # descripcion (incluido el color) se queda igual, sigue con oferta mas abajo
         elif resp_norm in ("no", "no gracias", "nel", "para nada"):
-            # Un "no" a secas dice que la descripcion NO es correcta pero
-            # todavia no trae la correccion en si - hay que pedirla, no
-            # guardar el literal "no" como si fuera la descripcion nueva
-            # (bug encontrado al probar este mismo step: un "no" bare se
-            # colaba al else de abajo y pisaba la descripcion real).
-            return "¿Cuál es la corrección? Escribe cómo se ve realmente el producto.", context
+            # Un "no" a secas dice que el color NO es correcto pero todavia
+            # no trae la correccion en si - hay que pedirla, no guardar el
+            # literal "no" como si fuera la descripcion nueva (bug real
+            # encontrado al probar este mismo step en una version anterior:
+            # un "no" bare se colaba al else de abajo y pisaba la descripcion
+            # real).
+            return ("¿Cuál es el color correcto? Escribe algo como 'el interior es "
+                    "amarillo dorado' o 'es negro mate por dentro'."), context
         else:
-            # Cualquier otro texto (incluyendo la respuesta al "cual es la
-            # correccion?" de arriba) se toma como la correccion en si -
-            # reemplaza la descripcion, no la combina, mas simple y
-            # predecible que tratar de fusionar texto libre.
-            context["vf_descripcion_visual"] = message.strip()
+            # El usuario corrigio el color: se antepone como dato
+            # AUTORITATIVO (reemplaza lo que llava detecto sobre el color -
+            # "usar ESE color en los prompts en vez del detectado por
+            # llava", pedido explicito) sin descartar el resto del analisis
+            # (forma/condicion/fondo de llava), que sigue siendo util para
+            # el prompt - a diferencia de una version anterior de este step,
+            # que reemplazaba la descripcion COMPLETA con la correccion.
+            color_corregido = message.strip()
+            descripcion_original = context.get("vf_descripcion_visual", "")
+            context["vf_descripcion_visual"] = f"{color_corregido}. {descripcion_original}".strip(". ").strip()
         context["step"] = "videofoto_waiting_oferta"
         return "¿Hay oferta o promoción? (precio especial, descuento, 2x1, etc. o escribe 'no')", context
 

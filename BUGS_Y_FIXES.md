@@ -2858,3 +2858,63 @@ consecuencia de una causa distinta y real:
    invocarse durante la construcción del prompt.
 
 **Archivos modificados:** `core/nimbo.py`.
+
+---
+
+## [2026-08-06] Confirmación de color interior antes de generar los prompts, y descripción visual enriquecida con el texto del usuario
+
+**Problema:** después del análisis de llava, la confirmación existente
+(`videofoto_waiting_descripcion_visual`) preguntaba genéricamente "¿es correcto o
+quieres corregir algo?" sobre TODA la descripción visual, y si el usuario corregía
+algo, la corrección REEMPLAZABA la descripción completa (perdiendo forma/condición/
+fondo que llava sí había identificado bien). Además, cuando no había análisis de
+llava y el usuario describía el producto a mano (ej. "sartén para 4 huevos aldura
+teflón amarillo, precio 168"), esos detalles descriptivos (el color/material que el
+usuario escribió) quedaban atrapados dentro del nombre del producto nada más -
+`vf_descripcion_visual` se quedaba vacío, así que nunca alimentaban el prompt visual
+ni las reglas de contraste de color de `core/video_prompt_engine.py`.
+
+**Causa:** no es un bug, es una funcionalidad nueva pedida explícitamente. Se
+documenta acá porque así se pidió para esta instalación.
+
+**Solución (`core/nimbo.py`):**
+- `_preguntar_descripcion_visual_o_oferta()`: la pregunta ahora es específicamente
+  sobre el color interior ("Vi en la foto: ... ¿El color interior del producto es
+  correcto? Si no, descríbelo (ej: 'el interior es amarillo dorado', 'es negro mate
+  por dentro')."), en vez de una confirmación genérica de toda la descripción.
+- `videofoto_waiting_descripcion_visual`: cuando el usuario corrige el color, el
+  texto de la corrección se ANTEPONE a la descripción original de llava en vez de
+  reemplazarla por completo (`f"{color_corregido}. {descripcion_original}"`) - así
+  "usar ESE color en los prompts en vez del detectado por llava" (pedido explícito)
+  se cumple sin perder la forma/condición/fondo que llava sí identificó
+  correctamente. Un "no" a secas (sin la corrección todavía) sigue pidiendo el dato
+  real antes de guardar nada, mismo criterio del fix anterior para este mismo step.
+- `videofoto_waiting_datos_nuevo` (producto descrito a mano, sin match de llava):
+  si `vf_descripcion_visual` viene vacío, ahora se llena con el mismo texto completo
+  que el usuario escribió (antes de convertirlo a Title Case para el nombre) - así
+  detalles como "teflón amarillo" alimentan también `_apertura()` (la descripción
+  visual del prompt) y `elegir_fondo_y_iluminacion()` (la regla de contraste, que
+  ahora sí puede detectar "amarillo" como color y elegir un fondo apropiado). A
+  propósito NO se dispara la pregunta de confirmación de color en este caso
+  específico - ese texto lo acaba de escribir el usuario, pedirle que "confirme" sus
+  propias palabras sería confuso -, se salta directo a la pregunta de oferta.
+
+**Verificación:** con una empresa de prueba desechable y llava mockeado:
+1. Confirmar el color con "si" deja la descripción de llava intacta.
+2. Corregir el color en dos pasos ("no" → pide la corrección → "el interior es
+   amarillo dorado") deja la descripción como `"el interior es amarillo dorado.
+   Teflon negro mate, mango rojo, 4 cavidades para huevo"` - color corregido
+   primero, resto de los detalles de llava preservados (verificado explícitamente
+   que "mango rojo" seguía presente después de la corrección).
+3. Sin llava disponible, describir el producto a mano con detalles de color
+   ("sartén para 4 huevos aldura teflón amarillo, precio 168") deja
+   `vf_descripcion_visual` = ese mismo texto, salta directo a oferta (sin pedir
+   confirmación redundante), y el prompt final generado por
+   `core/video_prompt_engine.py` efectivamente incluye "amarillo" en la descripción
+   visual y la regla de contraste reacciona a esa palabra.
+4. Se corrió de nuevo la batería completa de pruebas de las dos entradas
+   anteriores (flujo completo con producto de inventario, reinicio con foto nueva
+   mid-flujo, red de seguridad de step viejo) para confirmar que estos cambios no
+   rompieron nada existente - todas pasaron igual.
+
+**Archivos modificados:** `core/nimbo.py`.
