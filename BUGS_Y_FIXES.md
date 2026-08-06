@@ -2776,3 +2776,85 @@ que el código real usa.
 
 **Archivos modificados:** `core/video_prompt_engine.py` (nuevo), `core/nimbo.py`,
 `CLAUDE.md`.
+
+---
+
+## [2026-08-06] Tres reportes sobre el motor determinista de video: ruta de foto filtrada al prompt, y sesión vieja que hacía parecer que el motor nuevo no se llamaba
+
+**Problema reportado:** tres síntomas en el flujo `videofoto_*` después de introducir
+`core/video_prompt_engine.py` (entrada anterior de esta fecha):
+1. La ruta `[FOTO:ruta]` aparecía literal dentro del prompt generado.
+2. El motor nuevo parecía no estar siendo llamado - el flujo seguía el camino
+   anterior.
+3. El paso "¿quieres los 3 prompts o solo uno?" no aparecía en el chat - iba directo
+   a un prompt genérico.
+
+**Investigación:** se revisó el código actual línea por línea antes de tocar nada
+(`grep` de todos los `if step == "videofoto_..."`, confirmando que los 15 steps
+existen exactamente una vez cada uno, sin duplicados ni huecos, y que
+`core.video_prompt_engine` se importa 3 veces en los steps correctos) y se corrieron
+de nuevo, sin cambios, las pruebas de la entrada anterior - **todas pasaron
+igual que antes**: el step `videofoto_waiting_cuantos_prompts` aparece, el motor se
+llama, cero llamadas a Ollama. Es decir, el código de la entrada anterior en sí
+estaba bien - los síntomas 2 y 3 no eran un bug de integración nuevo, sino la
+consecuencia de una causa distinta y real:
+
+- **Causa real de 2 y 3:** cualquier conversación de chat que ya estuviera a mitad
+  del flujo de video ANTES de este cambio (con `context.step ==
+  "videofoto_waiting_optimizar"`, el nombre viejo del step, guardado en la cookie de
+  sesión de ese usuario) se quedaba con ese nombre de step para siempre - al
+  renombrarlo a `videofoto_waiting_cuantos_prompts`, ya no existía ningún bloque
+  `if step == "videofoto_waiting_optimizar":` que lo reconociera. `send()`
+  (`core/nimbo.py`) no tiene (no tenía) una red de seguridad para esto: un step
+  desconocido simplemente caía en silencio hasta el pipeline genérico del final
+  (detección de intents → Ollama fallback), **con el `context` viejo intacto** - de
+  ahí el "prompt genérico" (en realidad ni siquiera era parte del flujo de video) y
+  la sensación de que el step nuevo y el motor nunca se llegaban a usar: la sesión
+  del que probó nunca volvió a entrar al flujo real después del rename.
+- **Causa real de 1:** sí es un bug nuevo, real y confirmado - ninguno de los steps
+  que piden texto libre (`videofoto_waiting_mostrar`, `videofoto_waiting_oferta`,
+  `videofoto_waiting_texto_pantalla`, `videofoto_waiting_datos_nuevo`, etc.)
+  verificaba si el mensaje que llegaba era en realidad una foto NUEVA subida por
+  accidente (o a propósito, para reintentar) a mitad del flujo. El marcador crudo
+  `[foto:ruta] texto` se guardaba tal cual en el campo que ese step estuviera
+  llenando en ese momento (ej. `vf_mostrar = "[foto:/static/fotos/chat_temp/xxx.jpg]
+  video de otro producto"`) y esa ruta terminaba filtrándose, literal, hasta el
+  prompt final que arma `core/video_prompt_engine.py` - reproducido y confirmado con
+  una prueba real antes de aplicar el fix.
+
+**Solución (`core/nimbo.py`):**
+- Nueva "salida universal" en `send()` (mismo criterio y misma posición que la
+  cancelación universal ya existente, revisada ANTES de entrar a cualquier step
+  específico): si hay un step `videofoto_*` activo y el mensaje que llega es un
+  marcador `[foto:ruta]` nuevo (chequeo case-insensitive, porque a esta altura el
+  mensaje todavía no pasó por `CommandNormalizer.normalize()`), se descarta el
+  `context` viejo por completo y el mensaje se re-procesa desde cero, como si el
+  usuario hubiera cancelado primero - arranca un flujo de video nuevo con la foto
+  nueva, en vez de dejar el marcador crudo filtrarse a cualquier campo de texto
+  libre.
+- Nueva red de seguridad al final de `send()`, justo antes del pipeline genérico:
+  si `step` empieza con `"videofoto_"` pero no matcheó NINGUNO de los bloques
+  `if step == "videofoto_...":` de arriba (step desconocido/viejo), se limpia el
+  `context` y se avisa explícitamente ("Parece que la sesión del video quedó en un
+  estado anterior. Empecemos de nuevo") en vez de caer en silencio al fallback
+  genérico de Ollama arrastrando un `context` que ya no tiene forma de recuperarse
+  solo. Esto también protege contra el mismo tipo de problema si algún futuro
+  rename de step se repite.
+
+**Verificación:** con una empresa de prueba desechable:
+1. Se reprodujo el bug de la ruta filtrada ANTES del fix (subir una foto nueva
+   durante `videofoto_waiting_mostrar` guardaba el marcador crudo en `vf_mostrar`) y
+   se confirmó que DESPUÉS del fix la conversación reinicia limpio con el producto
+   nuevo (`Encontré Licuadora Oster Real...`), sin ningún `[foto:` en ningún campo
+   del `context` resultante.
+2. Se simuló exactamente el escenario de sesión vieja (`context = {"step":
+   "videofoto_waiting_optimizar", ...}`, el nombre de step que ya no existe) y se
+   confirmó que ahora responde con el aviso claro y limpia el `context`, en vez de
+   caer al fallback genérico con el context viejo intacto.
+3. Se corrió de nuevo la batería completa de pruebas de la entrada anterior (camino
+   "3 prompts", camino "uno", editar, opción inválida) para confirmar que los 2
+   fixes nuevos no rompieron nada del flujo normal - todas pasaron igual, con la
+   aserción explícita (mock que lanza excepción) de que `llamar_ollama` sigue sin
+   invocarse durante la construcción del prompt.
+
+**Archivos modificados:** `core/nimbo.py`.

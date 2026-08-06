@@ -909,6 +909,26 @@ def send(message: str, context: dict = None, role: str = "admin") -> tuple:
             aviso_stock = f" Se repuso el stock de {venta_ctx['producto']} ({venta_ctx['cantidad']} unidad(es))."
         return f"De acuerdo, empecemos de nuevo. ¿En que te puedo ayudar?{aviso_stock}", {}
 
+    # Segunda salida universal, mismo criterio que la de arriba (se revisa
+    # ANTES de entrar a cualquier step especifico): una foto NUEVA subida
+    # mientras un flujo de video-desde-foto ya esta en curso (steps
+    # "videofoto_*") se trata como reinicio del flujo, no como la respuesta de
+    # texto libre que el step actual estaba esperando. Sin este chequeo, el
+    # marcador crudo "[foto:ruta] texto" se guardaba tal cual en el campo que
+    # el step de turno estuviera llenando (vf_mostrar, vf_oferta,
+    # vf_texto_pantalla, o incluso vf_nombre via videofoto_waiting_datos_nuevo,
+    # que busca numeros en el mensaje y el nombre de archivo del uuid puede
+    # traer digitos) - y esa ruta terminaba filtrandose, literal, hasta el
+    # prompt final que arma core/video_prompt_engine.py (ver BUGS_Y_FIXES.md).
+    # El detector real de este marcador (core/detectors/contenido_foto_detector.py)
+    # trabaja sobre texto YA normalizado a minusculas (ver
+    # CommandNormalizer.normalize(), que corre recien dentro de
+    # _intentar_detectar() mas abajo) - aca el mensaje todavia esta crudo, por
+    # eso el chequeo es case-insensitive en vez de buscar "[foto:" literal.
+    if (context and str(context.get("step", "")).startswith("videofoto_")
+            and re.match(r"^\[foto:", message.strip(), re.IGNORECASE)):
+        context = {}
+
     if context is None:
         context = {}
 
@@ -2573,6 +2593,23 @@ En espanol, practico y realista para una tienda de electrodomesticos en Guatemal
         codigo = context.get("barcode_codigo_nuevo", "")
         context = {"step": "producto_waiting_precio", "prod_nombre": nombre, "prod_cantidad": 0, "prod_codigo": codigo}
         return f"¿A qué precio se vende {nombre}?", context
+
+    # Red de seguridad: un step "videofoto_*" que llego hasta aca (sin matchear
+    # NINGUNO de los bloques `if step == "videofoto_..."` de arriba) es un step
+    # viejo/desconocido - tipicamente un context.session con un nombre de step
+    # que ya no existe (ej. esto paso literalmente al renombrar
+    # videofoto_waiting_optimizar a videofoto_waiting_cuantos_prompts: una
+    # sesion de chat que ya estaba a mitad de ese step se quedaba con ese
+    # nombre viejo en su cookie de sesion). Sin este chequeo, el mensaje caia
+    # en silencio al pipeline generico de abajo (deteccion de intents ->
+    # Ollama) CON el context viejo intacto - el usuario nunca volvia a ver el
+    # step nuevo ("¿quieres los 3 prompts o solo uno?"), el motor determinista
+    # de core/video_prompt_engine.py nunca se llegaba a invocar, y las
+    # respuestas se sentian "genericas" porque en realidad NO eran parte del
+    # flujo de video en absoluto. Se limpia el context en vez de intentar
+    # adivinar a que step nuevo deberia mapear el viejo.
+    if step and step.startswith("videofoto_"):
+        return "Parece que la sesión del video quedó en un estado anterior. Empecemos de nuevo - sube la foto otra vez.", {}
 
     # Intento 1 y 2: deteccion directa + traduccion via Ollama
     detectado = _intentar_detectar(message, role, context, contexto_historial)
