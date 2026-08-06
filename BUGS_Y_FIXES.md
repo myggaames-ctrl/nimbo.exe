@@ -3001,3 +3001,92 @@ mango rojo..." de llava). Esto tenía dos consecuencias reales:
    confirmar que estos cambios no rompieron nada existente - todas pasaron igual.
 
 **Archivos modificados:** `core/nimbo.py`, `core/video_prompt_engine.py`.
+
+---
+
+## [2026-08-06] 7 bugs del diagnóstico completo del flujo videofoto: oferta/texto/color perdidos, código muerto
+
+**Problema:** diagnóstico previo (solo lectura, sin cambios) del flujo `videofoto_*`
+en `core/nimbo.py` encontró 7 problemas reales al rastrear cada valor `vf_*` desde
+donde se guarda hasta el llamado final a `core/video_prompt_engine.py`. Esta entrada
+documenta la corrección de los 7, en el mismo orden de impacto del diagnóstico.
+
+**Causa y solución de cada uno:**
+
+1. **`vf_oferta` nunca llegaba a TikTok ni Instagram.** `_construir_prompt_tiktok()`/
+   `_construir_prompt_instagram()` nunca leían `datos['oferta']` - solo Facebook lo
+   usaba (pegado a la línea del precio). Se agregó `_clausula_oferta_sentence()`
+   (oración propia "Oferta especial: X.") y se incluye en los 3 prompts.
+
+2. **`vf_texto_pantalla` nunca llegaba a Facebook.** `_construir_prompt_facebook()`
+   nunca leía `datos['clausula_texto_pantalla']` - Facebook no dice "sin texto en
+   pantalla" (siempre muestra el precio), así que la cláusula "excepto este texto..."
+   de TikTok/Instagram no le calzaba. Se agregó `_clausula_texto_pantalla_adicional()`
+   (oración propia, no una excepción) para Facebook.
+
+3. **`vf_mostrar` no filtraba "no".** A diferencia de `vf_oferta`/`vf_texto_pantalla`
+   (que sí tenían `"" if texto.lower() in ("no",...)`), `videofoto_waiting_mostrar`
+   guardaba `message.strip()` sin condición. Un usuario que respondiera "no" a "¿Qué
+   quieres mostrar?" (fácil de confundir con una pregunta de sí/no) dejaba el string
+   literal "no" en el prompt final ("Enfoque narrativo: no."). Se agregó la misma
+   normalización que ya usan `vf_oferta`/`vf_texto_pantalla`.
+
+4. **`vf_descripcion_visual` quedaba vacío cuando el JSON de llava no parseaba.**
+   `tools/contenido_tool.py`: el `except` de `video_desde_foto_tool()` solo rescataba
+   `query_busqueda` con el texto crudo de llava, pero nunca asignaba nada a
+   `descripcion_visual` - el análisis visual real que llava sí generó (solo que no
+   vino en el JSON estricto pedido) se perdía por completo, y de paso la pregunta de
+   confirmación de color en `core/nimbo.py` ni se disparaba (se salta si
+   `descripcion_visual` está vacío). Ahora el `except` también asigna el texto crudo
+   a `descripcion_visual`.
+
+5. **Falso positivo de corrección de precio.** `_PATRON_PRECIO_EXPLICITO` usa
+   `.search()` (busca en cualquier parte del mensaje) - necesario para
+   `_extraer_precio_producto()` cuando el precio viene después de una descripción
+   larga, pero en `videofoto_waiting_oferta` esa misma búsqueda sin anclar hacía que
+   una oferta real como "el precio 500 es una ganga" se interpretara como corrección
+   de precio (matchea "precio 500" en cualquier parte del texto) y la oferta se
+   perdiera. Se agregó `_PATRON_CORRECCION_PRECIO` (nuevo, anclado `^...$` - solo
+   matchea si el mensaje ENTERO es la corrección: "precio 168", "precio: 168", "el
+   precio es 168") usado específicamente en `videofoto_waiting_oferta`, sin tocar
+   `_PATRON_PRECIO_EXPLICITO` (que sigue sin anclar, porque `_extraer_precio_producto()`
+   sí lo necesita así en su otro uso).
+
+6. **Redundancia cuando `vf_descripcion_visual` se llenaba desde `vf_nombre`.** Sin
+   llava, el nombre completo del producto quedaba duplicado palabra por palabra tanto
+   en la apertura del prompt (vía nombre) como en la cláusula de color/material (vía
+   descripción visual = el mismo texto). Se le antepone ahora el prefijo "producto de
+   color y material estándar: " en vez de repetir el texto a secas - los detalles
+   reales (ej. "teflón amarillo dorado") se siguen preservando dentro de ese texto,
+   solo cambia el encabezado.
+
+7. **Código muerto:** `vf_producto_id`, `vf_plataforma` y `vf_tono` se escribían y
+   nunca se leían en ningún lado (confirmado con `grep` antes de tocar nada). Se
+   eliminó `vf_producto_id` de la asignación del context (el `Id` del producto se
+   sigue extrayendo del marcador para no romper el `split`, solo no se guarda). Se
+   eliminaron por completo los steps `videofoto_waiting_plataforma` y
+   `videofoto_waiting_tono` - `videofoto_waiting_oferta` ahora salta directo a
+   `videofoto_waiting_mostrar`, acortando el flujo en 2 preguntas que nunca influían
+   el resultado. `_armar_datos_motor()` se actualizó para no mencionar más estas 2
+   preguntas removidas.
+
+**Verificación:**
+- Los 7 fixes se probaron por separado antes de la prueba integral: regex de
+  corrección de precio (12 casos, incluyendo el ejemplo real "el precio 500 es una
+  ganga"), y el fallback de JSON roto de llava (aislado, sin Flask).
+- Caso completo pedido explícitamente: producto "Sarten De Teflon Para 4 Huevos
+  Aldura Con Tapadera teflón amarillo dorado", precio 168, oferta "2x1 en la segunda
+  unidad", mostrar "no", texto en pantalla "Precio Q168.00 / Envíos a toda Guatemala
+  / WhatsApp 48747638", duración 6 segundos, los 3 prompts. Verificado con asserts
+  explícitos (no solo inspección visual) que **los 3** prompts (TikTok, Instagram,
+  Facebook) contienen: el nombre completo, "amarillo dorado", el texto en pantalla
+  completo, y la oferta - y que `vf_mostrar` quedó en `""` (no el string "no"), y que
+  `vf_plataforma`/`vf_tono`/`vf_producto_id` no aparecen en el context final.
+- Se corrió de nuevo la batería completa de pruebas de las entradas anteriores
+  (producto de inventario con llava + corrección de color + camino "uno" a Facebook,
+  reinicio con foto nueva mid-flujo, red de seguridad de step viejo - incluyendo
+  ahora una sesión vieja con el propio `videofoto_waiting_plataforma` ya removido,
+  editar uno de los 3 prompts) para confirmar que nada se rompió - todas pasaron.
+
+**Archivos modificados:** `core/video_prompt_engine.py`, `core/nimbo.py`,
+`tools/contenido_tool.py`.

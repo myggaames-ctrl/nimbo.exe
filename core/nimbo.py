@@ -268,13 +268,16 @@ def _intentar_detectar(message: str, role: str, context: dict, contexto_historia
             # split("|", 4): el 5to campo (descripcion_visual, texto libre
             # armado por un modelo de IA) puede traer sus propios "|" - se le
             # deja el resto del string entero sin volver a partirlo.
+            # partes[0] (el Id del producto) no se guarda en el context: no
+            # lo lee ningun step de este flujo (limpieza de codigo muerto,
+            # ver BUGS_Y_FIXES.md - antes se guardaba como vf_producto_id
+            # sin que nada lo consumiera).
             partes = str(result).replace("VIDEOFOTO_ENCONTRADO_INICIO:", "").split("|", 4)
-            producto_id, nombre, precio = partes[0], partes[1], partes[2]
+            nombre, precio = partes[1], partes[2]
             foto = partes[3] if len(partes) > 3 else ""
             descripcion_visual = partes[4] if len(partes) > 4 else ""
             context = {
                 "step": "videofoto_waiting_confirmar",
-                "vf_producto_id": producto_id,
                 "vf_nombre": nombre,
                 "vf_precio": precio,
                 "vf_foto": foto,
@@ -748,6 +751,20 @@ _PATRON_PRECIO_EXPLICITO = re.compile(r"precio\s*(?:es|de)?\s*:?\s*q?\s*(\d+(?:[
 # NO son solo un numero.
 _PATRON_PRECIO_BARE = re.compile(r"^q?\s*(\d+(?:[.,]\d+)?)\.?$", re.IGNORECASE)
 
+# Correccion de precio ANCLADA (^...$, todo el mensaje) - a diferencia de
+# _PATRON_PRECIO_EXPLICITO (que usa .search() en cualquier parte del texto,
+# necesario para _extraer_precio_producto() cuando el precio viene despues
+# de una descripcion larga, ej. "sarten para 4 huevos, precio 168"), esta
+# version SOLO matchea si el mensaje ENTERO es la correccion ("precio 168",
+# "precio: 168", "el precio es 168") - usada especificamente en
+# videofoto_waiting_oferta para decidir si un mensaje es una correccion de
+# precio o una respuesta de oferta real. Bug real que motivo esto: con
+# _PATRON_PRECIO_EXPLICITO (.search() sin anclar), una oferta real como "el
+# precio 500 es una ganga" se interpretaba como correccion de precio (matchea
+# "precio 500" en cualquier parte del texto) y la oferta se perdia por
+# completo - nunca llegaba a guardarse en vf_oferta.
+_PATRON_CORRECCION_PRECIO = re.compile(r"^(?:el\s+)?precio\s*(?:es|de)?\s*:?\s*q?\s*(\d+(?:[.,]\d+)?)\.?$", re.IGNORECASE)
+
 
 def _extraer_precio_producto(mensaje: str):
     """Busca un precio en el mensaje: primero el numero que sigue a la
@@ -813,14 +830,14 @@ def _armar_datos_motor(context: dict) -> dict:
     """Junta los datos ya recolectados en el context (nombre/precio/
     descripcion visual/oferta/mostrar/texto en pantalla/color corregido) en
     los kwargs que espera core.video_prompt_engine.construir_prompts_video().
-    vf_plataforma y vf_tono NO se incluyen a proposito: el motor determinista
-    asigna un tono y estilo fijo y curado por plataforma (ver
-    core/video_prompt_engine.py) que reemplaza la seleccion de tono libre
-    del usuario - esas 2 preguntas siguen en el flujo (no se removieron, no
-    era parte de este pedido) pero su respuesta ya no se usa para armar el
-    prompt. vf_color_corregido se pasa SEPARADO de vf_descripcion_visual (no
-    mezclado) para que el motor pueda darle prioridad absoluta sobre el
-    color que detecto llava - ver videofoto_waiting_descripcion_visual."""
+    No hay pregunta de plataforma ni de tono en este flujo (se removieron,
+    ver BUGS_Y_FIXES.md limpieza de codigo muerto) - el motor determinista
+    ya asigna un tono y estilo fijo y curado por plataforma (ver
+    core/video_prompt_engine.py), asi que esas 2 preguntas nunca llegaban a
+    influir el prompt. vf_color_corregido se pasa SEPARADO de
+    vf_descripcion_visual (no mezclado) para que el motor pueda darle
+    prioridad absoluta sobre el color que detecto llava - ver
+    videofoto_waiting_descripcion_visual."""
     return {
         "nombre": context.get("vf_nombre", ""),
         "precio": context.get("vf_precio", ""),
@@ -1101,14 +1118,19 @@ def send(message: str, context: dict = None, role: str = "admin") -> tuple:
             # el producto): se usa el texto completo que el usuario escribio
             # como descripcion visual tambien - asi detalles como "teflon
             # amarillo" no quedan atrapados solo dentro del nombre, sino que
-            # tambien alimentan el prompt visual (_apertura() en
+            # tambien alimentan el prompt visual (_declaracion_color() en
             # core/video_prompt_engine.py) y las reglas de contraste de color
-            # (elegir_fondo_y_iluminacion()). NO se dispara la pregunta de
-            # confirmacion de color de mas abajo en este caso a proposito -
-            # ese texto lo acaba de escribir el usuario, no lo "vio" ningun
-            # analisis de llava; pedirle que confirme sus propias palabras
-            # seria confuso.
-            context["vf_descripcion_visual"] = nombre
+            # (elegir_fondo_y_iluminacion()). Se le antepone un prefijo
+            # generico ("producto de color y material estandar") en vez de
+            # repetir el nombre completo a secas - antes esto dejaba el
+            # nombre duplicado, palabra por palabra, tanto en la apertura del
+            # prompt (via nombre) como en la clausula de color/material (via
+            # descripcion_visual), sonando redundante. NO se dispara la
+            # pregunta de confirmacion de color de mas abajo en este caso a
+            # proposito - ese texto lo acaba de escribir el usuario, no lo
+            # "vio" ningun analisis de llava; pedirle que confirme sus
+            # propias palabras seria confuso.
+            context["vf_descripcion_visual"] = f"producto de color y material estándar: {nombre}"
             context["step"] = "videofoto_waiting_oferta"
             return f"Producto: {nombre.title()}, precio Q{precio:g}.\n¿Hay oferta o promoción? (precio especial, descuento, 2x1, etc. o escribe 'no')", context
         return _preguntar_descripcion_visual_o_oferta(context, prefijo=f"Producto: {nombre.title()}, precio Q{precio:g}.\n")
@@ -1160,7 +1182,7 @@ def send(message: str, context: dict = None, role: str = "admin") -> tuple:
         # numero (no "contiene un numero en cualquier lado") para no
         # confundir una oferta real que tambien trae numeros (ej. "2x1",
         # "10% de descuento") con una correccion de precio.
-        es_correccion_precio = bool(_PATRON_PRECIO_EXPLICITO.search(texto)) or bool(_PATRON_PRECIO_BARE.match(texto))
+        es_correccion_precio = bool(_PATRON_CORRECCION_PRECIO.match(texto)) or bool(_PATRON_PRECIO_BARE.match(texto))
         if es_correccion_precio:
             precio_nuevo, _ = _extraer_precio_producto(texto)
             if precio_nuevo is not None:
@@ -1168,21 +1190,19 @@ def send(message: str, context: dict = None, role: str = "admin") -> tuple:
                 return (f"Precio actualizado a Q{precio_nuevo:g}.\n"
                         f"¿Hay oferta o promoción? (precio especial, descuento, 2x1, etc. o escribe 'no')"), context
         context["vf_oferta"] = "" if texto.lower() in ("no", "no.", "ninguna", "no hay") else texto
-        context["step"] = "videofoto_waiting_plataforma"
-        return "¿Para qué plataforma? (TikTok / Instagram Reels / Facebook / General)", context
-
-    if step == "videofoto_waiting_plataforma":
-        context["vf_plataforma"] = message.strip()
-        context["step"] = "videofoto_waiting_tono"
-        return "¿Qué tono quieres? (Urgente y llamativo / Informativo / Divertido y casual / Elegante)", context
-
-    if step == "videofoto_waiting_tono":
-        context["vf_tono"] = message.strip()
         context["step"] = "videofoto_waiting_mostrar"
         return "¿Qué quieres mostrar en el video? (uso del producto / características / demostración / unboxing)", context
 
     if step == "videofoto_waiting_mostrar":
-        context["vf_mostrar"] = message.strip()
+        texto = message.strip()
+        # Igual criterio que vf_oferta/vf_texto_pantalla (bug real
+        # encontrado en diagnostico: esta normalizacion faltaba aca - un
+        # usuario que respondiera "no" a esta pregunta, facil de confundir
+        # con una de si/no, dejaba el string literal "no" guardado, y
+        # _clausula_mostrar() en core/video_prompt_engine.py lo trataba
+        # como texto valido - el prompt final terminaba diciendo
+        # "Enfoque narrativo: no.").
+        context["vf_mostrar"] = "" if texto.lower() in ("no", "no.", "ninguno", "ninguna") else texto
         context["step"] = "videofoto_waiting_texto_pantalla"
         return "¿Algún texto o frase que quieras que aparezca en el video? (escríbelo, o 'no')", context
 

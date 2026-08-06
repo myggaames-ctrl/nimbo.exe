@@ -271,10 +271,17 @@ def video_desde_foto_tool(data):
                 query_busqueda = str(datos.get("producto", "")).strip()
                 descripcion_visual = str(datos.get("descripcion_visual", "")).strip().replace("\n", " ")
             except (ValueError, TypeError, AttributeError):
-                # llava no devolvio JSON valido - se usa el texto crudo como
-                # busqueda (mejor que nada) y se deja la descripcion visual
-                # vacia en vez de guardar un JSON roto en el contexto.
+                # llava no devolvio JSON valido - se usa el texto crudo tanto
+                # como busqueda (mejor que nada) COMO descripcion visual: el
+                # analisis real de llava sigue siendo util aunque no haya
+                # venido en el formato JSON pedido - antes se descartaba por
+                # completo (bug real encontrado en diagnostico: dejaba
+                # descripcion_visual vacio, lo que de paso salteaba la
+                # pregunta de confirmacion de color en core/nimbo.py
+                # videofoto_waiting_descripcion_visual, aunque llava SI habia
+                # analizado la foto).
                 query_busqueda = respuesta_llava.strip()
+                descripcion_visual = respuesta_llava.strip().replace("\n", " ")
     elif modelo_soporta_vision():
         prompt_vision = (
             "Identifica en pocas palabras que producto de una tienda de "

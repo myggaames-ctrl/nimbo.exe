@@ -308,13 +308,34 @@ def _clausula_mostrar(mostrar: str) -> str:
     return f" Enfoque narrativo: {mostrar}." if mostrar else ""
 
 
+def _clausula_oferta_sentence(oferta: str) -> str:
+    """Oracion propia con la oferta/promocion, para TikTok e Instagram -
+    antes solo aparecia en Facebook (pegada a la linea del precio); bug real
+    encontrado en diagnostico: una oferta real que el usuario daba
+    (ej. "2x1 esta semana") se perdia por completo en 2 de los 3 prompts
+    porque _construir_prompt_tiktok()/_construir_prompt_instagram() nunca
+    leian datos['oferta']."""
+    return f" Oferta especial: {oferta}." if oferta else ""
+
+
+def _clausula_texto_pantalla_adicional(texto_pantalla: str) -> str:
+    """Oracion propia con el texto en pantalla pedido por el cliente, para
+    Facebook - antes solo aparecia en TikTok/Instagram (como excepcion a
+    "sin texto en pantalla", ver _clausula_texto_pantalla()). Facebook nunca
+    dice "sin texto en pantalla" (siempre muestra el precio), asi que
+    necesita su propia oracion en vez de una "excepcion"; bug real
+    encontrado en diagnostico: un texto en pantalla que el usuario pedia se
+    perdia por completo en el prompt de Facebook."""
+    return f' También debe aparecer este texto en pantalla, pedido por el cliente: "{texto_pantalla}".' if texto_pantalla else ""
+
+
 def _construir_prompt_tiktok(datos: dict) -> str:
     props_texto = ", ".join(datos["props"])
     partes = [f"{datos['apertura']}."]
     if datos["declaracion_color"]:
         partes.append(datos["declaracion_color"])
     partes += [
-        f"{datos['accion']}.{datos['clausula_mostrar']}",
+        f"{datos['accion']}.{datos['clausula_mostrar']}{datos['clausula_oferta']}",
         f"Elementos visuales: {props_texto}.",
         f"Ambiente: {datos['fondo']}.",
         f"Iluminacion: {datos['iluminacion']}.",
@@ -337,7 +358,7 @@ def _construir_prompt_instagram(datos: dict) -> str:
     if datos["declaracion_color"]:
         partes.append(datos["declaracion_color"])
     partes += [
-        f"{datos['accion']}.{datos['clausula_mostrar']}",
+        f"{datos['accion']}.{datos['clausula_mostrar']}{datos['clausula_oferta']}",
         f"Elementos visuales: {props_texto}.",
         f"Ambiente: {datos['fondo']}.",
         f"Iluminacion: {datos['iluminacion']}.",
@@ -352,10 +373,12 @@ def _construir_prompt_instagram(datos: dict) -> str:
 
 def _construir_prompt_facebook(datos: dict) -> str:
     # Facebook cambia mas que solo el cierre: toma amplia (no macro) desde
-    # el arranque, y SI lleva texto en pantalla (el precio) - al reves de
-    # TikTok/Instagram, que lo evitan por defecto.
+    # el arranque, y SI lleva texto en pantalla (el precio, siempre) - al
+    # reves de TikTok/Instagram, que lo evitan por defecto salvo pedido
+    # explicito.
     props_texto = ", ".join(datos["props"])
     clausula_oferta = f" - {datos['oferta']}" if datos["oferta"] else ""
+    clausula_texto_adicional = _clausula_texto_pantalla_adicional(datos["texto_pantalla"])
     partes = [f"Toma amplia 16:9 mostrando {datos['nombre']} en contexto completo de cocina/hogar."]
     if datos["declaracion_color"]:
         partes.append(datos["declaracion_color"])
@@ -365,7 +388,7 @@ def _construir_prompt_facebook(datos: dict) -> str:
         f"Ambiente: {datos['fondo']}.",
         f"Iluminacion: {datos['iluminacion']}.",
         f"Camara: {datos['camara']}, informativo y claro.",
-        f"Texto grande visible en pantalla: 'Q{_formatear_precio(datos['precio'])}'{clausula_oferta}.",
+        f"Texto grande visible en pantalla: 'Q{_formatear_precio(datos['precio'])}'{clausula_oferta}.{clausula_texto_adicional}",
         "Estilo: publicidad familiar y calida. 4K.",
         f"Audio: musica calida de fondo. Voz en off: '{datos['frase']}'.",
     ]
@@ -396,11 +419,13 @@ def construir_prompts_video(nombre: str, precio, descripcion_visual: str = "", o
         "oferta": oferta,
         "descripcion_visual": descripcion_visual,
         "color_corregido": color_corregido,
+        "texto_pantalla": texto_pantalla,
         "apertura": _apertura(nombre),
         "declaracion_color": _declaracion_color(descripcion_visual, color_corregido),
         "accion": inferir_accion(nombre),
         "clausula_mostrar": _clausula_mostrar(mostrar),
         "clausula_texto_pantalla": _clausula_texto_pantalla(texto_pantalla),
+        "clausula_oferta": _clausula_oferta_sentence(oferta),
         "props": lib["props"][:2],
         "fondo": fondo,
         "iluminacion": iluminacion,
